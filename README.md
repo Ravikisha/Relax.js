@@ -2,7 +2,7 @@
 
 # Relax.js
 
-Relax.js is a lightweight and modern frontend framework designed to simplify building dynamic web applications using a virtual DOM and a component-based architecture. It incorporates efficient DOM updates, declarative state management, and a powerful API to build scalable UIs.
+Relax.js is a lightweight and modern frontend library designed to simplify building dynamic web applications using a virtual DOM and a component-based architecture. It incorporates efficient DOM updates, declarative state management, and a powerful API to build scalable UIs.
 
 ---
 
