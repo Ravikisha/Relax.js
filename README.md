@@ -20,12 +20,17 @@ Relax.js is ideal for developers who want to build interactive web applications 
 
 ---
 
+## CDN Links
+
+- Relax Js - [https://ravikisha.github.io/relaxjs/relax.js](https://ravikisha.github.io/relaxjs/relax.js)
+- Relax Js Minified - [https://ravikisha.github.io/relaxjs/relax.min.js](https://ravikisha.github.io/relaxjs/relax.min.js)
+
 ## Installation
 
 Relax.js is distributed as a standalone JavaScript module. To use it in your project:
 
 ```html
-<script type="module" src="path-to-relax.js"></script>
+<script type="module" src="https://ravikisha.github.io/relaxjs/relax.js"></script>
 ```
 
 Alternatively, you can include it in your project via npm:
