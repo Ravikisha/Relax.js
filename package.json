@@ -1,5 +1,5 @@
 {
-  "name": "relax.js",
+  "name": "relaxcore",
   "version": "1.0.0",
   "description": "A frontend framework to teach web developers how frontend frameworks work.",
   "keywords": [
@@ -45,7 +45,6 @@
   },
   "dependencies": {
     "fast-deep-equal": "^3.1.3",
-    "relax.js": "file:",
-    "Relax.js": "file:"
+    "relaxcore": "file:"
   }
 }
