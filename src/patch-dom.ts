@@ -10,45 +10,6 @@ import { extractPropsAndEvents } from './utils/props'
 import { isNotBlankOrEmptyString } from './utils/strings'
 import { reconcileChildren, type ReconcileNode } from '../runtime/reconciler'
 
-type ReconcileRange = {
-    head: Comment
-    tail: Comment
-}
-
-function createRangeMarkers(parentEl: Element, child: any, hostComponent: any): ReconcileRange {
-    // Markers are real DOM nodes so the keyed reconciler can reorder items by moving `head`.
-    // `tail` lets us treat the item as a DOM *range*.
-    const head = document.createComment('relax:r')
-    const tail = document.createComment('relax:/r')
-
-    parentEl.appendChild(head)
-    mountDOM(child as any, parentEl as any, null as any, hostComponent)
-    parentEl.appendChild(tail)
-
-    return { head, tail }
-}
-
-function moveRange(parentEl: Element, range: ReconcileRange, anchor: ChildNode | null) {
-    // Move all siblings from head..tail (inclusive) before `anchor`.
-    let node: ChildNode | null = range.head
-    while (node) {
-        const next: ChildNode | null = node.nextSibling
-        parentEl.insertBefore(node, anchor)
-        if (node === range.tail) break
-        node = next
-    }
-}
-
-function removeRange(parentEl: Element, range: ReconcileRange) {
-    let node: ChildNode | null = range.head
-    while (node) {
-        const next: ChildNode | null = node.nextSibling
-        parentEl.removeChild(node)
-        if (node === range.tail) break
-        node = next
-    }
-}
-
 export function patchDOM(oldVdom: any, newVdom: any, parentEl: any, hostComponent: any = null) {
     if (!areNodesEqual(oldVdom, newVdom)) {
         const index = findIndexInParent(parentEl, oldVdom.el)
@@ -444,109 +405,35 @@ function patchChildren(oldVdom: any, newVdom: any, hostComponent: any) {
                 oldByKey.set(getVdomKey((oldChildren as any[])[i]), (oldChildren as any[])[i])
             }
 
-            // Range markers allow a keyed item to represent multiple DOM nodes
-            // (e.g. fragment-root components).
-            const existingRanges = new Map<any, ReconcileRange>()
-            const partial = new Map<any, any>()
-            for (const n of Array.from((parentEl as Element).childNodes)) {
-                const idxKey = (n as any).__relaxRangeKey
-                if (idxKey == null) continue
-                const kind = (n as any).__relaxRangeKind
-                const rec = partial.get(idxKey) ?? {}
-                if (kind === 'h') rec.head = n
-                if (kind === 't') rec.tail = n
-                if (rec.head && rec.tail) {
-                    existingRanges.set(idxKey, rec as ReconcileRange)
-                    partial.delete(idxKey)
-                } else {
-                    partial.set(idxKey, rec)
-                }
-            }
-
-            const nextSpecs: ReconcileNode[] = newChildren.map((child: any) => {
+            const nextSpecs: ReconcileNode[] = newChildren.map((child: any, i: number) => {
                 const key = getVdomKey(child)
                 const oldChild = oldByKey.get(key) ?? null
 
                 return {
                     key: key as any,
                     create() {
-                        const range = createRangeMarkers(parentEl as any, child as any, hostComponent)
-                        ;(range.head as any).__relaxRangeKey = key
-                        ;(range.head as any).__relaxRangeKind = 'h'
-                        ;(range.tail as any).__relaxRangeKey = key
-                        ;(range.tail as any).__relaxRangeKind = 't'
-                        existingRanges.set(key, range)
-                        return range.head
+                        mountDOM(child as any, parentEl, null as any, hostComponent)
+                        return isComponent(child as any)
+                            ? (((child as any).component?.firstElement ?? (child as any).el) as any)
+                            : ((child as any).el as any)
                     },
                     patch(node: Node) {
-                        const range = existingRanges.get(key)
-                        if (range && range.head !== node) {
-                            // If we got a different node, the DOM is not in expected shape.
-                            // Fall back to patching without structural assumptions.
-                        }
-
                         if (oldChild) {
                             patchDOMSameElement(oldChild as any, child as any, hostComponent)
                         } else {
                             // Shouldn't happen in keyed mode, but if it does we mount in-place.
                             mountDOM(child as any, parentEl, null as any, hostComponent)
                         }
-                        // Ensure vnode points at a stable element for external code.
-                        if (isComponent(child as any)) {
-                            ;(child as any).el = (child as any).component?.firstElement ?? (child as any).el
-                        } else {
-                            ;(child as any).el = (child as any).el
-                        }
+                        ;(child as any).el = node as any
                     },
                     destroy(node: Node) {
                         if (oldChild) destroyDOM(oldChild as any)
-                        const range = existingRanges.get(key)
-                        if (range) {
-                            removeRange(parentEl as any, range)
-                            existingRanges.delete(key)
-                        } else if (node.parentNode) {
-                            node.parentNode.removeChild(node)
-                        }
+                        else if (node.parentNode) node.parentNode.removeChild(node)
                     },
                 } satisfies ReconcileNode
             })
 
-            // Eagerly remove old keyed items that aren't present anymore.
-            // This is needed because the reconciler's `destroy()` hook only runs for keys that still exist in `next`.
-            {
-                const nextKeys = new Set<any>()
-                for (const c of newChildren as any[]) nextKeys.add(getVdomKey(c))
-                for (const oldChild of oldChildren as any[]) {
-                    const k = getVdomKey(oldChild)
-                    if (nextKeys.has(k)) continue
-
-                    const range = existingRanges.get(k)
-                    if (range) {
-                        // destroyDOM will remove the subtree inside the range, so remove markers too.
-                        destroyDOM(oldChild as any)
-                        removeRange(parentEl as any, range)
-                        existingRanges.delete(k)
-                    } else {
-                        destroyDOM(oldChild as any)
-                    }
-                }
-            }
-
             reconcileChildren(parentEl as any, nextSpecs, { keyed: true })
-
-            // After the reconciler moved the *head* markers, we must move each full range.
-            // We do this in a single forward pass using the order of `newChildren`.
-            let anchor: ChildNode | null = (parentEl as Element).firstChild
-            for (const child of newChildren as any[]) {
-                const key = getVdomKey(child)
-                const range = existingRanges.get(key)
-                if (!range) continue
-
-                if (range.head !== anchor) {
-                    moveRange(parentEl as any, range, anchor)
-                }
-                anchor = range.tail.nextSibling
-            }
             return
         }
     }

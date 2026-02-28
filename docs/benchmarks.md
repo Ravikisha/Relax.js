@@ -51,60 +51,6 @@ Implementation: `benchmarks/cases/list-10k-1pct.ts`
 
 Implementation: `benchmarks/cases/widgets-200.ts`
 
----
-
-## Extra cases (vivid micro + macro)
-
-These cases live in `benchmarks/cases/more.ts` and are meant to stress different parts of the rendering pipeline beyond the big two (list/widgets):
-
-### `mount-unmount-1k`
-
-Toggles mounting and unmounting a 1k-row list.
-
-- Relax: `mount-unmount-1k:relax-vdom`
-- React: `mount-unmount-1k:react`
-- Solid: `mount-unmount-1k:solid`
-
-This helps visualize initial render + teardown costs.
-
-### `keyed-rotate-5k`
-
-Rotates a 5k keyed list by 1 element per tick (pure reorder).
-
-- Relax: `keyed-rotate-5k:relax-vdom`
-
-### `attrs-toggle-1k`
-
-Toggles multiple attributes (`data-*`, `title`, `role`, `aria-label`) across 1k nodes.
-
-### `class-style-1k`
-
-Swaps class lists and style objects across 1k nodes.
-
-### `events-swap-1k`
-
-Swaps event handler references across 1k buttons.
-
-### `fragments-toggle`
-
-Toggles a fragment-heavy tree (nested fragments) to stress fragment extraction + patching.
-
-### `input-type-100`
-
-Simulates typing by growing an `<input>` value up to 100 chars.
-
-### `mixed-2k`
-
-2k keyed list where each tick updates ~10% rows *and* moves a chunk of items (update + reorder combined).
-
-### `hrbr-reconcile-10k`
-
-Pure HRBR keyed reconciliation on 10k keyed nodes (rotation), isolating DOM reorder cost.
-
-### `ssr-hydrate-100-slots`
-
-Hydrates a server-rendered block with 100 text slots and updates all slots each tick.
-
 ## Results template
 
 | Case | Mode | Frames | Avg (ms) | P95 (ms) | Frame drops |

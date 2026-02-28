@@ -28,6 +28,19 @@ export function list10k1pctVDOM(): BenchmarkCase {
 	}
 }
 
+export function list10k1pctVDOMDirect(): BenchmarkCase {
+	return {
+		name: 'list-10k-1pct:relax-vdom-direct',
+		setup(host) {
+			const ctrl = mountList10k1pctVDOM(host, 10_000, { useApp: false })
+			return {
+				tick: () => ctrl.update1pct(),
+				teardown: () => ctrl.dispose(),
+			}
+		},
+	}
+}
+
 export function list10k1pctHRBRFineCase(): BenchmarkCase {
 	return {
 		name: 'list-10k-1pct:relax-fine',

@@ -68,7 +68,6 @@ function reconcileChildrenUnkeyed(host: Node, next: ReconcileNode[]) {
 function reconcileChildrenKeyed(host: Node, next: ReconcileNode[]) {
 	const currentNodes = Array.from(host.childNodes)
 	const keyToNode = new Map<Key, Node>()
-	const keyToSpec = new Map<Key, ReconcileNode>()
 	const used = new Set<Node>()
 
 	for (const node of currentNodes) {
@@ -84,7 +83,6 @@ function reconcileChildrenKeyed(host: Node, next: ReconcileNode[]) {
 			if (k == null) continue
 			assert(!seen.has(k), `[hrbr/reconciler] duplicate key '${String(k)}' in next children`)
 			seen.add(k)
-			keyToSpec.set(k, n)
 		}
 	}
 
@@ -124,10 +122,6 @@ function reconcileChildrenKeyed(host: Node, next: ReconcileNode[]) {
 
 		// If node had a key, it wasn't in next. If node had no key, we also remove it,
 		// because keyed mode assumes full control of the children list.
-		const k = getDomKey(node)
-		if (k != null) {
-			keyToSpec.get(k)?.destroy?.(node)
-		}
-		if (node.parentNode === host) host.removeChild(node)
+		host.removeChild(node)
 	}
 }

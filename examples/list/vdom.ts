@@ -10,15 +10,17 @@ function makeRows(n: number): Row[] {
 	return out
 }
 
-export function mountList10k1pctVDOM(host: HTMLElement, size = 10_000) {
+export function mountList10k1pctVDOM(host: HTMLElement, size = 10_000, opts: { useApp?: boolean } = {}) {
 	let api: { update1pct(): void } | null = null
+	let directCmp: any | null = null
+	const useApp = opts.useApp ?? true
 
 	const App = defineComponent({
 		state() {
 			return { rows: makeRows(size) }
 		},
 		render() {
-			return h('ul', { _reconcile: 'hrbr' }, [
+			return h('ul', {}, [
 				hFragment(
 					this.state.rows.map((r: Row) =>
 						h('li', { key: r.id, _textOnly: true }, [r.label])
@@ -42,7 +44,16 @@ export function mountList10k1pctVDOM(host: HTMLElement, size = 10_000) {
 	})
 
 	const app = createApp(App)
-	app.mount(host)
+	if (useApp) {
+		app.mount(host)
+	} else {
+		// Direct mount: avoids app-level scheduling so the benchmark isolates patchDOM hot paths.
+		directCmp = new (App as any)({}, {}, null)
+		directCmp.mount(host)
+		// `mountDOM` only schedules `onMounted` via the microtask job queue.
+		// For the benchmark we need the API to be ready before the first tick.
+		void directCmp.onMounted()
+	}
 
 	return {
 		host,
@@ -50,7 +61,8 @@ export function mountList10k1pctVDOM(host: HTMLElement, size = 10_000) {
 			api?.update1pct()
 		},
 		dispose() {
-			app.unmount()
+			if (useApp) app.unmount()
+			else directCmp?.unmount()
 		},
 	}
 }

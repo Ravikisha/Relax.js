@@ -1,6 +1,9 @@
 import ts from 'typescript'
 import type { BlockDef, BlockSlot, CompiledSlot } from '../runtime/block'
 
+export { hrbrJsxTransform } from './jsx'
+export type { HrbrJsxTransformOptions } from './jsx'
+
 export type CompileResult = {
 	block: BlockDef
 	slots: CompiledSlot[]

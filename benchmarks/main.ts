@@ -3,34 +3,25 @@ import {
 	list10k1pctHRBR,
 	list10k1pctHRBRFineCase,
 	list10k1pctVDOM,
+	list10k1pctVDOMDirect,
 	list10k1pctVDOMMemoRowCase,
 } from './cases/list-10k-1pct'
 import { text1mHRBR } from './cases/text-1m'
 import { widgets200HRBR, widgets200VDOM } from './cases/widgets-200'
 import { list10k1pctReact, list10k1pctSolid, widgets200React, widgets200Solid } from './cases/react-solid'
 import {
-	attrsToggle1kRelaxVDOM,
-	attrsToggle1kReactCase,
-	attrsToggle1kSolidCase,
-	classStyle1kRelaxVDOM,
-	classStyle1kReactCase,
-	classStyle1kSolidCase,
-	eventsSwap1kRelaxVDOM,
-	eventsSwap1kReactCase,
-	eventsSwap1kSolidCase,
-	fragmentToggleRelaxVDOM,
-	hrbrReconcile10k,
-	inputType100RelaxVDOM,
-	inputType100ReactCase,
-	inputType100SolidCase,
-	keyedRotate5kRelaxVDOM,
-	keyedRotate5kReactCase,
-	keyedRotate5kSolidCase,
-	mixed2kRelaxVDOM,
-	mountUnmount1kReactCase,
-	mountUnmount1kRelaxVDOM,
-	mountUnmount1kSolidCase,
-	ssrHydrate100Slots,
+	inputTyping1kRelaxVDOM,
+	propsToggle5kReact,
+	propsToggle5kRelaxHRBR,
+	propsToggle5kRelaxVDOM,
+	propsToggle5kSolid,
+	styleGrid1kReact,
+	styleGrid1kRelaxVDOM,
+	styleGrid1kSolid,
+	svg1kRelaxVDOM,
+	table2kShuffleReact,
+	table2kShuffleRelaxVDOM,
+	table2kShuffleSolid,
 } from './cases/more'
 
 const host = document.getElementById('host') as HTMLElement
@@ -68,6 +59,10 @@ runBtn.addEventListener('click', async () => {
 		out.textContent += fmt(b) + '\n'
 
 		host.innerHTML = ''
+		const bd = await runBenchmark(list10k1pctVDOMDirect(), host)
+		out.textContent += '\n' + fmt(bd) + '\n'
+
+		host.innerHTML = ''
 		const bm = await runBenchmark(list10k1pctVDOMMemoRowCase(), host)
 		out.textContent += '\n' + fmt(bm) + '\n'
 
@@ -95,55 +90,35 @@ runBtn.addEventListener('click', async () => {
 			const ds = await runBenchmark(widgets200Solid(), host)
 			out.textContent += fmt(ds) + '\n'
 
-			// More vivid micro+macro cases
+			// ---- Additional vivid comparisons ----
 			host.innerHTML = ''
-			out.textContent += '\n' + fmt(await runBenchmark(mountUnmount1kRelaxVDOM(), host, { warmupFrames: 5, measureFrames: 60 })) + '\n'
+			out.textContent += '\n'
+			out.textContent += fmt(await runBenchmark(propsToggle5kRelaxVDOM(), host)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(mountUnmount1kReactCase(), host, { warmupFrames: 5, measureFrames: 60 })) + '\n'
+			out.textContent += fmt(await runBenchmark(propsToggle5kRelaxHRBR(), host)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(mountUnmount1kSolidCase(), host, { warmupFrames: 5, measureFrames: 60 })) + '\n\n'
+			out.textContent += fmt(await runBenchmark(propsToggle5kReact(), host)) + '\n\n'
+			host.innerHTML = ''
+			out.textContent += fmt(await runBenchmark(propsToggle5kSolid(), host)) + '\n\n'
 
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(keyedRotate5kRelaxVDOM(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(styleGrid1kRelaxVDOM(), host)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(keyedRotate5kReactCase(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(styleGrid1kReact(), host)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(keyedRotate5kSolidCase(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(styleGrid1kSolid(), host)) + '\n\n'
 
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(attrsToggle1kRelaxVDOM(), host)) + '\n'
+			out.textContent += fmt(await runBenchmark(table2kShuffleRelaxVDOM(), host)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(attrsToggle1kReactCase(), host)) + '\n'
+			out.textContent += fmt(await runBenchmark(table2kShuffleReact(), host)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(attrsToggle1kSolidCase(), host)) + '\n'
-			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(classStyle1kRelaxVDOM(), host)) + '\n'
-			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(classStyle1kReactCase(), host)) + '\n'
-			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(classStyle1kSolidCase(), host)) + '\n'
-			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(eventsSwap1kRelaxVDOM(), host)) + '\n\n'
-			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(eventsSwap1kReactCase(), host)) + '\n\n'
-			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(eventsSwap1kSolidCase(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(table2kShuffleSolid(), host)) + '\n\n'
 
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(fragmentToggleRelaxVDOM(), host)) + '\n'
+			out.textContent += fmt(await runBenchmark(svg1kRelaxVDOM(), host)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(inputType100RelaxVDOM(), host)) + '\n'
-			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(inputType100ReactCase(), host)) + '\n'
-			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(inputType100SolidCase(), host)) + '\n'
-			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(mixed2kRelaxVDOM(), host)) + '\n\n'
-
-			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(hrbrReconcile10k(), host, { warmupFrames: 5, measureFrames: 60 })) + '\n'
-			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(ssrHydrate100Slots(), host, { warmupFrames: 5, measureFrames: 60 })) + '\n'
+			out.textContent += fmt(await runBenchmark(inputTyping1kRelaxVDOM(), host)) + '\n'
 	} finally {
 		runBtn.disabled = false
 	}
