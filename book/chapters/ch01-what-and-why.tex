@@ -35,7 +35,7 @@ At a high level, Relax.js promises:
   \item Components have lifecycle hooks and can emit/handle events.
 \end{itemize}
 
-Those promises are verified by tests under \texttt{src/__tests__/} and (for the HRBR runtime) under \texttt{runtime/__tests__/}.
+Those promises are verified by tests under \texttt{src/\_\_tests\_\_/} and (for the HRBR runtime) under \texttt{runtime/\_\_tests\_\_/}.
 
 \subsection{A quick terminology primer}
 You'll see these words throughout the code and tests:
@@ -53,7 +53,7 @@ You'll see these words throughout the code and tests:
 \section{Public API entry points (code references)}
 The \emph{public} exports live in \texttt{src/index.ts}:
 
-\begin{lstlisting}[style=relax,language=JavaScript]
+\begin{lstlisting}[style=relax,language=Java]
 export { createApp } from './app'
 export { defineComponent } from './component'
 export { DOM_TYPES, h, hFragment, hSlot, hString } from './h'
@@ -80,7 +80,7 @@ HRBR is the opposite trade-off:
   \item Updates become \emph{direct writes} to known nodes.
 \end{itemize}
 
-You'll see HRBR show up in VDOM code via \texttt{DOM_TYPES.HRBR} and \texttt{hBlock()} in \texttt{src/h.ts}.
+You'll see HRBR show up in VDOM code via \texttt{DOM\_TYPES.HRBR} and \texttt{hBlock()} in \texttt{src/h.ts}.
 
 \subsection{What problem does HRBR try to solve?}
 If a UI subtree is structurally stable (same elements in the same shape, only values change), a classic VDOM update does extra work:
@@ -110,10 +110,10 @@ Our rule is simple: every time we explain a behavior, we should be able to point
 Examples:
 
 \begin{itemize}
-  \item Mounting basics: \texttt{src/__tests__/mount-dom.test.ts}
-  \item Patching/diffing: \texttt{src/__tests__/patch-dom.test.ts}
-  \item Components + lifecycle: \texttt{src/__tests__/component*.test.ts}
-  \item HRBR block runtime: \texttt{runtime/__tests__/block.test.ts}
+  \item Mounting basics: \texttt{src/\_\_tests\_\_/mount-dom.test.ts}
+  \item Patching/diffing: \texttt{src/\_\_tests\_\_/patch-dom.test.ts}
+  \item Components + lifecycle: \texttt{src/\_\_tests\_\_/component*.test.ts}
+  \item HRBR block runtime: \texttt{runtime/\_\_tests\_\_/block.test.ts}
 \end{itemize}
 
 \subsection{What ``tests as spec'' means in this repository}
@@ -167,7 +167,7 @@ This is a small but important architectural choice: \emph{the App owns the root 
 That makes ``unmount'' a reliable cleanup boundary.
 
 \subsection{The test that proves it works}
-Open \texttt{src/__tests__/app.test.ts}.
+Open \texttt{src/\_\_tests\_\_/app.test.ts}.
 It reads like a story:
 
 \begin{itemize}
@@ -189,7 +189,7 @@ If they are different, we replace.
 \end{quote}
 
 The test suite encodes this principle over and over.
-For example, \texttt{src/__tests__/patch-dom.test.ts} starts with extremely small cases:
+For example, \texttt{src/\_\_tests\_\_/patch-dom.test.ts} starts with extremely small cases:
 
 \begin{itemize}
   \item \textbf{no change}: patching identical trees should reuse \texttt{el}.
@@ -204,9 +204,9 @@ Before moving on, do this intentionally (don't just skim):
 
 \begin{enumerate}
   \item Read \texttt{src/app.ts} and answer: what runtime calls does \texttt{createApp()} delegate to?
-  \item Read \texttt{src/__tests__/app.test.ts} and find every \texttt{await nextTick()}.
+  \item Read \texttt{src/\_\_tests\_\_/app.test.ts} and find every \texttt{await nextTick()}.
     For each one, explain what DOM change it is waiting for.
-  \item Read the first ~5 tests in \texttt{src/__tests__/patch-dom.test.ts}.
+  \item Read the first ~5 tests in \texttt{src/\_\_tests\_\_/patch-dom.test.ts}.
     For each, write a one-sentence rule (e.g., ``patching text updates textContent without replacing parent elements'').
 \end{enumerate}
 

@@ -1,5 +1,5 @@
 % Relax.js Book
-% Build target: compile with pdflatex/xelatex (see README you’ll add later)
+% Build target: compile with pdflatex/xelatex (see README youll add later)
 \documentclass[11pt,oneside]{book}
 
 % --- Packages ---
@@ -34,10 +34,10 @@
 }
 
 % --- Chapter/section styling ---
-	itleformat{\chapter}
+  \titleformat{\chapter}
   {\normalfont\huge\bfseries\color{RelaxGray}}
   {\thechapter.}{0.6em}{}
-	itlespacing*{\chapter}{0pt}{-8pt}{18pt}
+  \titlespacing*{\chapter}{0pt}{-8pt}{18pt}
 
 % --- Headers/footers ---
 \pagestyle{fancy}
@@ -87,7 +87,7 @@
 \vspace{0.6cm}
 {\small\color{RelaxGray} \today\par}
 \vfill
-\includegraphics[width=0.22\textwidth]{docs/relaxjslogo.png}\par
+\includegraphics[width=0.22\textwidth]{../docs/relaxjslogo.png}\par
 \vspace*{1.0cm}
 \end{titlepage}
 \tableofcontents
