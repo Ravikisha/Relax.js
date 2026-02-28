@@ -1,4 +1,5 @@
 import type { BenchmarkCase } from '../harness'
+import type { BenchmarkProfile } from '../profile'
 import React from 'react'
 import { createSignal, createRoot as createSolidRoot } from 'solid-js'
 import { render as solidRender } from 'solid-js/web'
@@ -21,7 +22,7 @@ import { waitForHostMutation } from './react-solid-adapters'
  * 1) element-props-toggle-5k
  * Toggle a boolean attribute on 5k elements.
  */
-export function propsToggle5kRelaxVDOM(): BenchmarkCase {
+export function propsToggle5kRelaxVDOM(_profile?: BenchmarkProfile): BenchmarkCase {
 	return {
 		name: 'props-toggle-5k:relax-vdom',
 		setup(host) {
@@ -58,7 +59,7 @@ export function propsToggle5kRelaxVDOM(): BenchmarkCase {
 	}
 }
 
-export function propsToggle5kRelaxHRBR(): BenchmarkCase {
+export function propsToggle5kRelaxHRBR(_profile?: BenchmarkProfile): BenchmarkCase {
 	return {
 		name: 'props-toggle-5k:relax-hrbr',
 		setup(host) {
@@ -96,7 +97,7 @@ export function propsToggle5kRelaxHRBR(): BenchmarkCase {
 	}
 }
 
-export function propsToggle5kReact(): BenchmarkCase {
+export function propsToggle5kReact(_profile?: BenchmarkProfile): BenchmarkCase {
 	let ctrl: ExternalBenchCommitController | null = null
 	return {
 		name: 'props-toggle-5k:react',
@@ -141,7 +142,7 @@ export function propsToggle5kReact(): BenchmarkCase {
 	}
 }
 
-export function propsToggle5kSolid(): BenchmarkCase {
+export function propsToggle5kSolid(_profile?: BenchmarkProfile): BenchmarkCase {
 	let dispose: null | (() => void) = null
 	let on = false
 	return {
@@ -178,7 +179,7 @@ export function propsToggle5kSolid(): BenchmarkCase {
  * 2) style-update-grid-1k
  * Update inline styles on 1k boxes.
  */
-export function styleGrid1kRelaxVDOM(): BenchmarkCase {
+export function styleGrid1kRelaxVDOM(_profile?: BenchmarkProfile): BenchmarkCase {
 	return {
 		name: 'style-grid-1k:relax-vdom',
 		setup(host) {
@@ -215,7 +216,7 @@ export function styleGrid1kRelaxVDOM(): BenchmarkCase {
 	}
 }
 
-export function styleGrid1kReact(): BenchmarkCase {
+export function styleGrid1kReact(_profile?: BenchmarkProfile): BenchmarkCase {
 	let ctrl: ExternalBenchCommitController | null = null
 	return {
 		name: 'style-grid-1k:react',
@@ -263,7 +264,7 @@ export function styleGrid1kReact(): BenchmarkCase {
 	}
 }
 
-export function styleGrid1kSolid(): BenchmarkCase {
+export function styleGrid1kSolid(_profile?: BenchmarkProfile): BenchmarkCase {
 	let disposeRoot: null | (() => void) = null
 	const n = 1_000
 	const nodes: HTMLDivElement[] = new Array(n)
@@ -304,7 +305,7 @@ export function styleGrid1kSolid(): BenchmarkCase {
  * 3) table-2k-shuffle
  * Shuffle 2k keyed rows each tick.
  */
-export function table2kShuffleRelaxVDOM(): BenchmarkCase {
+export function table2kShuffleRelaxVDOM(_profile?: BenchmarkProfile): BenchmarkCase {
 	return {
 		name: 'table-2k-shuffle:relax-vdom',
 		setup(host) {
@@ -344,7 +345,7 @@ export function table2kShuffleRelaxVDOM(): BenchmarkCase {
 	}
 }
 
-export function table2kShuffleReact(): BenchmarkCase {
+export function table2kShuffleReact(_profile?: BenchmarkProfile): BenchmarkCase {
 	let ctrl: ExternalBenchCommitController | null = null
 	return {
 		name: 'table-2k-shuffle:react',
@@ -386,7 +387,7 @@ export function table2kShuffleReact(): BenchmarkCase {
 	}
 }
 
-export function table2kShuffleSolid(): BenchmarkCase {
+export function table2kShuffleSolid(_profile?: BenchmarkProfile): BenchmarkCase {
 	let disposeRoot: null | (() => void) = null
 	const n = 2_000
 	const lis: HTMLLIElement[] = new Array(n)
@@ -428,7 +429,7 @@ export function table2kShuffleSolid(): BenchmarkCase {
  * 4) svg-1k
  * Update attributes on 1k SVG circles.
  */
-export function svg1kRelaxVDOM(): BenchmarkCase {
+export function svg1kRelaxVDOM(_profile?: BenchmarkProfile): BenchmarkCase {
 	return {
 		name: 'svg-1k:relax-vdom',
 		setup(host) {
@@ -472,7 +473,7 @@ export function svg1kRelaxVDOM(): BenchmarkCase {
  * 5) input-typing-1k
  * Update value prop on 1k inputs.
  */
-export function inputTyping1kRelaxVDOM(): BenchmarkCase {
+export function inputTyping1kRelaxVDOM(_profile?: BenchmarkProfile): BenchmarkCase {
 	return {
 		name: 'input-typing-1k:relax-vdom',
 		setup(host) {

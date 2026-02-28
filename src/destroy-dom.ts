@@ -28,6 +28,11 @@ export function destroyDOM(vdom: any) {
       break
     }
 
+    case DOM_TYPES.HRBR: {
+      removeHrbrNode(vdom)
+      break
+    }
+
     default: {
       throw new Error(`Can't destroy DOM of type: ${type}`)
     }
@@ -35,6 +40,20 @@ export function destroyDOM(vdom: any) {
 
   // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
   delete vdom.el
+}
+
+function removeHrbrNode(vdom: any) {
+  const inst = vdom.instance
+  if (inst?.dispose) inst.dispose()
+  if (inst?.destroy) inst.destroy()
+
+  const host = vdom.host as HTMLElement | undefined
+  if (host) host.remove()
+
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+  delete vdom.instance
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+  delete vdom.host
 }
 
 function removeTextNode(vdom: any) {

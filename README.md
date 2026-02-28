@@ -414,6 +414,37 @@ We welcome contributions! Feel free to submit issues or pull requests on our [Gi
 
 ---
 
+## Versioning & compatibility policy
+
+This repo currently ships two “layers”:
+
+- **Relax VDOM** (stable): the existing VDOM + component runtime.
+- **HRBR** (experimental): signals + deterministic scheduler + compiled blocks + fallback reconciler + compiler.
+
+### SemVer policy (current)
+
+- **Patch** releases (`x.y.z+1`) may include bug fixes and performance improvements that don’t require user code changes.
+- **Minor** releases (`x.y+1.0`) may add new APIs or expand supported behavior in a backwards-compatible way.
+- **Major** releases (`x+1.0.0`) may include breaking changes.
+
+HRBR-specific APIs are still evolving; until HRBR is explicitly declared stable in the docs, **minor releases may include breaking changes in `./hrbr` and `./compiler`**. When that happens, it’ll be called out in release notes.
+
+### HRBR compiler: when we emit blocks vs fallback
+
+The Babel JSX transform tries to compile a small subset of JSX into **compiled blocks** (`defineBlock(...)` + `mountCompiledBlock(...)`).
+
+It will route to **fallback** (`mountFallback(...)`) when we detect **dynamic structure**, i.e. cases that can change DOM presence/order.
+
+Rules of thumb (current):
+
+- **Block mode** for: intrinsic lowercase tags, mostly-static structure, dynamic values as **slots** (text/attrs/props/class/style).
+- **Fallback mode** for: expression children that introduce conditionals/lists or otherwise require structural reconciliation.
+- **Compile error** for: constructs we don’t support in either mode yet (events, spreads, fragments, components).
+
+This behavior is covered by tests under `compiler/__tests__/` (notably the fallback e2e test).
+
+---
+
 ## License
 Relax.js is licensed under the MIT License.
 

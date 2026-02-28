@@ -1,9 +1,14 @@
 # Benchmarks
 
-This document will describe:
-- methodology (rAF loop, warmup, measurement window)
-- metrics (avg, p95, frame drops, optional allocations counter)
-- how to compare: Relax.js VDOM (`src/`) vs HRBR (`/runtime`) + React + Solid
+> Date: 2026-02-28
+>
+> Status: Draft (v1)
+
+Benchmarks run in a real browser and compare:
+
+- Relax VDOM (`src/`)
+- HRBR (`runtime/`)
+- adapters for React + Solid
 
 ## How it works
 
@@ -30,6 +35,35 @@ Example:
 ```bash
 vite --open benchmarks/
 ```
+
+### Dev vs prod bundles
+
+Some libraries (notably React) change behavior based on `process.env.NODE_ENV` at bundle time.
+The benchmark Rollup config supports both modes:
+
+```bash
+npm run build:bench:dev
+npm run build:bench:prod
+```
+
+### Profiles + seeded runs
+
+Benchmarks are intended to be repeatable. The runner supports a few lightweight profiles and a seeded RNG for update patterns.
+
+Query params on `benchmarks/index.html`:
+
+- `profile`: `quick | default | stress`
+- `seed`: integer seed used for randomized index updates (React/Solid adapters)
+- `warmup`: override warmup frames
+- `frames`: override measured frames
+- `budget`: override frame budget in ms
+
+Examples:
+
+- Quick sanity pass:
+	- `benchmarks/index.html?profile=quick&seed=1`
+- Longer run:
+	- `benchmarks/index.html?profile=stress&seed=42&budget=16.7`
 
 ## Cases
 
@@ -59,3 +93,33 @@ Implementation: `benchmarks/cases/widgets-200.ts`
 | list-10k-1pct | vdom | 120 |  |  |  |
 | widgets-200 | hrbr | 120 |  |  |  |
 | widgets-200 | vdom | 120 |  |  |  |
+
+## Perf smoke (CI-friendly)
+
+The reduced, CI-friendly benchmark entry is:
+
+- `benchmarks/perf-smoke.ts`
+- `benchmarks/perf-smoke.html`
+
+It builds into `benchmarks/dist-smoke/` using Rollup:
+
+```bash
+npm run build:bench:smoke
+```
+
+And can be served locally via:
+
+```bash
+npm run serve:bench:smoke
+```
+
+It prints a JSON summary to the console and uses very wide regression thresholds. It’s intended to fail only on obvious runaway regressions.
+
+## Instrumentation
+
+Optional runtime instrumentation exists behind a flag in `runtime/devtools.ts`.
+
+- `domOps` increments when instrumentation is enabled and the runtime calls `emitDomOp(op)`.
+- `allocs` increments via `emitAlloc(kind, count?)` (manual hooks).
+
+Instrumentation is **off by default** so it doesn’t affect production behavior or benchmark results.

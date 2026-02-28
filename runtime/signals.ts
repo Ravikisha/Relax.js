@@ -1,5 +1,6 @@
 import type { Lane } from './scheduler'
 import { createScheduler } from './scheduler'
+import { emitDevtoolsEvent } from './devtools'
 
 export type EffectCleanup = void | (() => void)
 
@@ -78,6 +79,13 @@ function scheduleComputation(computation: Computation) {
     return
   }
   if (computation._schedule) {
+    emitDevtoolsEvent({
+      type: 'scheduleComputation',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      name: (computation as any)._name,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      lane: (computation as any)._lane,
+    })
     computation._schedule(computation)
     return
   }
@@ -85,6 +93,13 @@ function scheduleComputation(computation: Computation) {
     pending.add(computation)
     return
   }
+  emitDevtoolsEvent({
+    type: 'scheduleComputation',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    name: (computation as any)._name,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    lane: (computation as any)._lane,
+  })
   computation.run()
 }
 
@@ -206,13 +221,14 @@ export function createEffect(fn: () => EffectCleanup, options: EffectOptions): E
 export function createEffect(fn: () => EffectCleanup, options: EffectOptions = {}): Effect {
   const lane = options.lane ?? 'sync'
   const budgetMs = options.budgetMs
-  // reserved for future debugging instrumentation
-  void options.name
+  const name = options.name
 
   const scheduler = lane === 'sync' ? null : createScheduler()
 
-  const comp: Computation & { _id: number } = {
+  const comp: Computation & { _id: number; _name?: string; _lane?: Lane } = {
     _id: nextId++,
+    ...(name ? { _name: name } : null),
+    _lane: lane,
   sourcesHead: null,
   sourcesTail: null,
     run() {

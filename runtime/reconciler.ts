@@ -86,7 +86,12 @@ function getDomKey(node: Node): Key | null {
 }
 
 function setDomKey(node: Node, key: Key | null) {
-	if (key == null) return
+	if (key == null) {
+		// Clearing is important when a node that previously started a keyed range
+		// (or had a key) is reused as an unkeyed/singleton node.
+		delete (node as any).__hrbrKey
+		return
+	}
 	;(node as any).__hrbrKey = key
 }
 
@@ -98,6 +103,11 @@ type RangeRecord = {
 }
 
 function setDomRangeLen(node: Node, len: number) {
+	if (len <= 1) {
+		delete (node as any).__hrbrRangeLen
+		// Important: don't write `1` back. Missing means singleton.
+		return
+	}
 	;(node as any).__hrbrRangeLen = len
 }
 
@@ -189,6 +199,18 @@ function reconcileChildrenUnkeyed(host: Node, next: ReconcileItem[]) {
 }
 
 function reconcileChildrenKeyed(host: Node, next: ReconcileItem[], dev: boolean) {
+	function cleanupTrailingRangeNode(start: Node, key: Key) {
+		// If `key` previously described a multi-node range, trailing nodes can remain
+		// unkeyed in DOM. When this key is now rendered as a singleton, remove any
+		// contiguous unkeyed siblings that immediately follow the start.
+		let n = start.nextSibling
+		while (n && getDomKey(n) == null) {
+			const next = n.nextSibling
+			if ((n as any).parentNode === host) host.removeChild(n)
+			n = next
+		}
+	}
+
 	const currentRanges = buildCurrentRanges(host)
 	const currentNodesFlat = Array.from(host.childNodes)
 	void currentNodesFlat
@@ -258,9 +280,19 @@ function reconcileChildrenKeyed(host: Node, next: ReconcileItem[], dev: boolean)
 		if (osk !== nsk) break
 		const range = keyToRange.get(osk)!
 		usedStarts.add(range.start)
-		const spec = next[newStart]!
-		if (isRange(spec)) spec.patch(range.nodes)
-		else spec.patch(range.start)
+		const spec = next.find((n) => getNodeKey(n as any) === osk)!
+		if (isRange(spec)) {
+			// If the DOM shape doesn't match (node<->range), stop the fast scan and
+			// let the middle section handle it (it can safely recreate/remove).
+			if (range.nodes.length <= 1) break
+			spec.patch(range.nodes)
+		} else {
+			// If this key used to be a range, ensure we don't keep stale range metadata.
+			const start: any = range.start
+			delete start.__hrbrRangeLen
+			spec.patch(range.start)
+			cleanupTrailingRangeNode(range.start, osk)
+		}
 		oldStart++
 		newStart++
 	}
@@ -271,9 +303,16 @@ function reconcileChildrenKeyed(host: Node, next: ReconcileItem[], dev: boolean)
 		if (oek !== nek) break
 		const range = keyToRange.get(oek)!
 		usedStarts.add(range.start)
-		const spec = next[newEnd]!
-		if (isRange(spec)) spec.patch(range.nodes)
-		else spec.patch(range.start)
+		const spec = next.find((n) => getNodeKey(n as any) === oek)!
+		if (isRange(spec)) {
+			if (range.nodes.length <= 1) break
+			spec.patch(range.nodes)
+		} else {
+			const start: any = range.start
+			delete start.__hrbrRangeLen
+			spec.patch(range.start)
+			cleanupTrailingRangeNode(range.start, oek)
+		}
 		oldEnd--
 		newEnd--
 	}
@@ -303,8 +342,32 @@ function reconcileChildrenKeyed(host: Node, next: ReconcileItem[], dev: boolean)
 		if (range) {
 			usedStarts.add(range.start)
 			const spec = next[newStart + i]!
-			if (isRange(spec)) spec.patch(range.nodes)
-			else spec.patch(range.start)
+			const specIsRange = isRange(spec)
+			const domIsRange = range.nodes.length > 1
+			if (specIsRange !== domIsRange) {
+				// Key matched but the logical shape changed (node <-> range).
+				// Remove the old shape and treat as missing; we'll recreate below.
+				for (let j = range.nodes.length - 1; j >= 0; j--) {
+					const n = range.nodes[j]!
+					if ((n as any).parentNode === host) host.removeChild(n)
+				}
+				existingRanges[i] = null
+				if ((range.start as any).parentNode === host) usedStarts.delete(range.start)
+				continue
+			}
+			if (specIsRange) (spec as ReconcileRange).patch(range.nodes)
+			else {
+				// Clear any stale range metadata. We avoid calling helpers here because
+				// TS in this workspace is mis-reporting some call/assignment sites.
+				try {
+					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+					;(range.start as any).__hrbrRangeLen = null
+				} catch {
+					// ignore
+				}
+				(spec as ReconcileNode).patch(range.start)
+				cleanupTrailingRangeNode(range.start, range.key ?? key)
+			}
 		}
 	}
 
@@ -322,7 +385,26 @@ function reconcileChildrenKeyed(host: Node, next: ReconcileItem[], dev: boolean)
 		const specIndex = newStart + i
 		const spec = next[specIndex]!
 		const k = getNodeKey(spec)
-		if (k == null) continue
+		if (k == null) {
+			// Keyless specs are treated as unstable in keyed mode.
+			// We still must materialize them to ensure the DOM matches `next`.
+			if (isRange(spec)) {
+				const created = spec.create()
+				if (created.length > 0) {
+					setDomKey(created[0]!, null)
+					setDomRangeLen(created[0]!, created.length)
+					insertNodesBefore(host, created, anchor)
+					anchor = created[0] as any
+				}
+				continue
+			}
+			const created = spec.create()
+			setDomKey(created, null)
+			setDomRangeLen(created, 1)
+			host.insertBefore(created, anchor)
+			anchor = created as any
+			continue
+		}
 
 		const existing = existingRanges[i]
 		if (!existing) {
@@ -345,6 +427,9 @@ function reconcileChildrenKeyed(host: Node, next: ReconcileItem[], dev: boolean)
 		}
 
 		if (keep.has(i)) {
+			// Even if the node is kept in place (part of LIS), we still need to
+			// ensure it doesn't retain stale trailing nodes from a prior range shape.
+			if (!isRange(spec) && existing.nodes.length <= 1) cleanupTrailingRangeNode(existing.start, k)
 			anchor = existing.start as any
 			continue
 		}
@@ -358,10 +443,31 @@ function reconcileChildrenKeyed(host: Node, next: ReconcileItem[], dev: boolean)
 	let prefixAnchor: ChildNode | null = host.firstChild
 	for (let i = 0; i < newStart; i++) {
 		const k = getNodeKey(next[i]!)
-		if (k == null) continue
+		if (k == null) {
+			const spec = next[i]!
+			if (isRange(spec)) {
+				const created = spec.create()
+				if (created.length > 0) {
+					setDomKey(created[0]!, null)
+					setDomRangeLen(created[0]!, created.length)
+					insertNodesBefore(host, created, prefixAnchor)
+					prefixAnchor = created[created.length - 1]!.nextSibling
+				}
+				continue
+			}
+			const created = spec.create()
+			setDomKey(created, null)
+			setDomRangeLen(created, 1)
+			host.insertBefore(created, prefixAnchor)
+			prefixAnchor = created.nextSibling
+			continue
+		}
 		const range = keyToRange.get(k) ?? null
 		if (!range) continue
 		moveRangeBefore(host, range, prefixAnchor)
+		// If this keyed item is currently a singleton, ensure no stale range tail
+		// nodes remain between it and the next keyed item.
+		if (range.nodes.length <= 1) cleanupTrailingRangeNode(range.start, k)
 		prefixAnchor = range.end.nextSibling
 	}
 
@@ -378,6 +484,44 @@ function reconcileChildrenKeyed(host: Node, next: ReconcileItem[], dev: boolean)
 		// unkeyed range (owned by keyed mode)
 		for (let j = r.nodes.length - 1; j >= 0; j--) {
 			if ((r.nodes[j] as any).parentNode === host) host.removeChild(r.nodes[j]!)
+		}
+	}
+
+	// Final normalization: in keyed mode, there must not be any unkeyed nodes
+	// interleaved between keyed logical items. These most commonly arise as
+	// stale trailing nodes from prior range shapes.
+	{
+		const nodes = Array.from(host.childNodes)
+		for (let i = 0; i < nodes.length; ) {
+			const start = nodes[i]!
+			const startKey = getDomKey(start)
+			if (startKey == null) {
+				// Unkeyed nodes are owned by keyed mode; remove.
+				if ((start as any).parentNode === host) host.removeChild(start)
+				nodes.splice(i, 1)
+				continue
+			}
+			const len = getDomRangeLen(start)
+			// Remove any unkeyed nodes that immediately follow this logical item.
+			let j = i + len
+			while (j < nodes.length && getDomKey(nodes[j]!) == null) {
+				const n = nodes[j]!
+				if ((n as any).parentNode === host) host.removeChild(n)
+				nodes.splice(j, 1)
+			}
+			i = j
+		}
+	}
+
+	// Final pass: normalize any stale range metadata on keyed singleton nodes.
+	// This is a safety net for node<->range shape changes that might have left
+	// __hrbrRangeLen hanging around on a start node.
+	for (const node of Array.from(host.childNodes)) {
+		const k = getDomKey(node)
+		if (k == null) continue
+		const len = (node as any).__hrbrRangeLen
+		if (typeof len === 'number' && len <= 1) {
+			delete (node as any).__hrbrRangeLen
 		}
 	}
 }

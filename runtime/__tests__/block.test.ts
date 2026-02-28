@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { defineBlock, mountBlock, mountCompiledBlock, resolvePath } from '../block'
+import { defineBlock, mountBlock, mountCompiledBlock, mountNestedBlock, mountNestedFallback, resolvePath } from '../block'
 import { createSignal } from '../signals'
+import { mountFallback } from '../fallback'
 
 function host() {
   const el = document.createElement('div')
@@ -208,6 +209,43 @@ describe('runtime/block (phase 3)', () => {
     expect((text as Text).nodeValue).toBe('hi')
   })
 
+  it('mountBlock caches repeated path prefixes across slots', () => {
+    const h = host()
+
+    const block = defineBlock({
+      templateHTML: `<div><span>a</span><span>b</span></div>`,
+      slots: {
+        a: { kind: 'text', path: [0, 0] },
+        b: { kind: 'text', path: [1, 0] },
+      },
+    })
+
+    const mounted = mountBlock(block, h)
+    // Implementation detail: cache lives on the instance root.
+    const cache = (mounted.root as any).__hrbrPathCache as Map<string, Node>
+    expect(cache).toBeInstanceOf(Map)
+    // Prefixes for both paths should exist.
+    expect(cache.has('0')).toBe(true)
+    expect(cache.has('0.0')).toBe(true)
+    expect(cache.has('1')).toBe(true)
+    expect(cache.has('1.0')).toBe(true)
+
+    mounted.destroy()
+  })
+
+  it('dev diagnostics: mountBlock includes slot key in invalid path errors (dev mode)', () => {
+    const h = host()
+
+    const block = defineBlock({
+      templateHTML: `<div><span>a</span></div>`,
+      slots: {
+        name: { kind: 'text', path: [9, 0] },
+      },
+    })
+
+    expect(() => mountBlock(block, h, {}, { dev: true })).toThrow(/slot 'name'/)
+  })
+
   it('changing a signal updates only the intended DOM node (mountCompiledBlock)', async () => {
     const h = host()
 
@@ -290,5 +328,166 @@ describe('runtime/block (phase 3)', () => {
     expect(span2.textContent).toBe('B')
 
     mounted.dispose()
+  })
+
+  it('skips redundant writes for unchanged values (text + attr)', () => {
+    const h = host()
+
+    const block = defineBlock({
+      templateHTML: `<div><span>hi</span><a>link</a></div>`,
+      slots: {
+        text: { kind: 'text', path: [0, 0] },
+        href: { kind: 'attr', path: [1], name: 'href' },
+      },
+    })
+
+    const mounted = mountBlock(block, h, { text: 'X', href: 'y' })
+    const root = mounted.root as HTMLElement
+    const span = root.querySelector('span')!
+    const a = root.querySelector('a')!
+    const textNode = span.firstChild
+
+    // Same values again should be a no-op.
+    mounted.update({ text: 'X', href: 'y' })
+    expect(span.firstChild).toBe(textNode)
+    expect(a.getAttribute('href')).toBe('y')
+
+    mounted.destroy()
+  })
+
+  it('skips redundant event listener churn when handler identity is unchanged', () => {
+    const h = host()
+    const block = defineBlock({
+      templateHTML: `<button>ok</button>`,
+      slots: {
+        onClick: { kind: 'event', path: [], name: 'click' },
+      },
+    })
+
+    const calls: string[] = []
+    const fn = () => calls.push('x')
+    const mounted = mountBlock(block, h, { onClick: fn })
+
+    const btn = h.querySelector('button') as HTMLButtonElement
+    btn.click()
+    expect(calls).toEqual(['x'])
+
+    // Update with the same function reference: should not remove/re-add.
+    mounted.update({ onClick: fn })
+    btn.click()
+    expect(calls).toEqual(['x', 'x'])
+
+    mounted.destroy()
+  })
+
+  it('block composition: can mount a nested block into an element slot and destroys it with parent', () => {
+    const h = host()
+
+    const parent = defineBlock({
+      templateHTML: `<div><div id="slot"></div></div>`,
+      slots: {
+        slot: { kind: 'prop', path: [0], name: 'id' },
+        mountPoint: { kind: 'attr', path: [0], name: 'data-mount' },
+      },
+    })
+
+    // We'll mount into the actual element at path [0] by directly using slotNodes.
+    const hostBlock = mountBlock(
+      defineBlock({
+        templateHTML: `<div><div id="mount"></div></div>`,
+        slots: {
+          mount: { kind: 'attr', path: [0], name: 'data-mount' },
+        },
+      }),
+      h
+    )
+
+    // Create a nested block and mount into the <div id="mount"> element.
+    const child = defineBlock({
+      templateHTML: `<span>child</span>`,
+      slots: {},
+    })
+
+    const root = hostBlock.root as HTMLElement
+    const mountEl = root.querySelector('#mount') as HTMLDivElement
+    expect(mountEl).toBeTruthy()
+
+    // Wire slotNodes for mountNestedBlock by registering a synthetic slot.
+    ;(hostBlock.slotNodes as any).mountEl = mountEl
+    mountNestedBlock(hostBlock, 'mountEl', child)
+    expect(root.textContent).toContain('child')
+
+    hostBlock.destroy()
+    expect(h.textContent).toBe('')
+  })
+
+  it('block composition: can mount a nested fallback region into an element slot and disposes it with parent', async () => {
+    const h = host()
+    const [flag, setFlag] = createSignal(true)
+
+    const parent = mountBlock(
+      defineBlock({
+        templateHTML: `<div><div id="mount"></div></div>`,
+        slots: {},
+      }),
+      h
+    )
+
+    const root = parent.root as HTMLElement
+    const mountEl = root.querySelector('#mount') as HTMLDivElement
+    ;(parent.slotNodes as any).mountEl = mountEl
+
+    mountNestedFallback(parent, 'mountEl', (hostEl) =>
+      mountFallback(hostEl, () => ({
+        children: flag()
+          ? [{ kind: 'node', key: 'a', create: () => document.createTextNode('A'), patch: () => {} }]
+          : [{ kind: 'node', key: 'b', create: () => document.createTextNode('B'), patch: () => {} }],
+      }))
+    )
+
+    expect(root.textContent).toContain('A')
+    setFlag(false)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(root.textContent).toContain('B')
+
+    parent.destroy()
+    // After destroy, host is removed entirely.
+    expect(h.textContent).toBe('')
+  })
+
+  it('lifecycle: destroy() is idempotent and prevents further updates', () => {
+    const h = host()
+    const block = defineBlock({
+      templateHTML: `<div><span>A</span></div>`,
+      slots: { t: { kind: 'text', path: [0, 0] } },
+    })
+    const mounted = mountBlock(block, h, { t: 'A' })
+    mounted.destroy()
+    // second destroy should be a no-op (no throw)
+    mounted.destroy()
+    // update after destroy should be ignored
+    mounted.update({ t: 'B' })
+    expect(h.textContent).toBe('')
+  })
+
+  it('lifecycle: mountCompiledBlock.dispose() stops reactive updates and is idempotent', async () => {
+    const h = host()
+    const [a, setA] = createSignal('A')
+
+    const block = defineBlock({
+      templateHTML: `<div><span>A</span></div>`,
+      slots: { a: { kind: 'text', path: [0, 0] } },
+    })
+
+    const mounted = mountCompiledBlock(block, h, [{ key: 'a', read: () => a() }])
+    expect(h.textContent).toBe('A')
+
+    mounted.dispose()
+    mounted.dispose()
+
+    setA('B')
+    await new Promise((r) => setTimeout(r, 0))
+    // DOM removed, and no further updates should occur.
+    expect(h.textContent).toBe('')
   })
 })

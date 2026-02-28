@@ -11,6 +11,6 @@ export default [
         ...globals.browser,
       },
     },
-    rules: {},
+  rules: {},
   },
 ]

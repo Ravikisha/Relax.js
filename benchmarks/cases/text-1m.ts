@@ -1,8 +1,9 @@
 import type { BenchmarkCase } from '../harness'
+import type { BenchmarkProfile } from '../profile'
 import { defineBlock, mountCompiledBlock } from '../../runtime/block'
 import { createSignal } from '../../runtime/signals'
 
-export function text1mHRBR(): BenchmarkCase {
+export function text1mHRBR(_profile?: BenchmarkProfile): BenchmarkCase {
 	return {
 		name: 'text-1m:hrbr',
 		setup(host) {

@@ -1,6 +1,6 @@
 import { setAttributes } from './attributes'
 import { addEventListeners } from './events'
-import { DOM_TYPES, type ComponentVNode, type ElementVNode, type FragmentVNode, type TextVNode, type VNode } from './h'
+import { DOM_TYPES, type ComponentVNode, type ElementVNode, type FragmentVNode, type HrbrVNode, type TextVNode, type VNode } from './h'
 import { enqueueJob } from './scheduler'
 import { extractPropsAndEvents } from './utils/props'
 
@@ -37,10 +37,31 @@ export function mountDOM(
       break
     }
 
+    case DOM_TYPES.HRBR: {
+      createHrbrNode(vdom as HrbrVNode, parentEl, index)
+      break
+    }
+
     default: {
       throw new Error(`Can't mount DOM of type: ${vdom.type}`)
     }
   }
+}
+
+function createHrbrNode(vdom: HrbrVNode, parentEl: Element, index?: number | null) {
+  // We mount HRBR output into a dedicated host element so it can be moved/removed as a unit.
+  const host = document.createElement('span')
+  ;(host as any).dataset.hrbr = '1'
+  vdom.host = host as any
+  insert(host, parentEl, index)
+
+  const instance = vdom.mount(host)
+  vdom.instance = instance
+
+  // IMPORTANT: `vdom.el` must point at the actual DOM node the VDOM owns.
+  // For HRBR we own the host container, not the host's first child.
+  // This allows patchDOM's replace-path to find the correct index via oldVdom.el.
+  vdom.el = host
 }
 
 function createTextNode(vdom: TextVNode, parentEl: Element, index?: number | null) {

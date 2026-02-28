@@ -1,8 +1,9 @@
 import type { BenchmarkCase } from '../harness'
+import type { BenchmarkProfile } from '../profile'
 import { mountDashboard200HRBR } from '../../examples/dashboard/hrbr'
 import { mountDashboard200VDOM } from '../../examples/dashboard/vdom'
 
-export function widgets200HRBR(): BenchmarkCase {
+export function widgets200HRBR(_profile?: BenchmarkProfile): BenchmarkCase {
 	return {
 		name: 'widgets-200:relax-hrbr',
 		setup(host) {
@@ -15,7 +16,7 @@ export function widgets200HRBR(): BenchmarkCase {
 	}
 }
 
-export function widgets200VDOM(): BenchmarkCase {
+export function widgets200VDOM(_profile?: BenchmarkProfile): BenchmarkCase {
 	return {
 		name: 'widgets-200:relax-vdom',
 		setup(host) {

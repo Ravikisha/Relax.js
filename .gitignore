@@ -82,6 +82,10 @@ web_modules/
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache
+.DS_Store
+
+# Generated benchmark build output
+benchmarks/dist-smoke/
 
 # Next.js build output
 .next

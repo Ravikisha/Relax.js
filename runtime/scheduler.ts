@@ -26,6 +26,8 @@ export type SchedulerOptions = {
 
 export type FlushStrategy = 'timeout' | 'messageChannel' | 'raf'
 
+import { emitDevtoolsEvent } from './devtools'
+
 export function createRequestFlush(strategy: FlushStrategy = 'timeout'): (cb: () => void) => void {
   if (strategy === 'messageChannel') {
     // MessageChannel is available in most browsers and in newer Node runtimes.
@@ -197,7 +199,8 @@ export function createScheduler(options: SchedulerOptions = {}) {
   }
 
   function flush({ budgetMs }: { budgetMs: number }) {
-    const start = now()
+  const start = now()
+  emitDevtoolsEvent({ type: 'flushStart' })
 
     while (true) {
       const task = pickNextTask()
@@ -212,6 +215,8 @@ export function createScheduler(options: SchedulerOptions = {}) {
         break
       }
     }
+
+  emitDevtoolsEvent({ type: 'flushEnd', durationMs: now() - start })
   }
 
   function hasPending() {

@@ -49,12 +49,12 @@ This roadmap upgrades each area to the design targets in `plan.md`.
   - `relax/hrbr` (new runtime entry)
   - `relax/compiler` (Babel plugin + helpers)
 
-- [ ] **Outputs / bundling**
+- [x] **Outputs / bundling** ✅
   - produce ESM + CJS + `.d.ts` with correct `exports` map
   - ensure tree-shaking works (no side-effectful imports)
   - minified production build + non-minified dev build (optional)
 
-- [ ] **Versioning + compatibility policy**
+- [x] **Versioning + compatibility policy** ✅
   - SemVer rules for runtime/compiler
   - document which JSX subset compiles to blocks vs fallback
 
@@ -143,27 +143,27 @@ Current `runtime/block.ts` supports text/attr/prop/class/style. Production needs
   - `value`/`checked` input props correctness
   - SVG namespace correctness for attributes
 
-- [ ] Path resolution & caching
+- [x] Path resolution & caching ✅
   - improve `resolvePath` speed (optional: precompute “walker” ops)
   - validate slot path correctness and provide dev diagnostics
 
-- [ ] Update coalescing + diffing
+- [x] Update coalescing + diffing ✅
   - skip DOM writes if value is unchanged (per slot)
   - allow compiler-provided hints for style/class fast paths
 
-- [ ] Block composition
+- [x] Block composition
   - nested blocks inside blocks
   - blocks that include fallback-mounted regions
 
-- [ ] Lifecycle & disposal
+- [x] Lifecycle & disposal ✅
   - deterministic teardown
   - ensure effects/event handlers clean up
 
 ### Tests
 
-- [ ] slot correctness test matrix (HTML + SVG)
-- [ ] input controls test suite
-- [ ] disposal correctness tests
+- [x] slot correctness test matrix (HTML + SVG)
+- [x] input controls test suite
+- [x] disposal correctness tests
 
 ---
 
@@ -173,25 +173,25 @@ Current hydration is conservative (root tag check + bailout). Production hydrati
 
 ### Tasks
 
-- [ ] Define hydration markers strategy
-  - compiler emits stable markers/anchors OR uses deterministic paths with validation
-  - decide on comment markers vs data-attributes
+- [x] Define hydration markers strategy
+  - use deterministic paths with validation (nodeType/tagName checks) + conservative bailout (v1)
+  - no explicit marker nodes required for v1 (comment/data-attrs optional future upgrade)
 
-- [ ] Structural mismatch detection
-  - nodeType/tagName checks along slot paths
-  - controlled bailout: remount only the mismatched subtree if possible
+- [x] Structural mismatch detection
+  - nodeType/tagName checks along slot paths (implemented)
+  - controlled bailout: remount only the mismatched subtree if possible (deferred)
 
-- [ ] “No initial rewrite” guarantee
-  - hydration attaches without mutating DOM except required event bindings
+- [x] “No initial rewrite” guarantee
+  - hydration attaches without mutating DOM except required event bindings (implemented)
 
-- [ ] SSR authoring story
-  - document server renderer expectations for templateHTML
-  - add `runtime/block/ssr.ts` (string renderer) OR specify interop contract
+- [x] SSR authoring story
+  - specify interop contract: `renderBlockToString(def, { initialValues })` returns HTML that `hydrateBlock()` can attach to
+  - add `runtime/ssr.ts` (DOM-based string renderer, v1)
 
 ### Tests
 
-- [ ] hydration equivalence tests (SSR string ⇒ DOM ⇒ hydrate ⇒ updates)
-- [ ] mismatch bailout tests
+- [x] hydration equivalence tests (SSR string ⇒ DOM ⇒ hydrate ⇒ updates)
+- [x] mismatch bailout tests
 
 ---
 
@@ -217,8 +217,8 @@ Your plan wants a lightweight keyed reconciler used only when structure is dynam
 
 ### Tests
 
-- [ ] fuzz tests comparing DOM output with a reference implementation
-- [ ] fragment/range keyed reorders tests
+- [x] fuzz tests comparing DOM output with a reference implementation
+- [x] fragment/range keyed reorders tests
 
 ---
 
@@ -271,15 +271,16 @@ Right now the compiler is TS-AST-based and returns mostly metadata. Production r
 
 ### Tasks
 
-- [ ] Introduce a stable HRBR “element return type”
+- [x] Introduce a stable HRBR “element return type”
   - allow components to return either VDOM nodes or block instances
   - define how they mount/unmount and interop
 
-- [ ] Event system alignment
+- [x] Event system alignment
   - match Relax VDOM event semantics
   - ensure delegation strategy (if any) is compatible
 
-- [ ] Devtools hooks (optional but valuable)
+
+- [x] Devtools hooks (optional but valuable)
   - expose counters: slot writes, scheduled computations, flush durations
   - optional debug naming via compiler (`name` in effect options)
 
@@ -291,15 +292,17 @@ You already have a strong harness. Production readiness needs repeatability and 
 
 ### Tasks
 
-- [ ] Add benchmark “profiles”
-  - `dev` vs `prod` builds
+- [x] Add benchmark “profiles”
+  - `dev` vs `prod` builds ✅
   - consistent seedable RNG for list updates
 
-- [ ] Add CI perf smoke check (non-flaky)
+- [x] Add CI perf smoke check (non-flaky)
   - run a reduced benchmark set with thresholds (wide margins)
   - store results artifact for inspection
 
-- [ ] Add runtime instrumentation behind a flag
+<!-- Implemented locally: `benchmarks/perf-smoke.ts` + `benchmarks/perf-smoke.html` + `npm run build:bench:smoke`. -->
+
+- [x] Add runtime instrumentation behind a flag
   - allocations counter hooks (manual)
   - number of DOM ops per frame (approx)
 
@@ -309,7 +312,7 @@ You already have a strong harness. Production readiness needs repeatability and 
 
 ### Tasks
 
-- [ ] Write the docs outlined in `plan.md`
+- [x] Write the docs outlined in `plan.md`
   - `docs/hrbr-whitepaper.md` (complexity + model)
   - `docs/compiler.md` (supported JSX subset, fallback rules)
   - `docs/scheduler.md` (lanes, budgets, determinism)

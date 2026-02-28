@@ -1,4 +1,5 @@
 import { runBenchmark } from './harness'
+import { getBenchmarkProfile } from './profile'
 import {
 	list10k1pctHRBR,
 	list10k1pctHRBRFineCase,
@@ -39,86 +40,87 @@ function fmt(res: Awaited<ReturnType<typeof runBenchmark>>) {
 }
 
 runBtn.addEventListener('click', async () => {
+	const profile = getBenchmarkProfile()
 	runBtn.disabled = true
-	out.textContent = 'Running...\n'
+	out.textContent = `Running...\nprofile: ${profile.name}\nseed: ${profile.seed}\n\n`
 	try {
 		host.innerHTML = ''
-		const t = await runBenchmark(text1mHRBR(), host, { warmupFrames: 5, measureFrames: 60 })
+		const t = await runBenchmark(text1mHRBR(profile), host, profile)
 		out.textContent += fmt(t) + '\n\n'
 
 		host.innerHTML = ''
-		const a = await runBenchmark(list10k1pctHRBR(), host)
+		const a = await runBenchmark(list10k1pctHRBR(profile), host, profile)
 		out.textContent += fmt(a) + '\n\n'
 
 		host.innerHTML = ''
-		const af = await runBenchmark(list10k1pctHRBRFineCase(), host)
+		const af = await runBenchmark(list10k1pctHRBRFineCase(profile), host, profile)
 		out.textContent += fmt(af) + '\n\n'
 
 		host.innerHTML = ''
-		const b = await runBenchmark(list10k1pctVDOM(), host)
+		const b = await runBenchmark(list10k1pctVDOM(profile), host, profile)
 		out.textContent += fmt(b) + '\n'
 
 		host.innerHTML = ''
-		const bd = await runBenchmark(list10k1pctVDOMDirect(), host)
+		const bd = await runBenchmark(list10k1pctVDOMDirect(profile), host, profile)
 		out.textContent += '\n' + fmt(bd) + '\n'
 
 		host.innerHTML = ''
-		const bm = await runBenchmark(list10k1pctVDOMMemoRowCase(), host)
+		const bm = await runBenchmark(list10k1pctVDOMMemoRowCase(profile), host, profile)
 		out.textContent += '\n' + fmt(bm) + '\n'
 
 			host.innerHTML = ''
-			const br = await runBenchmark(list10k1pctReact(), host)
+			const br = await runBenchmark(list10k1pctReact(profile), host, profile)
 			out.textContent += '\n' + fmt(br) + '\n\n'
 
 			host.innerHTML = ''
-			const bs = await runBenchmark(list10k1pctSolid(), host)
+			const bs = await runBenchmark(list10k1pctSolid(profile), host, profile)
 			out.textContent += fmt(bs) + '\n'
 
 		host.innerHTML = ''
-		const c = await runBenchmark(widgets200HRBR(), host)
+		const c = await runBenchmark(widgets200HRBR(profile), host, profile)
 		out.textContent += '\n' + fmt(c) + '\n\n'
 
 		host.innerHTML = ''
-		const d = await runBenchmark(widgets200VDOM(), host)
+		const d = await runBenchmark(widgets200VDOM(profile), host, profile)
 		out.textContent += fmt(d) + '\n'
 
 			host.innerHTML = ''
-			const dr = await runBenchmark(widgets200React(), host)
+			const dr = await runBenchmark(widgets200React(profile), host, profile)
 			out.textContent += '\n' + fmt(dr) + '\n\n'
 
 			host.innerHTML = ''
-			const ds = await runBenchmark(widgets200Solid(), host)
+			const ds = await runBenchmark(widgets200Solid(profile), host, profile)
 			out.textContent += fmt(ds) + '\n'
 
 			// ---- Additional vivid comparisons ----
 			host.innerHTML = ''
 			out.textContent += '\n'
-			out.textContent += fmt(await runBenchmark(propsToggle5kRelaxVDOM(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(propsToggle5kRelaxVDOM(profile), host, profile)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(propsToggle5kRelaxHRBR(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(propsToggle5kRelaxHRBR(profile), host, profile)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(propsToggle5kReact(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(propsToggle5kReact(profile), host, profile)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(propsToggle5kSolid(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(propsToggle5kSolid(profile), host, profile)) + '\n\n'
 
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(styleGrid1kRelaxVDOM(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(styleGrid1kRelaxVDOM(profile), host, profile)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(styleGrid1kReact(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(styleGrid1kReact(profile), host, profile)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(styleGrid1kSolid(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(styleGrid1kSolid(profile), host, profile)) + '\n\n'
 
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(table2kShuffleRelaxVDOM(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(table2kShuffleRelaxVDOM(profile), host, profile)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(table2kShuffleReact(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(table2kShuffleReact(profile), host, profile)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(table2kShuffleSolid(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(table2kShuffleSolid(profile), host, profile)) + '\n\n'
 
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(svg1kRelaxVDOM(), host)) + '\n\n'
+			out.textContent += fmt(await runBenchmark(svg1kRelaxVDOM(profile), host, profile)) + '\n\n'
 			host.innerHTML = ''
-			out.textContent += fmt(await runBenchmark(inputTyping1kRelaxVDOM(), host)) + '\n'
+			out.textContent += fmt(await runBenchmark(inputTyping1kRelaxVDOM(profile), host, profile)) + '\n'
 	} finally {
 		runBtn.disabled = false
 	}

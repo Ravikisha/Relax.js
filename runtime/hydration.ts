@@ -1,6 +1,11 @@
 import { assert } from '../src/utils/assert'
 import { mountBlock, type BlockDef, type MountedBlock } from './block'
 
+type ListenerRecord = {
+  type: string
+  handler: EventListener
+}
+
 export type HydratedBlock = MountedBlock
 
 /**
@@ -32,58 +37,92 @@ export function hydrateBlock(def: BlockDef, host: Element, initialValues: Record
     slotNodes[key] = node
   }
 
+  // Conservative mismatch detection along slot paths: validate node types, and for element slots validate
+  // tagName matches the element in the template at the same path.
+  // If anything doesn't line up, bail out and do a client-side mount.
+  try {
+    const expectedRoot = parseTemplateRoot(def.templateHTML)
+
+    for (const [key, slot] of Object.entries(def.slots)) {
+  const node = slotNodes[key]
+  assert(node != null, `[hrbr/hydrate] missing resolved node for slot '${key}'`)
+
+      if (slot.kind === 'text') {
+        assert(node.nodeType === Node.TEXT_NODE, `[hrbr/hydrate] slot '${key}' expected a Text node`)
+        continue
+      }
+
+      assert(node.nodeType === Node.ELEMENT_NODE, `[hrbr/hydrate] slot '${key}' expected an Element node`)
+
+      const expected = resolvePath(expectedRoot, slot.path)
+      assert(
+        expected.nodeType === Node.ELEMENT_NODE,
+        `[hrbr/hydrate] slot '${key}' expected template node to be an Element`
+      )
+
+      const expectedEl = expected as Element
+      const actualEl = node as Element
+      assert(
+        expectedEl.tagName.toLowerCase() === actualEl.tagName.toLowerCase(),
+        `[hrbr/hydrate] slot '${key}' tag mismatch: expected <${expectedEl.tagName.toLowerCase()}> but found <${actualEl.tagName.toLowerCase()}>`
+      )
+    }
+  } catch {
+    host.innerHTML = ''
+    return mountBlock(def, host, initialValues)
+  }
+
+  const listenersByKey: Record<string, ListenerRecord | undefined> = Object.create(null)
+  const prevValues: Record<string, unknown> = Object.create(null)
+
   const hydrated: HydratedBlock = {
     host,
     root: serverRoot,
     slotNodes,
     update(values) {
-      // delegate to the same patching semantics as mountBlock by temporarily mounting a lightweight facade
-      // This avoids duplicating slot patching logic.
-      const facade: MountedBlock = {
-        host,
-        root: serverRoot,
-        slotNodes,
-        update: () => {},
-        destroy: () => {},
-      }
-
-      // Reuse mountBlock's patch logic by calling the internal updater route.
-      // Since it's currently implemented inline in mountBlock, we mirror the same logic here.
       for (const [k, next] of Object.entries(values)) {
-        const s = def.slots[k]
-        if (!s) continue
-        const n = slotNodes[k]
-        if (!n) continue
+        const slot = def.slots[k]
+        if (!slot) continue
+        const node = slotNodes[k]
+        if (!node) continue
 
-        switch (s.kind) {
+        // Skip redundant writes (and listener churn) like mountBlock.
+        if (k in prevValues && Object.is(prevValues[k], next)) continue
+        prevValues[k] = next
+
+        switch (slot.kind) {
           case 'text': {
-            assert(n.nodeType === Node.TEXT_NODE, `[hrbr/hydrate] slot '${k}' expected a Text node`)
-            ;(n as Text).nodeValue = next == null ? '' : String(next)
+            assert(node.nodeType === Node.TEXT_NODE, `[hrbr/hydrate] slot '${k}' expected a Text node`)
+            ;(node as Text).nodeValue = next == null ? '' : String(next)
             break
           }
+
           case 'attr': {
-            assert(n.nodeType === Node.ELEMENT_NODE, `[hrbr/hydrate] slot '${k}' expected an Element node`)
-            const el = n as Element
-            if (next == null || next === false) el.removeAttribute(s.name)
-            else el.setAttribute(s.name, String(next))
+            assert(node.nodeType === Node.ELEMENT_NODE, `[hrbr/hydrate] slot '${k}' expected an Element node`)
+            const el = node as Element
+            setAttr(el, slot.name, next)
             break
           }
+
           case 'prop': {
-            assert(n.nodeType === Node.ELEMENT_NODE, `[hrbr/hydrate] slot '${k}' expected an Element node`)
-            ;(n as any)[s.name] = next
+            assert(node.nodeType === Node.ELEMENT_NODE, `[hrbr/hydrate] slot '${k}' expected an Element node`)
+            const el = node as any
+            setProp(el, slot.name, next)
             break
           }
+
           case 'class': {
-            assert(n.nodeType === Node.ELEMENT_NODE, `[hrbr/hydrate] slot '${k}' expected an Element node`)
-            const el = n as Element
+            assert(node.nodeType === Node.ELEMENT_NODE, `[hrbr/hydrate] slot '${k}' expected an Element node`)
+            const el = node as Element
             if (next == null || next === false) el.removeAttribute('class')
             else if (Array.isArray(next)) el.setAttribute('class', next.filter(Boolean).join(' '))
             else el.setAttribute('class', String(next))
             break
           }
+
           case 'style': {
-            assert(n.nodeType === Node.ELEMENT_NODE, `[hrbr/hydrate] slot '${k}' expected an Element node`)
-            const el = n as HTMLElement
+            assert(node.nodeType === Node.ELEMENT_NODE, `[hrbr/hydrate] slot '${k}' expected an Element node`)
+            const el = node as HTMLElement
             const style = next as any
             if (style == null || style === false) el.removeAttribute('style')
             else if (typeof style === 'string') el.setAttribute('style', style)
@@ -92,17 +131,44 @@ export function hydrateBlock(def: BlockDef, host: Element, initialValues: Record
                 if (vv == null) el.style.removeProperty(kk)
                 else el.style.setProperty(kk, String(vv))
               }
-            } else {
-              el.setAttribute('style', String(style))
+            } else el.setAttribute('style', String(style))
+            break
+          }
+
+          case 'event': {
+            assert(node.nodeType === Node.ELEMENT_NODE, `[hrbr/hydrate] slot '${k}' expected an Element node`)
+            const el = node as Element
+
+            const prev = listenersByKey[k]
+            if (prev) {
+              el.removeEventListener(prev.type, prev.handler)
+              listenersByKey[k] = undefined
             }
+
+            if (typeof next !== 'function') break
+
+            const handler: EventListener = (ev) => (next as any)(ev)
+            el.addEventListener(slot.name, handler)
+            listenersByKey[k] = { type: slot.name, handler }
             break
           }
         }
       }
-
-      void facade
+    },
+    dispose() {
+      hydrated.destroy()
     },
     destroy() {
+      // Remove any bound listeners we attached during hydration.
+      for (const [key, rec] of Object.entries(listenersByKey)) {
+        if (!rec) continue
+        const slot = def.slots[key]
+        if (!slot || slot.kind !== 'event') continue
+        const node = slotNodes[key]
+        if (node && node.nodeType === Node.ELEMENT_NODE) {
+          ;(node as Element).removeEventListener(rec.type, rec.handler)
+        }
+      }
       serverRoot.remove()
     },
   }
@@ -127,4 +193,74 @@ function getRootTagName(templateHTML: string): string | null {
   if (!trimmed.startsWith('<')) return null
   const m = /^<\s*([a-zA-Z0-9-]+)/.exec(trimmed)
   return m?.[1]?.toLowerCase() ?? null
+}
+
+function parseTemplateRoot(templateHTML: string): Element {
+  const tpl = document.createElement('template')
+  tpl.innerHTML = templateHTML.trim()
+  const root = tpl.content.firstElementChild
+  assert(root != null, '[hrbr/hydrate] templateHTML must have a single root element')
+  return root as Element
+}
+
+function isSvgElement(el: Element): boolean {
+  return el.namespaceURI === 'http://www.w3.org/2000/svg'
+}
+
+function setMaybeNamespacedAttribute(el: Element, name: string, value: string) {
+  if (isSvgElement(el) && name.startsWith('xlink:')) {
+    el.setAttributeNS('http://www.w3.org/1999/xlink', name, value)
+  } else {
+    el.setAttribute(name, value)
+  }
+}
+
+function removeMaybeNamespacedAttribute(el: Element, name: string) {
+  if (isSvgElement(el) && name.startsWith('xlink:')) {
+    el.removeAttributeNS('http://www.w3.org/1999/xlink', name.slice('xlink:'.length))
+  } else {
+    el.removeAttribute(name)
+  }
+}
+
+function isBooleanishAttribute(name: string): boolean {
+  return (
+    name === 'disabled' ||
+    name === 'checked' ||
+    name === 'selected' ||
+    name === 'readonly' ||
+    name === 'readOnly' ||
+    name === 'multiple' ||
+    name === 'hidden' ||
+    name === 'required'
+  )
+}
+
+function normalizeBooleanAttrName(name: string): string {
+  if (name === 'readOnly') return 'readonly'
+  return name.toLowerCase()
+}
+
+function setAttr(el: Element, name: string, next: unknown) {
+  if (next == null || next === false) {
+    removeMaybeNamespacedAttribute(el, normalizeBooleanAttrName(name))
+    return
+  }
+  if (isBooleanishAttribute(name)) {
+    setMaybeNamespacedAttribute(el, normalizeBooleanAttrName(name), '')
+    return
+  }
+  setMaybeNamespacedAttribute(el, name, String(next))
+}
+
+function setProp(el: any, name: string, next: unknown) {
+  if (name === 'value') {
+    el.value = next == null ? '' : String(next)
+    return
+  }
+  if (name === 'checked') {
+    el.checked = Boolean(next)
+    return
+  }
+  el[name] = next
 }

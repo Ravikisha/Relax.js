@@ -2,6 +2,7 @@ import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { createSignal, createRoot as createSolidRoot } from 'solid-js'
 import { render as solidRender } from 'solid-js/web'
+import { createRng } from '../rng'
 
 export type ExternalBenchController = {
 	update1pct(): void
@@ -78,9 +79,10 @@ export function mountSolid(host: HTMLElement, mount: () => void): { dispose(): v
 	return { dispose: () => disposeRoot?.() }
 }
 
-export function reactList10k1pct(host: HTMLElement, n: number): ExternalBenchCommitController {
+export function reactList10k1pct(host: HTMLElement, n: number, seed = 12345): ExternalBenchCommitController {
 	const ids = Array.from({ length: n }, (_, i) => i)
 	const values = new Array<number>(n).fill(0)
+	const rng = createRng(seed)
 
 	function App() {
 		// We keep state outside React to make update() cheap and comparable to other cases.
@@ -105,7 +107,7 @@ export function reactList10k1pct(host: HTMLElement, n: number): ExternalBenchCom
 		update1pct() {
 			const k = Math.max(1, Math.floor(n / 100))
 			for (let i = 0; i < k; i++) {
-				const idx = (Math.random() * n) | 0
+				const idx = rng.int(n)
 				values[idx] = (values[idx] ?? 0) + 1
 			}
 			forceRender()
@@ -121,10 +123,11 @@ export function reactList10k1pct(host: HTMLElement, n: number): ExternalBenchCom
 	}
 }
 
-export function solidList10k1pct(host: HTMLElement, n: number): ExternalBenchCommitController {
+export function solidList10k1pct(host: HTMLElement, n: number, seed = 12345): ExternalBenchCommitController {
 	// Fine-grained Solid: stable DOM nodes; update only changed rows.
 	const values = new Array<number>(n).fill(0)
 	const [vals, setVals] = createSignal(values)
+	const rng = createRng(seed)
 
 	const ul = document.createElement('ul')
 	const lis: HTMLLIElement[] = new Array(n)
@@ -143,7 +146,7 @@ export function solidList10k1pct(host: HTMLElement, n: number): ExternalBenchCom
 			setVals((prev) => {
 				const next = prev.slice()
 				for (let i = 0; i < k; i++) {
-					const idx = (Math.random() * n) | 0
+					const idx = rng.int(n)
 					next[idx] = (next[idx] ?? 0) + 1
 					lis[idx]!.textContent = `Row ${idx}: ${next[idx]}`
 				}
@@ -161,9 +164,10 @@ export function solidList10k1pct(host: HTMLElement, n: number): ExternalBenchCom
 	}
 }
 
-export function reactWidgets200(host: HTMLElement, n: number): ExternalBenchCommitController {
+export function reactWidgets200(host: HTMLElement, n: number, seed = 12345): ExternalBenchCommitController {
 	const ids = Array.from({ length: n }, (_, i) => i)
 	const values = new Array<number>(n).fill(0)
+	const rng = createRng(seed)
 
 	function App() {
 		const [, force] = React.useReducer((x: number) => x + 1, 0)
@@ -206,7 +210,7 @@ export function reactWidgets200(host: HTMLElement, n: number): ExternalBenchComm
 		update1pct() {
 			const k = Math.max(1, Math.floor(n / 100))
 			for (let i = 0; i < k; i++) {
-				const idx = (Math.random() * n) | 0
+				const idx = rng.int(n)
 				values[idx] = (values[idx] ?? 0) + 1
 			}
 			forceRender()
@@ -221,9 +225,10 @@ export function reactWidgets200(host: HTMLElement, n: number): ExternalBenchComm
 	}
 }
 
-export function solidWidgets200(host: HTMLElement, n: number): ExternalBenchCommitController {
+export function solidWidgets200(host: HTMLElement, n: number, seed = 12345): ExternalBenchCommitController {
 	const values = new Array<number>(n).fill(0)
 	const [vals, setVals] = createSignal(values)
+	const rng = createRng(seed)
 
 	const grid = document.createElement('div')
 	grid.style.display = 'grid'
@@ -255,7 +260,7 @@ export function solidWidgets200(host: HTMLElement, n: number): ExternalBenchComm
 			setVals((prev) => {
 				const next = prev.slice()
 				for (let i = 0; i < k; i++) {
-					const idx = (Math.random() * n) | 0
+					const idx = rng.int(n)
 					next[idx] = (next[idx] ?? 0) + 1
 					valueNodes[idx]!.textContent = `Value: ${next[idx]}`
 				}

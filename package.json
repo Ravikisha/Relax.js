@@ -11,19 +11,19 @@
   ],
   "exports": {
     ".": {
-  "types": "./dist-types/src/index.d.ts",
+      "types": "./dist-types/src/index.d.ts",
       "import": "./dist/esm/index.js",
-    "require": "./dist/cjs/index.cjs"
+      "require": "./dist/cjs/index.cjs"
     },
     "./hrbr": {
-  "types": "./dist-types/runtime/index.d.ts",
+      "types": "./dist-types/runtime/index.d.ts",
       "import": "./dist/esm/hrbr.js",
-    "require": "./dist/cjs/hrbr.cjs"
+      "require": "./dist/cjs/hrbr.cjs"
     },
     "./compiler": {
-  "types": "./dist-types/compiler/index.d.ts",
+      "types": "./dist-types/compiler/index.d.ts",
       "import": "./dist/esm/compiler.js",
-    "require": "./dist/cjs/compiler.cjs"
+      "require": "./dist/cjs/compiler.cjs"
     }
   },
   "main": "dist/cjs/index.cjs",
@@ -31,16 +31,20 @@
   "types": "dist-types/src/index.d.ts",
   "files": [
     "dist/",
-  "dist-types/"
+    "dist-types/"
   ],
   "homepage": "",
   "bugs": {
     "url": "https://github.com/ravikisha/Relax.js/issues"
   },
   "scripts": {
-  "build": "rollup -c && rollup -c rollup.config.cjs.mjs",
+    "build": "rollup -c && rollup -c rollup.config.cjs.mjs",
   "build:types": "tsc -p tsconfig.build-types.json",
-    "build:bench": "rollup -c rollup.benchmarks.config.mjs",
+  "build:bench": "rollup -c rollup.benchmarks.config.mjs",
+  "build:bench:dev": "NODE_ENV=development rollup -c rollup.benchmarks.config.mjs",
+  "build:bench:prod": "NODE_ENV=production rollup -c rollup.benchmarks.config.mjs",
+  "build:bench:smoke": "NODE_ENV=production rollup -c rollup.benchmarks.smoke.config.mjs",
+  "serve:bench:smoke": "npm run -s build:bench:smoke && npx --yes http-server -p 4174 -c-1 benchmarks -o /perf-smoke.html",
     "serve:bench": "npm run -s build:bench && npx --yes http-server -p 4173 -c-1 .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
@@ -48,7 +52,7 @@
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test:coverage": "vitest run --coverage",
-  "prepack": "npm run build && npm run build:types"
+    "prepack": "npm run build && npm run build:types"
   },
   "author": "Ravi Kishan",
   "license": "MIT",

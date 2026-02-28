@@ -5,18 +5,17 @@ import typescript from '@rollup/plugin-typescript'
 import replace from '@rollup/plugin-replace'
 
 export default defineConfig({
-	input: 'benchmarks/main.ts',
+	input: 'benchmarks/perf-smoke.ts',
 	output: {
-		dir: 'benchmarks/dist',
+		dir: 'benchmarks/dist-smoke',
 		format: 'es',
 		sourcemap: true,
+		entryFileNames: 'perf-smoke.js',
 	},
 	plugins: [
 		replace({
 			preventAssignment: true,
 			values: {
-				// NOTE: benchmark build runs in-browser, but some libs read NODE_ENV at bundle-time.
-				// Default to production if not specified.
 				// eslint-disable-next-line no-process-env
 				'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
 			},
@@ -27,7 +26,7 @@ export default defineConfig({
 			tsconfig: './tsconfig.json',
 			declaration: false,
 			declarationMap: false,
-			outDir: 'benchmarks/dist',
+			outDir: 'benchmarks/dist-smoke',
 		}),
 	],
 })

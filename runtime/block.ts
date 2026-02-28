@@ -1,6 +1,7 @@
 import { assert } from '../src/utils/assert'
 import { batch, createEffect } from './signals'
 import { createScheduler, type Lane } from './scheduler'
+import { emitDevtoolsEvent, emitDomOp } from './devtools'
 
 export type BlockSlotKind = 'text' | 'attr' | 'prop' | 'class' | 'style' | 'event'
 
@@ -61,12 +62,39 @@ export type MountCompiledBlockOptions = {
   scheduler?: ReturnType<typeof createScheduler>
 }
 
+export type MountBlockOptions = {
+  /**
+   * When true, include the slot key in path resolution assertions for easier debugging.
+   * Defaults to false.
+   */
+  dev?: boolean
+
+  /**
+   * Optional binding target for event slots.
+   * When set, event handlers are invoked with `this === hostComponent`, matching Relax VDOM semantics.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  hostComponent?: any
+}
+
 export type MountedBlock = {
   host: Element
   root: Element
   slotNodes: Record<string, Node>
   update(values: Record<string, unknown>): void
+  /** Dispose reactive resources (if any) and remove DOM. Safe to call multiple times. */
+  dispose(): void
   destroy(): void
+}
+
+export type MountedChild = {
+  destroy(): void
+}
+
+function valuesEqual(a: unknown, b: unknown): boolean {
+  // Cheap equality check used to skip unnecessary DOM writes.
+  // For objects (e.g. style/class arrays), this only skips when reference-equal.
+  return Object.is(a, b)
 }
 
 function isSvgElement(el: Element): boolean {
@@ -113,35 +141,43 @@ function normalizeBooleanAttrName(name: string): string {
 
 function setAttr(el: Element, name: string, next: unknown) {
   if (next == null || next === false) {
+  emitDomOp('removeAttribute')
     removeMaybeNamespacedAttribute(el, normalizeBooleanAttrName(name))
     return
   }
 
   if (isBooleanishAttribute(name)) {
     // Boolean attributes are present/absent.
+    emitDomOp('setAttribute')
     setMaybeNamespacedAttribute(el, normalizeBooleanAttrName(name), '')
     return
   }
 
+  emitDomOp('setAttribute')
   setMaybeNamespacedAttribute(el, name, String(next))
 }
 
 function setProp(el: any, name: string, next: unknown) {
   // Input correctness: value/checked should map to properties.
   if (name === 'value') {
+    emitDomOp('setProperty')
     el.value = next == null ? '' : String(next)
     return
   }
   if (name === 'checked') {
+    emitDomOp('setProperty')
     el.checked = Boolean(next)
     return
   }
+  emitDomOp('setProperty')
   el[name] = next
 }
 
 type ListenerRecord = {
   type: string
   handler: EventListener
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  current?: any
 }
 
 function parseTemplate(templateHTML: string): Element {
@@ -158,7 +194,12 @@ export function defineBlock(def: BlockDef): BlockDef {
   return def
 }
 
-export function mountBlock(def: BlockDef, host: Element, initialValues: Record<string, unknown> = {}): MountedBlock {
+export function mountBlock(
+  def: BlockDef,
+  host: Element,
+  initialValues: Record<string, unknown> = {},
+  options: MountBlockOptions = {}
+): MountedBlock {
   const root = parseTemplate(def.templateHTML)
   const instanceRoot = root.cloneNode(true) as Element
 
@@ -167,27 +208,52 @@ export function mountBlock(def: BlockDef, host: Element, initialValues: Record<s
   const slotNodes: Record<string, Node> = Object.create(null)
 
   for (const [name, slot] of Object.entries(def.slots)) {
-    const node = resolvePath(instanceRoot, slot.path)
+  const node = resolvePathCached(instanceRoot, slot.path, name, options.dev)
     slotNodes[name] = node
   }
 
   const listenersByKey: Record<string, ListenerRecord | undefined> = Object.create(null)
+
+  // Track the last applied value per slot so we can skip redundant writes.
+  const prevValues: Record<string, unknown> = Object.create(null)
+  const mountedChildren: MountedChild[] = []
+  let destroyed = false
+
+  function trackChild(child: MountedChild) {
+    mountedChildren.push(child)
+    return child
+  }
 
   const block: MountedBlock = {
     host,
     root: instanceRoot,
     slotNodes,
     update(values) {
+  if (destroyed) return
       for (const [key, next] of Object.entries(values)) {
         const slot = def.slots[key]
         if (!slot) continue
 
+      // Event slots: handle equality-by-reference against the previous handler.
+      // If unchanged, don't touch listeners.
+      if (slot.kind === 'event') {
+        if (key in prevValues && valuesEqual(prevValues[key], next)) continue
+        prevValues[key] = next
+      } else {
+        // Other slots: simple equality skips DOM writes.
+        if (key in prevValues && valuesEqual(prevValues[key], next)) continue
+        prevValues[key] = next
+      }
+
         const node = slotNodes[key]
         if (!node) continue
+
+  emitDevtoolsEvent({ type: 'slotWrite', slotKind: slot.kind, slotKey: key })
 
         switch (slot.kind) {
           case 'text': {
             assert(node.nodeType === Node.TEXT_NODE, `[hrbr/block] slot '${key}' expected a Text node`)
+            emitDomOp('setText')
             ;(node as Text).nodeValue = next == null ? '' : String(next)
             break
           }
@@ -210,10 +276,13 @@ export function mountBlock(def: BlockDef, host: Element, initialValues: Record<s
             assert(node.nodeType === Node.ELEMENT_NODE, `[hrbr/block] slot '${key}' expected an Element node`)
             const el = node as Element
             if (next == null || next === false) {
+              emitDomOp('removeAttribute')
               el.removeAttribute('class')
             } else if (Array.isArray(next)) {
+              emitDomOp('setAttribute')
               el.setAttribute('class', next.filter(Boolean).join(' '))
             } else {
+              emitDomOp('setAttribute')
               el.setAttribute('class', String(next))
             }
             break
@@ -224,18 +293,23 @@ export function mountBlock(def: BlockDef, host: Element, initialValues: Record<s
             const el = node as HTMLElement
             const style = next as any
             if (style == null || style === false) {
+        emitDomOp('removeAttribute')
               el.removeAttribute('style')
             } else if (typeof style === 'string') {
+        emitDomOp('setAttribute')
               el.setAttribute('style', style)
             } else if (typeof style === 'object') {
               for (const [k, v] of Object.entries(style)) {
                 if (v == null) {
+          emitDomOp('styleRemoveProperty')
                   el.style.removeProperty(k)
                 } else {
+          emitDomOp('styleSetProperty')
                   el.style.setProperty(k, String(v))
                 }
               }
             } else {
+        emitDomOp('setAttribute')
               el.setAttribute('style', String(style))
             }
             break
@@ -246,24 +320,55 @@ export function mountBlock(def: BlockDef, host: Element, initialValues: Record<s
             const el = node as Element
 
             const prev = listenersByKey[key]
-            if (prev) {
+
+            // If the event type changed (shouldn't normally happen), remove the old listener.
+            if (prev && prev.type !== slot.name) {
+              emitDomOp('removeEventListener')
               el.removeEventListener(prev.type, prev.handler)
               listenersByKey[key] = undefined
             }
 
-            if (typeof next !== 'function') {
-              break
+            // Lazily bind once per slot and only update the current handler reference.
+            if (!listenersByKey[key]) {
+              const rec: ListenerRecord = {
+                type: slot.name,
+                handler: (ev) => {
+                  const cur = rec.current
+                  if (typeof cur !== 'function') return
+                  if (options.hostComponent) {
+                    cur.call(options.hostComponent, ev)
+                  } else {
+                    cur(ev)
+                  }
+                },
+                current: next,
+              }
+              emitDomOp('addEventListener')
+              el.addEventListener(slot.name, rec.handler)
+              listenersByKey[key] = rec
+            } else {
+              // Update the handler reference (no re-bind).
+              listenersByKey[key]!.current = next
             }
-
-            const handler: EventListener = (ev) => (next as any)(ev)
-            el.addEventListener(slot.name, handler)
-            listenersByKey[key] = { type: slot.name, handler }
             break
           }
         }
       }
     },
+    dispose() {
+      // mountBlock itself is not reactive, so dispose == destroy.
+      block.destroy()
+    },
     destroy() {
+      if (destroyed) return
+      destroyed = true
+
+      // 1) Destroy composed children first (nested blocks/fallback regions).
+      for (const child of mountedChildren.splice(0)) {
+        child.destroy()
+      }
+
+      // 2) Remove event listeners.
       for (const [key, rec] of Object.entries(listenersByKey)) {
         if (!rec) continue
         const slot = def.slots[key]
@@ -273,12 +378,65 @@ export function mountBlock(def: BlockDef, host: Element, initialValues: Record<s
           ;(node as Element).removeEventListener(rec.type, rec.handler)
         }
       }
+
+      // 3) Remove DOM.
       instanceRoot.remove()
     },
   }
 
   block.update(initialValues)
+
+  // expose internal child tracking for composition helpers
+  ;(block as any).__hrbrTrackChild = trackChild
+
   return block
+}
+
+function getSlotElement(block: MountedBlock, slotKey: string): Element {
+  const node = block.slotNodes[slotKey]
+  assert(node != null, `[hrbr/block] unknown slot '${slotKey}'`)
+  assert(node.nodeType === Node.ELEMENT_NODE, `[hrbr/block] slot '${slotKey}' expected an Element node`)
+  return node as Element
+}
+
+/**
+ * Mount a nested block into an Element slot of a parent block.
+ * The nested block is automatically destroyed when the parent is destroyed.
+ */
+export function mountNestedBlock(parent: MountedBlock, slotKey: string, def: BlockDef, initialValues: Record<string, unknown> = {}) {
+  const host = getSlotElement(parent, slotKey)
+
+  // Clear existing children to make the slot act like a "mount point".
+  while (host.firstChild) host.removeChild(host.firstChild)
+
+  const child = mountBlock(def, host, initialValues)
+  const track: ((c: MountedChild) => MountedChild) | undefined = (parent as any).__hrbrTrackChild
+  if (track) track(child)
+  return child
+}
+
+/**
+ * Mount a fallback region into an Element slot of a parent block.
+ * The region is automatically disposed/destroyed when the parent is destroyed.
+ */
+export function mountNestedFallback(
+  parent: MountedBlock,
+  slotKey: string,
+  mount: (host: Element) => { destroy(): void; dispose(): void }
+) {
+  const host = getSlotElement(parent, slotKey)
+  while (host.firstChild) host.removeChild(host.firstChild)
+  const child = mount(host)
+  const track: ((c: MountedChild) => MountedChild) | undefined = (parent as any).__hrbrTrackChild
+  if (track) {
+    track({
+      destroy() {
+        child.dispose()
+        child.destroy()
+      },
+    })
+  }
+  return child
 }
 
 /**
@@ -326,8 +484,12 @@ export function mountCompiledBlock(
     })
   )
 
+  let disposed = false
+
   return Object.assign(block, {
     dispose() {
+      if (disposed) return
+      disposed = true
       for (const e of effects) e.dispose()
       block.destroy()
     },
@@ -341,6 +503,76 @@ export function resolvePath(root: Node, path: number[]): Node {
     const next = node.childNodes[idx]
     assert(next != null, `[hrbr/block] invalid path: missing child at index ${idx}`)
     node = next
+  }
+  return node
+}
+
+type PathNode = {
+  idx: number
+  next: PathNode | null
+}
+
+function buildPathTrie(slots: Record<string, BlockSlot>): PathNode {
+  const root: PathNode = { idx: -1, next: null }
+  const children: Record<number, PathNode> = Object.create(null)
+
+  function getChild(parent: Record<number, PathNode>, idx: number): PathNode {
+    let n = parent[idx]
+    if (!n) {
+      n = { idx, next: null }
+      parent[idx] = n
+    }
+    return n
+  }
+
+  for (const slot of Object.values(slots)) {
+    let map = children
+    for (const idx of slot.path) {
+      getChild(map, idx)
+      // store nested maps on PathNode.next via a hidden object
+      const node = map[idx]!
+      if (!(node as any)._children) (node as any)._children = Object.create(null)
+      map = (node as any)._children
+    }
+  }
+
+  ;(root as any)._children = children
+  return root
+}
+
+function resolvePathCached(root: Node, path: number[], slotKey: string, dev?: boolean): Node {
+  // Fast path: empty path just returns root.
+  if (path.length === 0) return root
+
+  // Lazily cache step-by-step results on the root element so repeated mounts
+  // (and multiple slots sharing prefixes) avoid re-walking childNodes.
+  const cacheKey = '__hrbrPathCache'
+  let cache: Map<string, Node> | undefined = (root as any)[cacheKey]
+  if (!cache) {
+    cache = new Map()
+    ;(root as any)[cacheKey] = cache
+  }
+
+  let node: Node = root
+  let prefix = ''
+  for (let i = 0; i < path.length; i++) {
+    const idx = path[i]!
+    assert(idx >= 0, dev ? `[hrbr/block] slot '${slotKey}': path indices must be >= 0` : '[hrbr/block] path indices must be >= 0')
+    prefix = prefix ? `${prefix}.${idx}` : String(idx)
+    const cached = cache.get(prefix)
+    if (cached) {
+      node = cached
+      continue
+    }
+    const next = node.childNodes[idx]
+    assert(
+      next != null,
+      dev
+        ? `[hrbr/block] slot '${slotKey}': invalid path: missing child at index ${idx} (prefix ${prefix})`
+        : `[hrbr/block] invalid path: missing child at index ${idx}`
+    )
+    node = next
+    cache.set(prefix, node)
   }
   return node
 }

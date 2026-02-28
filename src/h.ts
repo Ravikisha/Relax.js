@@ -7,6 +7,7 @@ export const DOM_TYPES = {
   FRAGMENT: 'fragment',
   COMPONENT: 'component',
   SLOT: 'slot',
+  HRBR: 'hrbr',
 } as const
 
 export type DomType = (typeof DOM_TYPES)[keyof typeof DOM_TYPES]
@@ -58,7 +59,21 @@ export type ComponentVNode = {
   el?: Element
 }
 
-export type VNode = TextVNode | ElementVNode | FragmentVNode | ComponentVNode | SlotVNode
+export type HrbrVNode = {
+  type: typeof DOM_TYPES.HRBR
+  /** A mount function returned by the HRBR compiler transform: (host) => MountedBlock|MountedFallback */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  mount: (host: Element) => { update?: (values: any) => void; dispose?: () => void; destroy: () => void }
+  /** Internal: mounted instance returned from `mount(host)` */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  instance?: any
+  /** Internal: the host element that contains the block/fallback region */
+  host?: HTMLElement
+  /** Internal: first element produced by the block/fallback region (for component vnode .el tracking) */
+  el?: Element
+}
+
+export type VNode = TextVNode | ElementVNode | FragmentVNode | ComponentVNode | SlotVNode | HrbrVNode
 
 export function h(tag: string | unknown, props: Record<string, unknown> = {}, children: unknown[] = []): ElementVNode | ComponentVNode {
   const type = typeof tag === 'string' ? DOM_TYPES.ELEMENT : DOM_TYPES.COMPONENT
@@ -95,6 +110,19 @@ export function hFragment(vNodes: unknown[]): FragmentVNode {
     type: DOM_TYPES.FRAGMENT,
     children: mapTextNodes(withoutNulls(vNodes as any[])) as VNode[],
   }
+}
+
+/**
+ * Wrap an HRBR mount factory so it can be returned from VDOM components.
+ *
+ * Example (compiled output shape):
+ *   return hBlock((host) => mountCompiledBlock(def, host, slots))
+ */
+export function hBlock(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  mount: (host: Element) => { update?: (values: any) => void; dispose?: () => void; destroy: () => void }
+): HrbrVNode {
+  return { type: DOM_TYPES.HRBR, mount }
 }
 
 let hSlotCalled = false

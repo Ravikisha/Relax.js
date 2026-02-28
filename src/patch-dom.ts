@@ -1,7 +1,7 @@
 import { removeAttribute, removeStyle, setAttribute, setStyle } from './attributes'
 import { destroyDOM } from './destroy-dom'
 import { addEventListener } from './events'
-import { DOM_TYPES, extractChildren, isComponent } from './h'
+import { DOM_TYPES, extractChildren, isComponent, type HrbrVNode } from './h'
 import { mountDOM } from './mount-dom'
 import { areNodesEqual } from './nodes-equal'
 import { arraysDiff, arraysDiffSequence, ARRAY_DIFF_OP } from './utils/arrays'
@@ -36,6 +36,11 @@ export function patchDOM(oldVdom: any, newVdom: any, parentEl: any, hostComponen
             patchComponent(oldVdom, newVdom)
             break
         }
+
+        case DOM_TYPES.HRBR: {
+            patchHrbr(oldVdom as HrbrVNode, newVdom as HrbrVNode)
+            return newVdom
+        }
     }
 
     patchChildren(oldVdom, newVdom, hostComponent)
@@ -62,10 +67,42 @@ function patchDOMSameElement(oldVdom: any, newVdom: any, hostComponent: any = nu
             patchComponent(oldVdom, newVdom)
             break
         }
+
+        case DOM_TYPES.HRBR: {
+            patchHrbr(oldVdom as HrbrVNode, newVdom as HrbrVNode)
+            return newVdom
+        }
     }
 
     patchChildren(oldVdom, newVdom, hostComponent)
     return newVdom
+}
+
+function patchHrbr(oldVdom: HrbrVNode, newVdom: HrbrVNode) {
+    // Keep the existing mounted instance when the mount factory is referentially stable.
+    // This matches how we'd treat a Component function identity.
+    if (oldVdom.mount === newVdom.mount) {
+    if (oldVdom.host) newVdom.host = oldVdom.host
+    if (oldVdom.instance) newVdom.instance = oldVdom.instance
+    if (oldVdom.el) newVdom.el = oldVdom.el
+        return
+    }
+
+    // Otherwise, dispose+destroy the old instance and remount into the same host.
+    // The replace path is handled in patchDOM when areNodesEqual() fails; this is the "same type" case.
+    const host = oldVdom.host
+    if (!host) {
+        // If somehow missing, just treat as a no-op.
+        return
+    }
+    const inst = oldVdom.instance
+    if (inst?.dispose) inst.dispose()
+    if (inst?.destroy) inst.destroy()
+    while (host.firstChild) host.removeChild(host.firstChild)
+    const nextInst = newVdom.mount(host)
+    newVdom.host = host
+    newVdom.instance = nextInst
+    newVdom.el = host.firstElementChild ?? host
 }
 
 function getVdomKey(vdom: any): any {

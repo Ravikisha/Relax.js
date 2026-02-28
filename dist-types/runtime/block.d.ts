@@ -52,6 +52,8 @@ export type MountedBlock = {
     root: Element;
     slotNodes: Record<string, Node>;
     update(values: Record<string, unknown>): void;
+    /** Dispose reactive resources (if any) and remove DOM. Safe to call multiple times. */
+    dispose(): void;
     destroy(): void;
 };
 export declare function defineBlock(def: BlockDef): BlockDef;

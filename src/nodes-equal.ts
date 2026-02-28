@@ -5,6 +5,10 @@ export function areNodesEqual(oldNode: any, newNode: any) {
     return false
   }
 
+  if (oldNode.type === DOM_TYPES.HRBR) {
+    return oldNode.mount === newNode.mount
+  }
+
   if (oldNode.type === DOM_TYPES.TEXT) {
   return true
   }
