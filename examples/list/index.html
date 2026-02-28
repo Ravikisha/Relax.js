@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Relax.js — List 10k / 1% updates</title>
+		<style>
+			body {
+				font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+				margin: 24px;
+			}
+			.controls {
+				display: flex;
+				gap: 12px;
+				align-items: center;
+				margin-bottom: 16px;
+			}
+			#host {
+				border: 1px solid #e5e7eb;
+				border-radius: 8px;
+				padding: 12px;
+				max-height: 55vh;
+				overflow: auto;
+			}
+			ul {
+				margin: 0;
+				padding-left: 22px;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Relax.js — List 10k / 1% updates</h1>
+		<div class="controls">
+			<label>
+				Mode:
+				<select id="mode">
+					<option value="hrbr">HRBR fallback (signals + reconciler)</option>
+					<option value="vdom">VDOM baseline</option>
+				</select>
+			</label>
+			<button id="mount">Mount</button>
+			<button id="update" disabled>Update 1%</button>
+			<button id="unmount" disabled>Unmount</button>
+		</div>
+		<div id="host"></div>
+
+		<script type="module" src="./main.ts"></script>
+	</body>
+</html>

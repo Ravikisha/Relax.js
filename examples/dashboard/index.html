@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Relax.js — Dashboard (200 widgets)</title>
+		<style>
+			body {
+				font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+				margin: 24px;
+			}
+			.controls {
+				display: flex;
+				gap: 12px;
+				align-items: center;
+				margin-bottom: 16px;
+			}
+			.grid {
+				display: grid;
+				grid-template-columns: repeat(10, minmax(0, 1fr));
+				gap: 8px;
+			}
+			.widget {
+				border: 1px solid #e5e7eb;
+				border-radius: 8px;
+				padding: 8px;
+				font-size: 12px;
+				display: flex;
+				justify-content: space-between;
+			}
+			#host {
+				border: 1px dashed #d1d5db;
+				border-radius: 8px;
+				padding: 12px;
+				max-height: 55vh;
+				overflow: auto;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Dashboard — 200 widgets</h1>
+		<div class="controls">
+			<label>
+				Mode:
+				<select id="mode">
+					<option value="hrbr">HRBR blocks (slots)</option>
+					<option value="vdom">VDOM baseline</option>
+				</select>
+			</label>
+			<button id="mount">Mount</button>
+			<button id="tick" disabled>Update 1%</button>
+			<button id="start" disabled>Start timer</button>
+			<button id="stop" disabled>Stop</button>
+			<button id="unmount" disabled>Unmount</button>
+			<span id="stats"></span>
+		</div>
+		<div id="host"></div>
+		<script type="module" src="./main.ts"></script>
+	</body>
+</html>

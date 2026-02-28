@@ -1,0 +1,202 @@
+import { describe, expect, it } from 'vitest'
+import { defineBlock, mountBlock, mountCompiledBlock, resolvePath } from '../block'
+import { createSignal } from '../signals'
+
+function host() {
+  const el = document.createElement('div')
+  document.body.appendChild(el)
+  return el
+}
+
+describe('runtime/block (phase 3)', () => {
+  it('mounts a template and updates text slots by path', () => {
+    const h = host()
+
+    const block = defineBlock({
+      templateHTML: `<div>Hello <span><!--x--></span></div>`,
+      // div.childNodes = [Text("Hello "), span]
+      // span.childNodes = [Comment]
+      // We'll target the span itself and replace its textContent via a Text slot resolved to a Text node.
+      slots: {
+        // Path to the Text node inside span after we mount: create a text node by setting span.textContent first.
+        // Since our runtime expects an existing Text node, we use a template with a real text node.
+        name: { kind: 'text', path: [1, 0] },
+      },
+    })
+
+    // Use a template with an actual text node at [1,0]
+    const block2 = defineBlock({
+      templateHTML: `<div>Hello <span>world</span></div>`,
+      slots: {
+        name: { kind: 'text', path: [1, 0] },
+      },
+    })
+
+    const mounted = mountBlock(block2, h, { name: 'Ravi' })
+
+    expect(h.textContent).toBe('Hello Ravi')
+
+    mounted.update({ name: 'Relax' })
+    expect(h.textContent).toBe('Hello Relax')
+
+    mounted.destroy()
+    expect(h.textContent).toBe('')
+  })
+
+  it('updates attribute slots by path', () => {
+    const h = host()
+
+    const block = defineBlock({
+      templateHTML: `<a>link</a>`,
+      slots: {
+        href: { kind: 'attr', path: [], name: 'href' },
+      },
+    })
+
+    const mounted = mountBlock(block, h, { href: 'https://example.com' })
+    const a = h.querySelector('a')!
+    expect(a.getAttribute('href')).toBe('https://example.com')
+
+    mounted.update({ href: null })
+    expect(a.hasAttribute('href')).toBe(false)
+  })
+
+  it('updates property slots by path', () => {
+    const h = host()
+
+    const block = defineBlock({
+      templateHTML: `<input />`,
+      slots: {
+        value: { kind: 'prop', path: [], name: 'value' },
+      },
+    })
+
+    const mounted = mountBlock(block, h, { value: 'a' })
+    const input = h.querySelector('input') as HTMLInputElement
+    expect(input.value).toBe('a')
+
+    mounted.update({ value: 'b' })
+    expect(input.value).toBe('b')
+  })
+
+  it('updates class/style slots by path', () => {
+    const h = host()
+
+    const block = defineBlock({
+      templateHTML: `<div></div>`,
+      slots: {
+        class: { kind: 'class', path: [] },
+        style: { kind: 'style', path: [] },
+      },
+    })
+
+    const mounted = mountBlock(block, h, {
+      class: ['a', 'b'],
+      style: { color: 'red' },
+    })
+
+    const div = h.querySelector('div') as HTMLDivElement
+    expect(div.className).toBe('a b')
+    expect(div.style.color).toBe('red')
+
+    mounted.update({ class: null, style: null })
+    expect(div.getAttribute('class')).toBe(null)
+    expect(div.getAttribute('style')).toBe(null)
+  })
+
+  it('resolvePath walks childNodes indices', () => {
+    const root = document.createElement('div')
+    root.innerHTML = `<span>hi</span>`
+
+    const span = resolvePath(root, [0])
+    expect((span as Element).tagName.toLowerCase()).toBe('span')
+
+    const text = resolvePath(root, [0, 0])
+    expect(text.nodeType).toBe(Node.TEXT_NODE)
+    expect((text as Text).nodeValue).toBe('hi')
+  })
+
+  it('changing a signal updates only the intended DOM node (mountCompiledBlock)', async () => {
+    const h = host()
+
+    const [a, setA] = createSignal('A')
+    const [b, setB] = createSignal('B')
+
+    const block = defineBlock({
+      templateHTML: `<div><span>A</span><span>B</span></div>`,
+      slots: {
+        a: { kind: 'text', path: [0, 0] },
+        b: { kind: 'text', path: [1, 0] },
+      },
+    })
+
+    const mounted = mountCompiledBlock(block, h, [
+      { key: 'a', read: () => a() },
+      { key: 'b', read: () => b() },
+    ])
+
+  const spans = () => Array.from(h.querySelectorAll('span')) as HTMLSpanElement[]
+  const initialSpans = spans()
+  expect(initialSpans).toHaveLength(2)
+  const s1 = initialSpans[0]!
+  const s2 = initialSpans[1]!
+    expect(s1.textContent).toBe('A')
+    expect(s2.textContent).toBe('B')
+
+    const nodeA = s1.firstChild
+    const nodeB = s2.firstChild
+
+    setA('A2')
+    await new Promise((r) => setTimeout(r, 0))
+
+  const nextSpans = spans()
+  expect(nextSpans).toHaveLength(2)
+  const s1b = nextSpans[0]!
+  const s2b = nextSpans[1]!
+    expect(s1b.textContent).toBe('A2')
+    expect(s2b.textContent).toBe('B')
+    expect(s1b.firstChild).toBe(nodeA)
+    expect(s2b.firstChild).toBe(nodeB)
+
+    mounted.dispose()
+  })
+
+  it('mounting does not recreate static DOM during updates', async () => {
+    const h = host()
+
+    const [name, setName] = createSignal('A')
+
+    const block = defineBlock({
+      templateHTML: `<div><p id="static">static</p><span>A</span></div>`,
+      slots: {
+        name: { kind: 'text', path: [1, 0] },
+      },
+    })
+
+    const mounted = mountCompiledBlock(block, h, [{ key: 'name', read: () => name() }])
+
+    const root = h.firstElementChild as HTMLElement
+    const staticP = root.querySelector('#static') as HTMLParagraphElement
+    const span = root.querySelector('span') as HTMLSpanElement
+    const textNode = span.firstChild
+
+    expect(staticP.textContent).toBe('static')
+    expect(span.textContent).toBe('A')
+
+    setName('B')
+    await new Promise((r) => setTimeout(r, 0))
+
+    const root2 = h.firstElementChild as HTMLElement
+    const staticP2 = root2.querySelector('#static') as HTMLParagraphElement
+    const span2 = root2.querySelector('span') as HTMLSpanElement
+
+    // same elements and same text-node identity; only content changes
+    expect(root2).toBe(root)
+    expect(staticP2).toBe(staticP)
+    expect(span2).toBe(span)
+    expect(span2.firstChild).toBe(textNode)
+    expect(span2.textContent).toBe('B')
+
+    mounted.dispose()
+  })
+})

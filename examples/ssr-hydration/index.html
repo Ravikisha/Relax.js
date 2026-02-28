@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Relax.js HRBR — SSR hydration</title>
+		<style>
+			body {
+				font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+				margin: 24px;
+			}
+			.counter {
+				display: inline-flex;
+				gap: 12px;
+				align-items: center;
+				border: 1px solid #e5e7eb;
+				border-radius: 8px;
+				padding: 10px 12px;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>HRBR SSR + Hydration (V1)</h1>
+		<p>This demo injects “server HTML”, then hydrates it and wires reactive updates.</p>
+		<div id="host"></div>
+		<script type="module" src="./main.ts"></script>
+	</body>
+</html>

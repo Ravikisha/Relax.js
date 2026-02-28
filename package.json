@@ -22,6 +22,9 @@
   },
   "scripts": {
     "build": "rollup -c",
+    "build:bench": "rollup -c rollup.benchmarks.config.mjs",
+    "serve:bench": "npm run -s build:bench && npx --yes http-server -p 4173 -c-1 .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "test": "vitest run",
@@ -34,13 +37,22 @@
   "devDependencies": {
     "@rollup/plugin-commonjs": "^28.0.2",
     "@rollup/plugin-node-resolve": "^16.0.0",
+    "@rollup/plugin-replace": "^6.0.3",
     "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-typescript": "^11.1.6",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@vitest/coverage-v8": "^2.1.8",
     "eslint": "^9.17.0",
     "jsdom": "^25.0.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "rollup": "^4.29.1",
     "rollup-plugin-cleanup": "^3.2.1",
     "rollup-plugin-filesize": "^10.0.0",
+    "solid-js": "^1.9.11",
+    "tslib": "^2.8.1",
+    "typescript": "^5.7.3",
     "vitest": "^2.0.3"
   },
   "dependencies": {
