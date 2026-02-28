@@ -1,0 +1,322 @@
+\chapter{Benchmarks methodology (repeatability + fairness)}
+\label{ch:benchmarks}
+
+Benchmarks are where performance stories can go wrong fast.
+This chapter documents Relax's benchmark harness under \texttt{benchmarks/} and the methodology guidelines captured in \texttt{docs/benchmarks.md}.
+
+The core goals are:
+
+\begin{itemize}
+\item \textbf{Repeatability}: seeded randomness, stable profiles, and a clear warmup/measure separation.
+\item \textbf{Fairness}: compare like-for-like work (same DOM outcomes, similar update patterns), and control build modes (dev vs prod).
+\item \textbf{Interpretability}: report metrics that explain tail latency (p95) and not just averages.
+\end{itemize}
+
+\section{Benchmarks run in a real browser}
+
+The harness is designed to run in a browser environment:
+
+\begin{itemize}
+\item Uses \texttt{requestAnimationFrame} to align work with frames.
+\item Uses \texttt{performance.now()} for timing.
+\item Bundles through Rollup configs that target \texttt{browser: true}.
+\end{itemize}
+
+See \texttt{benchmarks/index.html} and the entry script \texttt{benchmarks/main.ts}.
+
+\subsection{A small but important detail: Node/jsdom fallback exists}
+
+The harness is designed for browsers first, but \texttt{benchmarks/harness.ts} contains a compatibility fallback:
+
+\begin{itemize}
+\item \texttt{now()} prefers \texttt{performance.now()} but falls back to \texttt{Date.now()}.
+\item \texttt{nextFrame()} prefers \texttt{requestAnimationFrame} but falls back to \texttt{setTimeout(..., 16)}.
+\end{itemize}
+
+This is \emph{not} intended to make Node-based benchmarking ``accurate''. It's there so that small smoke runs and tooling can still function in non-browser environments.
+
+\section{The harness contract}
+
+The core harness is \texttt{benchmarks/harness.ts}.
+
+\subsection{Benchmark case shape}
+
+A benchmark case is a \texttt{BenchmarkCase}:
+
+\begin{itemize}
+\item \texttt{name}: stable identifier for reporting
+\item \texttt{setup(host)}: returns a controller with\newline
+  \texttt{tick()}  perform one unit of work\newline
+  \texttt{teardown()}  clean up resources and DOM
+\item optional \texttt{commit()}: a barrier that resolves only once the framework has committed for the tick
+\end{itemize}
+
+The \texttt{commit()} hook is how the harness stays fair across frameworks that batch work differently (e.g. React flush/paint boundaries).
+
+\subsection{Tiny contract for a fair \texttt{BenchmarkCase}}
+
+To keep comparisons honest, the benchmark cases should follow a simple contract:
+
+\begin{itemize}
+\item \texttt{tick()} should perform one repeatable unit of work and avoid random extra allocations.
+\item \texttt{teardown()} must remove event handlers / timers / subscriptions (avoid cross-case leaks).
+\item If a framework batches updates asynchronously, provide \texttt{commit()} that resolves after work is actually committed.
+\end{itemize}
+
+\subsection{Warmup vs measure windows}
+
+\texttt{runBenchmark()} splits execution into two windows:
+
+\begin{itemize}
+\item \textbf{Warmup frames} (default 30): let JIT, memoization, layout caching, and internal queues settle.
+\item \textbf{Measure frames} (default 120): record per-tick durations.
+\end{itemize}
+
+Implementation details in \texttt{runBenchmark()}:
+
+\begin{itemize}
+\item For each tick: await \texttt{nextFrame()}  record \texttt{t0}  run \texttt{tick()}  await \texttt{commit()}  compute \texttt{dt}.
+\item A \textbf{frame drop} is counted when \texttt{dt > frameBudgetMs} (default 16.7ms).
+\end{itemize}
+
+\subsection{Reported metrics: avg + p95 + drops}
+
+The harness reports:
+
+\begin{itemize}
+\item \texttt{avgMs}  average time per tick
+\item \texttt{p95Ms}  95th percentile tick time (tail latency)
+\item \texttt{frameDrops}  number of frames over budget
+\end{itemize}
+
+Percentiles are computed on sorted samples with a simple index selection.
+This is good enough for stable comparisons at the harness scale.
+
+The harness computes p95 with:\\
+	exttt{idx = floor(p * (n - 1))} (clamped).
+This is a simple deterministic estimator, which is a feature here: the same sample list always produces the same percentile.
+
+\section{Profiles and seeded runs}
+
+Repeatability relies on standard profiles and seeded randomness.
+
+\subsection{Profiles via URL parameters}
+
+The profile parser lives in \texttt{benchmarks/profile.ts}.
+
+It reads query params from \texttt{benchmarks/index.html}:
+
+\begin{itemize}
+\item \texttt{profile}: \texttt{quick | default | stress}
+\item \texttt{seed}: integer seed for randomized update patterns
+\item \texttt{warmup}, \texttt{frames}, \texttt{budget}: overrides for fine-grained control
+\end{itemize}
+
+Defaults are intentionally ``reasonable and stable'' for local runs.
+
+Implementation note: the profile parser clamps overrides to avoid accidental runaway configurations:
+
+\begin{itemize}
+\item \texttt{warmup} is clamped to \texttt{[0, 10000]}
+\item \texttt{frames} is clamped to \texttt{[1, 100000]}
+\end{itemize}
+
+Seed values are forced into uint32 range using \texttt{>>> 0}, which keeps the PRNG behavior consistent.
+
+\subsection{Seeded RNG}
+
+Randomized patterns (e.g. which list indices change each tick) should be deterministic.
+Benchmark code uses a seeded RNG in \texttt{benchmarks/rng.ts}.
+
+A key methodology rule: the seed must be part of the report output so results can be reproduced.
+
+The benchmark RNG implementation is \texttt{Mulberry32} (\texttt{benchmarks/rng.ts}). It is simple, fast, and deterministic---perfect for selecting indices or toggling boolean flags in a way that remains repeatable across runs.
+
+\section{The benchmark runner UI}
+
+The main entrypoint \texttt{benchmarks/main.ts} wires a button click to sequential benchmark runs.
+
+Key details:
+
+\begin{itemize}
+\item It resets \texttt{host.innerHTML = ''} between runs so each case starts clean.
+\item It prints formatted results to a \texttt{<pre>}.
+\item It runs both HRBR and VDOM variants, and includes adapters for React/Solid.
+\end{itemize}
+
+Because different frameworks have different setup/teardown costs, the harness keeps the per-tick loop stable and encourages cases to isolate the steady-state behavior.
+
+\subsection{Why \texttt{host.innerHTML = ''} between runs matters}
+
+Clearing between runs gives you two strong properties:
+
+\begin{itemize}
+\item \textbf{Isolation:} DOM nodes and event listeners from a previous framework/case do not bleed into the next.
+\item \textbf{Repeatability:} each case starts from the same initial DOM shape.
+\end{itemize}
+
+This is also why safe \texttt{teardown()} behavior is part of the case contract: the harness clears DOM, but frameworks may have timers/schedulers that need explicit disposal.
+
+\section{Cases: what they measure}
+
+Cases live under \texttt{benchmarks/cases/}.
+The intent is to cover:
+
+\begin{itemize}
+\item \textbf{Pure text throughput}: \texttt{text-1m}
+\item \textbf{Large lists with sparse updates}: \texttt{list-10k-1pct}
+\item \textbf{Many small components/widgets}: \texttt{widgets-200}
+\item Extra comparisons in \texttt{cases/more.ts}
+\end{itemize}
+
+Important fairness guideline: each case should produce the same DOM output across frameworks (or as close as is reasonable).
+
+\subsection{Case study: \texttt{text-1m}}
+
+In \texttt{benchmarks/cases/text-1m.ts}, the HRBR variant builds the smallest possible compiled block:
+
+\begin{itemize}
+\item \texttt{templateHTML: `<div><span> </span></div>`} includes an explicit space so there is a real text node.
+\item Slot path \texttt{[0,0]} means: root \texttt{<div>} child 0 is \texttt{<span>}, and its child 0 is the \texttt{Text} node.
+\item \texttt{tick()} updates a signal in chunks of \texttt{10,000} so work remains frame-visible.
+\end{itemize}
+
+This isn't a ``real app'' workload, but it is an excellent microbenchmark for measuring pure slot-write throughput.
+
+\subsection{Case study: \texttt{list-10k-1pct}}
+
+In \texttt{benchmarks/cases/list-10k-1pct.ts}, the cases delegate to example mount helpers:
+
+\begin{itemize}
+\item HRBR: \texttt{mountList10k1pctHRBR(host, 10000)}
+\item VDOM: \texttt{mountList10k1pctVDOM(host, 10000)}
+\end{itemize}
+
+The contract is the same for both: return a controller with \texttt{update1pct()} and \texttt{dispose()}.
+Methodologically, that matters: both implementations are being asked to do the same "one tick" of work.
+
+\section{Build modes matter (dev vs prod)}
+
+Some frameworks change scheduling and checks based on \texttt{process.env.NODE_ENV}.
+The benchmark Rollup config sets this value at bundle time.
+
+\begin{itemize}
+\item Rollup config: \texttt{rollup.benchmarks.config.mjs}
+\item It uses \texttt{@rollup/plugin-replace} to define \texttt{process.env.NODE_ENV}.
+\end{itemize}
+
+NPM scripts in \texttt{package.json} expose common modes:
+
+\begin{itemize}
+\item \texttt{build:bench:dev}
+\item \texttt{build:bench:prod}
+\end{itemize}
+
+To be fair, comparisons should run with comparable modes (usually prod vs prod).
+
+\subsection{What the Rollup configs actually do}
+
+The benchmark bundles are built through two rollup configs:
+
+\begin{itemize}
+\item \texttt{rollup.benchmarks.config.mjs} (full UI runner)
+\item \texttt{rollup.benchmarks.smoke.config.mjs} (perf-smoke gate)
+\end{itemize}
+
+Both use \texttt{@rollup/plugin-replace} to inject:\\
+	exttt{process.env.NODE_ENV = 'production'} by default.
+
+This matters for fairness because some libraries (notably React) perform extra checks and different scheduling policies in development builds.
+
+\section{Perf smoke (CI-friendly)}
+
+For CI and ``obvious regression'' detection, the repo includes a reduced entry:
+
+\begin{itemize}
+\item \texttt{benchmarks/perf-smoke.ts}
+\item \texttt{benchmarks/perf-smoke.html}
+\end{itemize}
+
+It builds via \texttt{rollup.benchmarks.smoke.config.mjs} into \texttt{benchmarks/dist-smoke/}.
+
+\subsection{What perf-smoke is actually specifying}
+
+You can read \texttt{benchmarks/perf-smoke.ts} as an executable specification of the harness:
+
+\begin{itemize}
+\item it obtains a profile via \texttt{getBenchmarkProfile()}
+\item it forces short defaults unless overridden (default profile becomes \texttt{quick})
+\item it runs a small fixed set of cases (currently \texttt{text-1m} and \texttt{list-10k-1pct}, HRBR variants)
+\item it emits a JSON report that includes profile, timestamp, and result rows
+\item it enforces very wide thresholds to catch catastrophic regressions
+\end{itemize}
+
+Even though this isn't a Vitest file, it plays the same role as tests in earlier chapters: it defines what "performance sanity" means for this repository.
+
+\subsection{Why the thresholds are wide}
+
+\texttt{perf-smoke.ts} prints a JSON report to \texttt{console.log} and then checks very wide thresholds:
+
+\begin{itemize}
+\item fail only when \texttt{avgMs > 250} or \texttt{p95Ms > 500}
+\end{itemize}
+
+This is intentional: CI machines are noisy.
+The smoke test is designed to catch catastrophic regressions (infinite loops, accidental \texttt{O(n^2)} behavior), not micro-optimizations.
+
+This is also why the gate uses two different lenses:
+
+\begin{itemize}
+\item \texttt{avgMs}: for sustained runaway behavior
+\item \texttt{p95Ms}: for severe tail latency spikes
+\end{itemize}
+
+Tail latency matters because user experience is dominated by occasional slow frames.
+
+\section{Instrumentation and benchmarks: keep them separate}
+
+Optional runtime instrumentation exists in \texttt{runtime/devtools.ts} (Chapter~\ref{ch:devtools}).
+
+Methodology rule: keep instrumentation disabled during benchmarks unless you are explicitly measuring it.
+Otherwise, the measurement includes the measurement.
+
+In practice, if you want to correlate benchmark results with DOM op counts:
+
+\begin{itemize}
+\item run once with instrumentation off to measure baseline
+\item run again with instrumentation enabled (and accept the overhead) to measure the profile of operations
+\end{itemize}
+
+Comparing these two runs helps you understand whether a regression is dominated by DOM work, scheduling, or allocation overhead.
+
+\section{Checklist: how to run a fair comparison}
+
+A practical checklist grounded in this repo's structure:
+
+\begin{enumerate}
+\item Build benchmark bundle in a known mode (dev or prod) and record it.
+\item Use a named profile (quick/default/stress) so warmup and frames are consistent.
+\item Fix a seed and include it in the report.
+\item Run multiple times and compare distributions (p95 and drops), not just averages.
+\item If a result looks surprising, isolate the case and profile it (browser performance tools).
+\end{enumerate}
+
+\section{Online resources}
+
+\begin{itemize}
+\item Measuring performance in the browser and why alternatives to \texttt{Date.now()} matter:\\
+\href{https://developer.mozilla.org/en-US/docs/Web/API/Performance/now}{MDN: \texttt{performance.now()}}.
+
+\item About frame budgets and why 16.7ms is the common baseline:\\
+\href{https://web.dev/articles/rendering-performance}{web.dev: rendering performance}.
+
+\item Why warmup matters (JIT, inline caches, tiered compilation):\\
+\href{https://v8.dev/blog}{V8 blog (background on optimization and warmup effects)}.
+
+\item Percentiles and tail latency as a reporting best practice:\\
+\href{https://en.wikipedia.org/wiki/Percentile}{Wikipedia: percentile},\\
+\href{https://research.google/pubs/pub40801/}{Google SRE: tail latency (The Tail at Scale)}.
+
+\item General benchmark hygiene and common pitfalls:\\
+\href{https://benchmarking.sites/}{benchmarking.sites (community notes)}.
+\end{itemize}

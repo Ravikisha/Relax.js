@@ -1,0 +1,229 @@
+\chapter{SSR Authoring (v1): Rendering Blocks to HTML Strings}
+
+Server-side rendering (SSR) is how you produce initial HTML on the server so the browser can show an app quickly.
+
+In HRBR v1, SSR is intentionally simple and primarily exists to support tests and examples.
+The important property is not performance; it’s \textbf{compatibility} with hydration.
+
+This chapter is grounded in:
+
+\begin{itemize}
+  \item \texttt{runtime/ssr.ts}
+  \item \texttt{runtime/__tests__/ssr.test.ts}
+  \item and the follow-on behavior in \texttt{runtime/hydration.ts} (Chapter 15).
+\end{itemize}
+
+\section{A tiny contract (what SSR v1 guarantees)}
+
+SSR is not “render an app” in the abstract. In HRBR v1 it is narrowly scoped:
+
+\begin{enumerate}
+  \item You provide a \texttt{BlockDef} (template + slots).
+  \item You optionally provide \texttt{initialValues} (a slot-key \(\rightarrow\) value map).
+  \item The runtime returns an HTML string that matches the same template structure the client will mount/hydrate.
+\end{enumerate}
+
+Put differently:
+
+\begin{quote}
+SSR v1 is \emph{mountBlock + serialize}. Hydration v1 is \emph{validate + attach, else remount}.
+\end{quote}
+
+This tight coupling is deliberate. It makes SSR and hydration “round-trip compatible” by construction.
+
+\section{The contract: \texttt{renderBlockToString(def, options?) -> string}}
+
+The only exported function is:
+
+\begin{verbatim}
+renderBlockToString(def: BlockDef, options?: { initialValues?: Record<string, unknown> }): string
+\end{verbatim}
+
+The options only support one thing today: \texttt{initialValues}.
+
+This mirrors the core block update contract:
+
+\begin{quote}
+A block update is just a map \texttt{\{ [slotKey]: value \}}.
+\end{quote}
+
+SSR is simply the "apply values, then serialize" version of that idea.
+
+One way to think about it:
+
+\begin{itemize}
+  \item \textbf{Client mount:} template \(\rightarrow\) DOM instance \(+\) slot node references.
+  \item \textbf{Client update:} slot values \(\rightarrow\) DOM writes.
+  \item \textbf{Server render:} slot values \(\rightarrow\) DOM writes \(\rightarrow\) serialize.
+\end{itemize}
+
+\section{Implementation: DOM-based SSR for correctness}
+
+\texttt{runtime/ssr.ts} implements SSR using the platform DOM:
+
+\begin{enumerate}
+  \item create a detached host element: \texttt{document.createElement('div')}
+  \item mount the block into that host via \texttt{mountBlock(def, host, initialValues)}
+  \item read \texttt{host.innerHTML}
+  \item destroy the mounted block to avoid leaks
+  \item return the HTML string
+\end{enumerate}
+
+This is documented directly in the function comment:
+
+\begin{itemize}
+  \item it uses a detached DOM
+  \item it serializes via \texttt{innerHTML}
+  \item it’s primarily intended for tests/examples
+  \item a future version could emit HTML without a DOM
+\end{itemize}
+
+The crucial correctness choice is that SSR applies \texttt{initialValues} by calling \texttt{mountBlock(def, host, initialValues)}.
+That means:
+
+\begin{itemize}
+  \item all the slot semantics from Chapter 14 apply (boolean attributes, SVG namespaces, input properties, etc.)
+  \item the generated markup shape matches what the client expects to attach to
+\end{itemize}
+
+\subsection{Why DOM-based SSR is acceptable in v1}
+
+For a production SSR renderer, involving a full DOM implementation server-side can be expensive.
+
+But for v1 HRBR, this has two big advantages:
+
+\begin{itemize}
+  \item it is hard to get HTML escaping and attribute semantics wrong
+  \item it produces markup exactly consistent with the same block runtime used in the client
+\end{itemize}
+
+So correctness comes for free.
+
+There’s also a subtle lifecycle advantage: because SSR uses \texttt{mountBlock}, tearing down is just \texttt{mounted.destroy()}.
+That ensures listeners are removed and the temporary root is cleaned up, even in a test environment.
+
+\section{SSR must round-trip with hydration}
+
+SSR isn't useful unless the client can hydrate it.
+
+Hydration v1 makes strong assumptions (Chapter 15):
+
+\begin{itemize}
+  \item the root element tagName matches \texttt{templateHTML}
+  \item slot paths resolve to the expected node types
+  \item element slots match expected tagNames along the path
+\end{itemize}
+
+Therefore, SSR output must preserve the template’s structure.
+Because SSR uses \texttt{mountBlock()}, it naturally meets the same invariant:
+
+\begin{quote}
+SSR uses the same template parser and slot patching semantics as client mount.
+\end{quote}
+
+This is the important “authoring rule” for SSR v1:
+
+\begin{quote}
+If you change \texttt{templateHTML} shape, you must change both server render and client hydrate together.
+\end{quote}
+
+You should treat \texttt{templateHTML} as a stable ABI between server and client.
+
+\section{The end-to-end spec: render \(\rightarrow\) hydrate \(\rightarrow\) update}
+
+The key test is \texttt{runtime/__tests__/ssr.test.ts}:
+
+\begin{enumerate}
+  \item Define a block with \texttt{templateHTML} and a text slot.
+  \item Render HTML with \texttt{renderBlockToString(block, \{ initialValues \})}.
+  \item Insert the returned string into the DOM.
+  \item Call \texttt{hydrateBlock(block, host)}.
+  \item Verify DOM identity is preserved (same root, same text node).
+  \item Mount a compiled block via \texttt{mountCompiledBlock(...)} and update.
+\end{enumerate}
+
+This accomplishes two things:
+
+\begin{itemize}
+  \item it proves that SSR output is "hydrate compatible"
+  \item it shows how hydration and compiled blocks can be composed (a realistic client story)
+\end{itemize}
+
+One implementation-level nuance in the test is worth calling out.
+After updating the signal with \texttt{setCount('B')}, it also calls:
+
+\begin{quote}
+	exttt{mounted.update(\{ value: 'B' \})}
+\end{quote}
+
+That makes the assertion deterministic and keeps the test independent of scheduler timing.
+It’s modeling the fact that \texttt{mountCompiledBlock} can schedule work, and test environments often differ in how timers/microtasks flush.
+
+\section{Limitations and the intended direction}
+
+The HRBR whitepaper explicitly lists a non-goal for v1:
+
+\begin{quote}
+A DOM-free string renderer (v1 SSR uses a DOM-based approach for tests/examples)
+\end{quote}
+
+A future SSR implementation could:
+
+\begin{itemize}
+  \item parse \texttt{templateHTML} once into a token stream
+  \item apply slot writes into a string builder
+  \item avoid constructing DOM nodes entirely
+\end{itemize}
+
+Even if SSR becomes DOM-free later, the invariants from hydration still apply:
+
+\begin{itemize}
+  \item the root tag must match
+  \item the structure along slot paths must match
+  \item text nodes must exist where text slots expect them
+\end{itemize}
+
+But even then, the contract remains:
+
+\begin{quote}
+SSR output must match the template structure so hydration can do a no-rewrite attach.
+\end{quote}
+
+\section{Takeaways}
+
+\begin{itemize}
+  \item SSR v1 is intentionally minimal: mount a block in a detached DOM and serialize \texttt{innerHTML}.
+  \item \texttt{initialValues} uses the same slot update contract as client updates.
+  \item The primary goal is hydration compatibility, not server performance.
+  \item The end-to-end test shows SSR + hydration + compiled updates working together.
+\end{itemize}
+
+\section{Walking the tests (the executable spec)}
+
+SSR v1 has one test file, but it covers the entire story.
+
+\subsection{\texttt{runtime/__tests__/ssr.test.ts}}
+
+The test \texttt{renders a block to HTML string, hydrates it, and updates via mountCompiledBlock} enforces these guarantees:
+
+\begin{itemize}
+  \item \textbf{SSR applies initial values:} \texttt{renderBlockToString(..., \{ initialValues \})} must produce HTML containing \texttt{'A'}.
+  \item \textbf{Hydration preserves identity:} after \texttt{hydrateBlock}, the root element and the text node under \texttt{#t} are the same objects as before hydration.
+  \item \textbf{Compiled updates work on hydrated DOM:} wiring a signal through \texttt{mountCompiledBlock} and then updating should change text to \texttt{'B'}.
+  \item \textbf{Cleanup is explicit:} the test disposes the compiled mount and destroys the hydrated block.
+\end{itemize}
+
+Because this file touches SSR, hydration, signals, and compiled blocks, it acts as a integration-level "safety rail" for the whole pipeline.
+
+\section{Online resources}
+
+\begin{itemize}
+  \item HTML serialization via DOM:
+  \href{https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML}{MDN: \texttt{Element.innerHTML}}.
+  \item Server rendering and hydration overview:
+  \href{https://web.dev/rendering-on-the-web/}{web.dev: Rendering on the Web}.
+  \item Template element (used by mounting/hydration):
+  \href{https://developer.mozilla.org/en-US/docs/Web/HTML/Element/template}{MDN: \texttt{<template>}}.
+  \item A compiler-first argument for skipping VDOM in the steady state:
+  \href{https://svelte.dev/blog/virtual-dom-is-pure-overhead}{Svelte: “Virtual DOM is pure overhead”}.
+\end{itemize}

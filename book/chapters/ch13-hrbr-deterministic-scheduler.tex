@@ -1,0 +1,349 @@
+\chapter{HRBR Deterministic Scheduler: Lanes, Budgets, and Aging}
+
+Signals answer \emph{what} should re-run. A scheduler answers \emph{when} and in what order.
+
+In HRBR, scheduling is part of the public contract. We want:
+
+\begin{itemize}
+  \item deterministic ordering (same inputs, same execution order)
+  \item configurable latency via lanes (input vs transition vs idle)
+  \item budget enforcement (avoid long flushes that block the main thread)
+  \item starvation prevention (idle work should still eventually run)
+\end{itemize}
+
+This chapter is grounded in:
+
+\begin{itemize}
+  \item Implementation: \texttt{runtime/scheduler.ts}
+  \item Specs: \texttt{runtime/__tests__/scheduler.test.ts}
+  \item Devtools counters/events: \texttt{runtime/devtools.ts} (used by scheduler and signals)
+\end{itemize}
+
+\section{The contract: schedules tasks, flushes deterministically}
+
+The scheduler exports three main concepts (see \texttt{runtime/scheduler.ts}):
+
+\begin{itemize}
+  \item \texttt{Lane}: \texttt{'sync' | 'input' | 'default' | 'transition' | 'idle'}
+  \item \texttt{ScheduledTask}: \texttt{\{ id, lane, priority, timestamp, deadline, budgetMs, run \}}
+  \item a factory: \texttt{createScheduler(options?) -> scheduler}
+\end{itemize}
+
+The returned scheduler exposes:
+
+\begin{itemize}
+  \item \texttt{schedule(lane, run, budgetOrOptions?)}
+  \item \texttt{flush(\{ budgetMs \})}
+  \item \texttt{hasPending()}
+  \item \texttt{withBudget(budgetMs, fn)}
+  \item \texttt{setFrameBudget(ms)} and \texttt{setDefaultBudget(ms)}
+\end{itemize}
+
+The tests treat these as the source of truth.
+
+\paragraph{A tiny scheduler contract}
+
+We can summarize what the runtime scheduler promises in four bullets:
+
+\begin{itemize}
+  \item \textbf{Pick order is deterministic}: same task creation order + same time evolution \textrightarrow same execution order.
+  \item \textbf{Latency is explicit}: lane names are the only priority vocabulary.
+  \item \textbf{Work is time-sliced}: every flush loop has a budget, and work may continue later.
+  \item \textbf{Starvation is mitigated}: low-priority tasks can be promoted based on age/deadline.
+\end{itemize}
+
+\section{Lanes: latency categories and fixed priority order}
+
+Lane priority is encoded as a small integer map:
+
+\begin{verbatim}
+const LANE_PRIORITY = {
+  sync: 0,
+  input: 1,
+  default: 2,
+  transition: 3,
+  idle: 4,
+}
+\end{verbatim}
+
+But the scheduler's actual selection order is hard-coded as an array:
+
+\begin{verbatim}
+['sync', 'input', 'default', 'transition', 'idle']
+\end{verbatim}
+
+Spec: \texttt{runs tasks by lane priority (sync > input > default > transition > idle)}.
+
+\subsection{What is a lane in practice?}
+
+Lanes are not preemption.
+They’re an ordering and continuation policy:
+
+\begin{itemize}
+  \item tasks run to completion one-by-one
+  \item lane selection chooses which queue head runs next
+  \item aging/deadlines can temporarily override lane order via promotion
+\end{itemize}
+
+\subsection{The sync lane}
+
+A \texttt{sync} task is special: \texttt{schedule('sync', ...)} triggers an immediate flush.
+
+In \texttt{schedule()}:
+
+\begin{itemize}
+  \item the task is still enqueued
+  \item then the scheduler calls \texttt{flush(\{ budgetMs: Infinity \})}
+\end{itemize}
+
+This gives a "run now" lane while still reusing the same task machinery.
+
+\paragraph{Why still enqueue sync tasks?}
+
+Because determinism still matters.
+Enqueueing before flushing means sync work still participates in the same stable ordering rules if multiple sync tasks are scheduled.
+
+\section{Flush strategies: how work gets a time slice}
+
+The scheduler accepts \texttt{requestFlush(cb)} in its options.
+If you don't provide one, it uses \texttt{createRequestFlush('timeout')}.
+
+\subsection{createRequestFlush(strategy)}
+
+\texttt{createRequestFlush()} supports:
+
+\begin{itemize}
+  \item \texttt{'timeout'} (universal fallback): \texttt{setTimeout(cb, 0)}
+  \item \texttt{'messageChannel'}: uses \texttt{MessageChannel} if available
+  \item \texttt{'raf'}: uses \texttt{requestAnimationFrame} if available
+\end{itemize}
+
+Specs in \texttt{runtime/__tests__/scheduler.test.ts} cover:
+
+\begin{itemize}
+  \item \texttt{createRequestFlush(messageChannel) uses MessageChannel when available}
+  \item \texttt{createRequestFlush(raf) uses requestAnimationFrame when available}
+\end{itemize}
+
+\subsection{createBrowserScheduler() convenience}
+
+\texttt{createBrowserScheduler({ strategy })} is a wrapper that wires the chosen strategy into \texttt{requestFlush}.
+
+Spec: \texttt{createBrowserScheduler wires a strategy into requestFlush (smoke)}.
+
+\paragraph{Why these strategies exist}
+
+The scheduler is designed to be embeddable:
+
+\begin{itemize}
+  \item in Node-like environments (\texttt{setTimeout})
+  \item in browsers where \texttt{MessageChannel} is often lower-latency than timeouts
+  \item in UIs where \texttt{requestAnimationFrame} aligns work with the next frame
+\end{itemize}
+
+\section{Deterministic ordering inside a lane}
+
+Within a lane, tasks are sorted with explicit tie-breakers:
+
+\begin{enumerate}
+  \item earlier \texttt{deadline}
+  \item earlier \texttt{timestamp}
+  \item lower \texttt{id}
+\end{enumerate}
+
+This ordering is implemented by \texttt{sortQueueInLane()}:
+
+\begin{verbatim}
+q.sort((a, b) => (a.deadline - b.deadline)
+  || (a.timestamp - b.timestamp)
+  || (a.id - b.id))
+\end{verbatim}
+
+Spec: \texttt{orders tasks within a lane by explicit deadline (then timestamp/id)}.
+
+\subsection{Where deadlines come from}
+
+If you don't provide an explicit \texttt{deadline}, \texttt{schedule()} computes:
+
+\begin{verbatim}
+deadline = timestamp + budgetMs
+\end{verbatim}
+
+So tasks with smaller budgets naturally get earlier deadlines and bubble forward within their lane.
+This is a useful ``do small things first'' heuristic that is still deterministic.
+
+\section{Budgets: splitting work over multiple flushes}
+
+There are two different "budget" knobs:
+
+\begin{itemize}
+  \item \texttt{defaultBudgetMs}: the per-task budget used to compute default \texttt{deadline} and default \texttt{budgetMs}
+  \item \texttt{frameBudgetMs}: a global cap for \emph{scheduled flush loops}
+\end{itemize}
+
+\subsection{What flush(budgetMs) does}
+
+\texttt{flush(\{ budgetMs \})}:
+
+\begin{itemize}
+  \item emits devtools events \texttt{flushStart} and \texttt{flushEnd}
+  \item runs tasks in priority order until:
+    \begin{itemize}
+      \item queues are empty, or
+      \item elapsed time exceeds \texttt{budgetMs}
+    \end{itemize}
+  \item if budget is exceeded \emph{and} work remains, it schedules a continuation flush
+\end{itemize}
+
+Specs:
+
+\begin{itemize}
+  \item \texttt{budget enforcement: flush splits work across multiple flush calls when budget is tight}
+  \item \texttt{setFrameBudget caps the budget used by scheduled flushes}
+\end{itemize}
+
+\subsection{setFrameBudget(ms)}
+
+Even if tasks provide their own budgets, scheduled flushes are capped by \texttt{frameBudgetMs}.
+
+The spec demonstrates this by setting \texttt{frameBudgetMs = 1} and scheduling tasks that each consume \texttt{2ms}; only one task runs per flush, and the second flush runs the remainder.
+
+\subsection{Frame budget versus task budget (important distinction)}
+
+In \texttt{runtime/scheduler.ts}, \texttt{budgetMs} is stored on each task, but it isn't directly used by \texttt{flush()}.
+Instead:
+
+\begin{itemize}
+  \item \textbf{task budget} influences default deadlines (and therefore ordering)
+  \item \textbf{flush budget} (\texttt{flush(\{budgetMs\})} or \texttt{frameBudgetMs}) limits how long the flush loop runs before continuation is scheduled
+\end{itemize}
+
+The test suite focuses on flush budgets because those directly affect responsiveness.
+
+\section{Deadlines and aging: starvation prevention via promotion}
+
+HRBR's scheduler includes an aging/promotion mechanism.
+
+In the implementation:
+
+\begin{itemize}
+  \item \texttt{AGING\_MS = 250}
+  \item lanes eligible for promotion checks: \texttt{idle}, \texttt{transition}, \texttt{default}
+  \item promotion moves one step toward higher priority:
+    \texttt{idle -> transition -> default -> input}
+\end{itemize}
+
+Promotion runs \emph{before} picking the next task, and it only considers the \textbf{queue head} in each lane.
+
+A task is promoted if:
+
+\begin{itemize}
+  \item it is overdue: \texttt{now() >= head.deadline}, or
+  \item it is old: \texttt{now() - head.timestamp > AGING\_MS}
+\end{itemize}
+
+Specs:
+
+\begin{itemize}
+  \item \texttt{ages/pushes starving tasks upwards (idle -> transition)}
+  \item \texttt{promotes a task when its deadline is reached}
+  \item \texttt{starvation prevention: repeated promotions eventually let idle work run even under continuous input load}
+\end{itemize}
+
+One subtlety the tests call out:
+
+\begin{quote}
+Promotion happens before lane selection, so an aged/overdue idle task can execute before later-scheduled default work.
+\end{quote}
+
+This is a deliberate fairness trade-off.
+
+\subsection{Fairness without nondeterminism}
+
+The promotion rule checks only \textbf{queue heads} and promotes at most one task per candidate lane per pick.
+That has two benefits:
+
+\begin{itemize}
+  \item it's cheap (no scanning the entire queue)
+  \item it stays deterministic (the head is a deterministic choice)
+\end{itemize}
+
+\section{withBudget(): bridging user work and scheduler work}
+
+Real apps do work outside of the scheduler too (rendering, event handlers, parsing).
+\texttt{withBudget(budgetMs, fn)} is a helper that:
+
+\begin{itemize}
+  \item runs \texttt{fn}
+  \item if \texttt{fn} exceeds the budget and tasks remain, it schedules a continuation flush
+\end{itemize}
+
+Spec: \texttt{withBudget schedules continuation when user code exhausts budget and tasks remain}.
+
+This is the "be nice to the main thread" glue between imperative work and queued reactive work.
+
+\subsection{Global helpers in \texttt{runtime/index.ts}}
+
+The runtime also exports shared budgeting helpers that use a module-level global scheduler:
+
+\begin{itemize}
+  \item \texttt{withBudget(budgetMs, fn)}
+  \item \texttt{setFrameBudget(ms)}
+\end{itemize}
+
+This is covered by the smoke test \texttt{runtime withBudget() helper returns the callback result and is callable}.
+
+\section{Devtools and instrumentation hooks}
+
+The scheduler calls \texttt{emitDevtoolsEvent()} (\texttt{runtime/devtools.ts}) when flushing:
+
+\begin{itemize}
+  \item \texttt{flushStart}
+  \item \texttt{flushEnd\{ durationMs \}}
+\end{itemize}
+
+These feed counters like \texttt{flushes} and \texttt{flushTimeMs}.
+
+Signals also emit \texttt{scheduleComputation} events when a computation is scheduled.
+
+(We’ll use these counters later when measuring block update costs.)
+
+\section{Walking the tests: what they prove}
+
+The runtime scheduler suite is unusually readable because it uses a manual clock and a manual flush queue.
+That makes time and continuation behavior deterministic.
+
+\subsection{Core semantics (\texttt{runtime/__tests__/scheduler.test.ts})}
+
+\begin{description}
+  \item[runs tasks by lane priority] Proves the lane order and that \texttt{sync} executes immediately.
+  \item[orders tasks within a lane by explicit deadline] Proves the sort tie-breakers inside a lane.
+  \item[respects budget and continues in a later flush] Proves a scheduled flush loop may stop early and reschedule continuation.
+  \item[budget enforcement: flush splits work] Proves deterministic time slicing under a small budget.
+  \item[setFrameBudget caps scheduled flush budget] Proves continuation flushes use \texttt{frameBudgetMs} as a cap.
+  \item[ages/pushes starving tasks upwards] Proves age-based promotion and the fairness trade-off (promoted work can run before later default work).
+  \item[promotes a task when its deadline is reached] Proves deadline-based promotion independent of age.
+  \item[starvation prevention under input load] Proves repeated promotions eventually allow idle work to run.
+  \item[createRequestFlush(messageChannel/raf)] Proves strategy selection uses platform APIs when present.
+  \item[createBrowserScheduler smoke] Proves wiring strategy into \texttt{requestFlush}.
+\end{description}
+
+\section{Online resources}
+
+\begin{itemize}
+  \item MDN: \href{https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel}{\texttt{MessageChannel}}
+  \item MDN: \href{https://developer.mozilla.org/en-US/docs/Web/API/window/requestAnimationFrame}{\texttt{requestAnimationFrame}}
+  \item MDN: \href{https://developer.mozilla.org/en-US/docs/Web/JavaScript/Event_loop}{Event loop (tasks, microtasks)}
+  \item React (conceptual parallel): \href{https://react.dev/learn/render-and-commit}{Render/commit (scheduling intuition)}
+  \item Cooperative background work (conceptual): \href{https://developers.google.com/web/updates/2015/08/using-requestidlecallback}{\texttt{requestIdleCallback}}
+\end{itemize}
+
+\section{Takeaways}
+
+\begin{itemize}
+  \item Lanes provide a small, explicit latency model with a deterministic priority order.
+  \item Each lane is internally sorted by deadline, then timestamp, then id.
+  \item Budgeting is enforced at flush time to time-slice work.
+  \item Aging/promotion makes starvation unlikely without making scheduling non-deterministic.
+  \item \texttt{withBudget} lets user code cooperate with the scheduler.
+\end{itemize}

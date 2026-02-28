@@ -1,0 +1,398 @@
+\chapter{Fallback Reconciler: Dynamic Structure When Blocks Aren't Enough}
+
+Blocks are fast because structure is stable: the template doesn’t change, only slot values do.
+
+But JSX in the real world has loops, conditionals, fragments, and dynamic lists.
+HRBR needs a safe escape hatch for those regions.
+
+That escape hatch is the \textbf{fallback reconciler}:
+
+\begin{itemize}
+  \item a runtime mount: \texttt{runtime/fallback.ts}
+  \item a child-list reconciler: \texttt{runtime/reconciler.ts}
+\end{itemize}
+
+This chapter is grounded in:
+
+\begin{itemize}
+  \item \texttt{runtime/fallback.ts}
+  \item \texttt{runtime/reconciler.ts}
+  \item \texttt{runtime/__tests__/fallback.test.ts}
+  \item \texttt{runtime/__tests__/reconciler.test.ts}
+  \item \texttt{runtime/__tests__/reconciler.fuzz.test.ts}
+\end{itemize}
+
+\section{A tiny contract (what fallback + reconciler promise)}
+
+The fallback reconciler is the HRBR answer to “dynamic structure”:
+
+\begin{itemize}
+  \item Blocks are optimal when structure is stable.
+  \item Fallback reconciliation is the safe, general mechanism when structure changes.
+\end{itemize}
+
+The contract is intentionally narrow:
+
+\begin{enumerate}
+  \item \texttt{reconcileChildren(host, next)} only patches \textbf{direct children} of \texttt{host}.
+  \item Each child spec is responsible for building/patching its own subtree (if any).
+  \item In keyed mode, keys must be unique among siblings.
+  \item In keyed mode, DOM identity is preserved by key when possible; the algorithm minimizes moves, but \emph{correctness} is the first goal.
+\end{enumerate}
+
+	exttt{mountFallback(host, render)} is the reactive wrapper:
+
+\begin{itemize}
+  \item \texttt{render()} can read signals.
+  \item When those signals change, fallback schedules a reconcile pass in a scheduler lane.
+  \item Disposal stops further reactive updates.
+\end{itemize}
+
+\section{Contracts}
+
+\subsection{The reconciler contract: direct children only}
+
+\texttt{reconcileChildren(host, next, options?)} patches \texttt{host.childNodes} so they match \texttt{next}.
+
+Important: it reconciles \textbf{direct children only}. Each child spec is responsible for patching its own subtree.
+
+That design choice keeps the reconciler small and composable:
+
+\begin{itemize}
+  \item A “child spec” can represent a component, a fragment, or even an embedded compiled block.
+  \item Nested reconciliation happens inside that child spec’s own \texttt{patch()} function.
+\end{itemize}
+
+Types (\texttt{runtime/reconciler.ts}):
+
+\begin{itemize}
+  \item \texttt{ReconcileNode}: a logical node that maps to exactly one DOM node
+  \item \texttt{ReconcileRange}: a logical item that maps to multiple DOM nodes
+  \item \texttt{ReconcileItem = ReconcileNode | ReconcileRange}
+\end{itemize}
+
+Each item supports:
+
+\begin{itemize}
+  \item \texttt{create()} to create DOM
+  \item \texttt{patch(existing)} to patch in place
+  \item optional \texttt{destroy(existing)} to cleanup when removed
+\end{itemize}
+
+\subsection{Keyed vs unkeyed mode}
+
+\texttt{reconcileChildren} chooses mode:
+
+\begin{itemize}
+  \item if \texttt{options.keyed} is provided, use it
+  \item else infer keyed mode if any next item has a key
+\end{itemize}
+
+It also emits dev-only warnings for suspicious usage patterns when \texttt{opts.dev === true}:
+
+\begin{itemize}
+  \item mixing keyed and unkeyed siblings (unkeyed nodes become “unstable”)
+  \item replacing an entire keyed list with a disjoint set of keys (often unstable keys like array index)
+\end{itemize}
+
+The two algorithms are:
+
+\begin{itemize}
+  \item \texttt{reconcileChildrenUnkeyed(host, next)}
+  \item \texttt{reconcileChildrenKeyed(host, next, dev)}
+\end{itemize}
+
+\section{Why ranges exist (one logical item => multiple DOM nodes)}
+
+In UI rendering, one logical item can expand to multiple nodes:
+
+\begin{itemize}
+  \item a fragment
+  \item a component that returns multiple roots
+  \item a compiled block or template that expands into siblings
+\end{itemize}
+
+HRBR models this with \texttt{ReconcileRange}:
+
+\begin{verbatim}
+{ kind: 'range', key?, create(): Node[], patch(nodes: Node[]) }
+\end{verbatim}
+
+The reconciler stores the range length on the first DOM node:
+
+\begin{itemize}
+  \item \texttt{__hrbrKey}: key of the logical item (on the start node)
+  \item \texttt{__hrbrRangeLen}: number of DOM nodes in the range (on the start node)
+\end{itemize}
+
+This metadata is the core trick that lets the reconciler treat DOM as a list of \emph{logical items} rather than raw nodes.
+The helper \texttt{buildCurrentRanges(host)} reads \texttt{childNodes} and groups them into ranges by repeatedly:
+
+\begin{itemize}
+  \item read \texttt{len = __hrbrRangeLen ?? 1} from the next start node
+  \item slice \texttt{len} nodes and treat them as one logical item
+  \item advance by \texttt{len}
+\end{itemize}
+
+This is also why correctness requires normalization when items change shape (node \(\leftrightarrow\) range).
+
+Spec: \texttt{keyed: supports range items (logical item => multiple DOM nodes)}.
+
+\section{Unkeyed reconciliation: simple and predictable}
+
+\texttt{reconcileChildrenUnkeyed} relies on positional patching:
+
+\begin{enumerate}
+  \item patch common prefix (min(oldLen, newLen))
+  \item remove extra old nodes
+  \item append new nodes
+\end{enumerate}
+
+Spec: \texttt{unkeyed: patches in order and truncates/appends}.
+
+Unkeyed mode is fast and simple, but it can’t preserve identity across reorders.
+
+Unkeyed mode is best when:
+
+\begin{itemize}
+  \item lists are small
+  \item items rarely reorder
+  \item you don’t care about preserving DOM identity across reorder (e.g. no input state)
+\end{itemize}
+
+\section{Keyed reconciliation: preserve identity and minimize moves}
+
+Keyed mode tries to:
+
+\begin{itemize}
+  \item reuse DOM nodes by key
+  \item patch in place instead of recreating
+  \item move existing ranges/nodes to new positions
+  \item minimize DOM moves using a Longest Increasing Subsequence (LIS)
+\end{itemize}
+
+Specs in \texttt{runtime/__tests__/reconciler.test.ts} cover the basic expectations:
+
+\begin{itemize}
+  \item \texttt{keyed: moves DOM nodes instead of recreating them}
+  \item \texttt{keyed: removes nodes that are no longer present}
+  \item \texttt{keyed: inserts new nodes at the right position}
+\end{itemize}
+
+\subsection{Two-ended scan + LIS}
+
+The reconciler uses a standard sequence:
+
+\begin{enumerate}
+  \item Build a map from key to current range (start..end, nodes[]).
+  \item Fast two-ended scan for common prefix/suffix keys.
+  \item For the middle region:
+    \begin{itemize}
+      \item build an "old index" sequence for new keys
+      \item compute LIS indices
+      \item move only the ranges not in the LIS
+    \end{itemize}
+\end{enumerate}
+
+Why LIS?
+
+\begin{itemize}
+  \item If a subsequence of items already appears in increasing old-index order, those items can stay where they are.
+  \item Everything else must move (or be created), but LIS keeps that set minimal.
+  \item The implementation uses \texttt{lisIndices(seq)} over old indices, ignoring \texttt{-1} (new items).
+\end{itemize}
+
+Implementation cues:
+
+\begin{itemize}
+  \item \texttt{buildCurrentRanges(host)} groups DOM nodes into logical ranges by \texttt{__hrbrRangeLen}.
+  \item \texttt{lisIndices(seq)} computes LIS over old indices (ignoring \texttt{-1}).
+  \item \texttt{moveRangeBefore(host, range, anchor)} moves nodes end-to-start to preserve order.
+\end{itemize}
+
+\subsection{Dev diagnostics for suspicious usage}
+
+Keyed mode includes two dev-only warnings:
+
+\begin{itemize}
+  \item Mixed keyed and unkeyed children in the same list.
+  \item Next keys have no overlap with previous keys (often indicates unstable keys).
+\end{itemize}
+
+Specs:
+
+\begin{itemize}
+  \item \texttt{dev diagnostics: warns on mixed keyed/unkeyed children in keyed mode}
+  \item \texttt{dev diagnostics: warns when next keys have no overlap with previous keys}
+\end{itemize}
+
+It also asserts that keys are unique among siblings.
+
+That uniqueness assertion is a hard error, not a warning:
+
+\begin{quote}
+	exttt{assert(!seen.has(k), '[hrbr/reconciler] duplicate key ...')}
+\end{quote}
+
+This is intentional: duplicate keys make identity preservation ill-defined.
+
+\subsection{Shape-change safety: node \(\leftrightarrow\) range}
+
+A tricky edge case: a key might render as a singleton node in one render and as a range in another.
+
+The reconciler handles this explicitly:
+
+\begin{itemize}
+  \item if key matches but logical shape changes (node vs range), it removes the old nodes and recreates
+  \item it aggressively removes any \emph{unkeyed trailing nodes} that might remain after a range collapses into a singleton
+\end{itemize}
+
+This is where the metadata invariants matter. The code contains normalization passes that:
+
+\begin{itemize}
+  \item remove unkeyed nodes owned by keyed mode
+  \item delete stale \texttt{__hrbrRangeLen} when the logical item is now a singleton
+\end{itemize}
+
+The fuzz test exists largely to guard these invariants.
+
+One specific implementation detail to notice is \texttt{cleanupTrailingRangeNode(start, key)}.
+When a keyed item collapses from a range into a singleton node, the DOM may still contain trailing unkeyed nodes that used to be part of that range.
+The reconciler aggressively removes any contiguous unkeyed siblings immediately after the start node.
+
+This is later reinforced by a final normalization pass that removes any unkeyed nodes interleaved between keyed logical items.
+
+\section{Property/fuzz testing as an executable oracle}
+
+\texttt{runtime/__tests__/reconciler.fuzz.test.ts} runs 250 seeded steps.
+
+It compares \texttt{reconcileChildren(host, ...)} to a reference renderer that rebuilds the list each step but reuses nodes by key.
+
+The key correctness check is not "minimal moves". It is:
+
+\begin{quote}
+For the same list of logical items, the resulting DOM represents the same logical structure and text content.
+\end{quote}
+
+The fuzz harness reads the logical structure with:
+
+\begin{itemize}
+  \item start key: \texttt{__hrbrKey}
+  \item range length: \texttt{__hrbrRangeLen} (default 1)
+\end{itemize}
+
+Then it compares the logical tuples (key, len, texts[]) against the reference.
+
+The fuzz test is doing something important for maintenance:
+
+\begin{itemize}
+  \item It doesn’t claim the reconciler is optimal.
+  \item It claims that for any seeded sequence of updates, the reconciler produces the \emph{same logical output} as a simpler reference “rebuild” strategy.
+\end{itemize}
+
+That’s exactly the right kind of oracle for reconciliation code: optimality is a performance concern, but correctness is a binary property.
+
+\section{Fallback mount: reconciling signal-driven dynamic children}
+
+\texttt{runtime/fallback.ts} provides a reactive mount function:
+
+\begin{verbatim}
+mountFallback(host, render, { lane?, scheduler?, keyed? })
+\end{verbatim}
+
+Contract:
+
+\begin{itemize}
+  \item \texttt{render()} may read signals.
+  \item When signals change, schedule a reconcile pass in the requested lane.
+  \item The render result is \texttt{\{ children: ReconcileItem[], keyed? \}}.
+\end{itemize}
+
+Implementation uses two passes:
+
+\begin{itemize}
+  \item An effect that runs \texttt{render()} just to track dependencies, then schedules.
+  \item A \texttt{runOnce()} pass that actually calls \texttt{reconcileChildren()}.
+\end{itemize}
+
+This split is subtle but intentional:
+
+\begin{itemize}
+  \item The tracking effect should be very cheap; it exists to subscribe to signals.
+  \item The DOM work should be scheduled and batched (via \texttt{batch(() => runOnce())}).
+  \item A \texttt{pending} flag ensures multiple invalidations coalesce into one scheduled reconcile.
+\end{itemize}
+
+In other words, \texttt{mountFallback} mirrors the same “coalesce and commit” philosophy used by \texttt{mountCompiledBlock} (Chapter 14): collect changes reactively, then perform one DOM commit.
+
+Spec: \texttt{reconciles structural changes when signal-driven list changes} (\texttt{fallback.test.ts}).
+
+That integration test verifies that:
+
+\begin{itemize}
+  \item reorders preserve node identity by key
+  \item inserts create new nodes
+  \item removals shrink the DOM
+  \item disposing stops reactive updates
+\end{itemize}
+
+\section{Takeaways}
+
+\begin{itemize}
+  \item The fallback reconciler gives HRBR a safe strategy for dynamic structure.
+  \item Keyed reconciliation preserves identity and minimizes moves via two-ended scan + LIS.
+  \item Ranges let one logical item expand to multiple DOM nodes, enabling fragments and multi-root outputs.
+  \item Metadata invariants (\texttt{__hrbrKey}, \texttt{__hrbrRangeLen}) are crucial; fuzz tests enforce them.
+  \item \texttt{mountFallback} bridges signals/scheduler to \texttt{reconcileChildren} for real apps.
+\end{itemize}
+
+\section{Walking the tests (the executable spec)}
+
+\subsection{\texttt{runtime/__tests__/reconciler.test.ts}}
+
+This suite locks down the core expectations:
+
+\begin{itemize}
+  \item \textbf{Dev warnings are emitted:} by temporarily replacing \texttt{console.warn}, the tests prove warnings fire for
+  mixed keyed/unkeyed children and for disjoint key sets.
+  \item \textbf{Keyed reorder preserves identity:} the “moves DOM nodes” test captures original nodes \texttt{a0/b0/c0} then reorders and asserts node identity is preserved.
+  \item \textbf{Keyed removals:} nodes that disappear from \texttt{next} are removed, while survivors keep identity.
+  \item \textbf{Keyed inserts:} missing keys are created and inserted at the correct position.
+  \item \textbf{Unkeyed mode is positional:} patches first, then truncates/appends, without identity guarantees across reorder.
+  \item \textbf{Ranges work:} a range key produces two DOM nodes and behaves as a single logical item during moves/inserts/removals.
+\end{itemize}
+
+\subsection{\texttt{runtime/__tests__/reconciler.fuzz.test.ts}}
+
+This is the long-term safety net.
+It runs 250 seeded steps and compares the reconciler output against a reference renderer.
+
+Key idea: the test reads \emph{logical structure} from the DOM via \texttt{__hrbrKey} and \texttt{__hrbrRangeLen}, then compares (key, len, per-node text) tuples.
+If there’s a mismatch, it throws an error that includes seed, step, next specs, and DOM dumps to make replay/debugging practical.
+
+\subsection{\texttt{runtime/__tests__/fallback.test.ts}}
+
+This test shows the reconciler in its intended reactive setting:
+
+\begin{itemize}
+  \item a signal produces a keyed list
+  \item changing the signal reorders, inserts, and removes
+  \item identity is preserved for reused keys
+  \item \texttt{dispose()} stops further reactive updates
+\end{itemize}
+
+The test uses \texttt{await new Promise((r) => setTimeout(r, 0))} to wait for the scheduled reconcile to run.
+
+\section{Online resources}
+
+\begin{itemize}
+  \item A classic keyed diff discussion (and why identity matters):
+  \href{https://react.dev/learn/rendering-lists}{React docs: Rendering Lists (keys)}.
+  \item Longest Increasing Subsequence (the core move-minimization idea):
+  \href{https://en.wikipedia.org/wiki/Longest_increasing_subsequence}{Wikipedia: Longest increasing subsequence}.
+  \item A VDOM implementation reference with LIS-based keyed diff (for historical comparison):
+  \href{https://vuejs.org/guide/essentials/list.html#maintaining-state-with-key}{Vue docs: Maintaining State with \texttt{key}}.
+  \item DOM child manipulation primitives used by the reconciler:
+  \href{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}{MDN: \texttt{Node.insertBefore}} and
+  \href{https://developer.mozilla.org/en-US/docs/Web/API/Node/removeChild}{MDN: \texttt{Node.removeChild}}.
+\end{itemize}

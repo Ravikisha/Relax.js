@@ -1,0 +1,256 @@
+\chapter{Mounting DOM (\texttt{src/mount-dom.ts})}
+
+This chapter is about the first half of the renderer: taking the data structures from \texttt{src/h.ts} and producing real DOM nodes.
+
+In Relax theres a clean separation:
+
+\begin{itemize}
+  \item \textbf{Creation} builds VNode trees (Chapter~4).
+  \item \textbf{Mounting} turns VNodes into DOM and stores back-references (this chapter).
+  \item \textbf{Patching} reconciles trees (Chapter~8).
+  \item \textbf{Destroying} cleans up listeners / component instances / HRBR blocks (Chapter~9).
+\end{itemize}
+
+The entry point is \texttt{mountDOM(vdom, parentEl, index?, hostComponent?)} in \texttt{src/mount-dom.ts}.
+
+\section{Contract: \texttt{mountDOM}}
+
+\subsection*{Inputs}
+\begin{itemize}
+  \item \texttt{vdom}: a VNode (one of the \texttt{DOM\_TYPES}).
+  \item \texttt{parentEl}: the DOM element where the node should be inserted. This must be non-null.
+  \item \texttt{index} (optional): insert position inside \texttt{parentEl.childNodes}.
+  \item \texttt{hostComponent} (optional): the component instance that should become \texttt{this} for event handlers.
+\end{itemize}
+
+\subsection*{Outputs / side-effects}
+\begin{itemize}
+  \item Inserts DOM into \texttt{parentEl}.
+  \item Mutates the vnode: for most node types, \texttt{vdom.el} becomes a back-reference to the created DOM.
+  \item For elements, saves listener cleanup hooks on \texttt{vdom.listeners}.
+  \item For components, creates and stores \texttt{vdom.component}.
+\end{itemize}
+
+\subsection*{Failure modes}
+\begin{itemize}
+  \item If \texttt{parentEl == null}, it throws \texttt{[mountDOM] Parent element is null}.
+  \item If \texttt{vdom.type} doesnt match any known tag in \texttt{DOM\_TYPES}, it throws \texttt{Can't mount DOM of type: ...}.
+\end{itemize}
+
+The tests in \texttt{src/__tests__/mount-dom.test.ts} include a couple of ``guardrail'' cases that assert these errors exist.
+
+\section{The central pattern: dispatch by \texttt{vdom.type}}
+	exttt{mountDOM()} is a type-dispatcher. In code its a \texttt{switch (vdom.type)} that delegates to one helper per vnode kind:
+
+\begin{itemize}
+  \item \texttt{createTextNode} for \texttt{DOM\_TYPES.TEXT}
+  \item \texttt{createElementNode} for \texttt{DOM\_TYPES.ELEMENT}
+  \item \texttt{createFragmentNodes} for \texttt{DOM\_TYPES.FRAGMENT}
+  \item \texttt{createComponentNode} for \texttt{DOM\_TYPES.COMPONENT}
+  \item \texttt{createHrbrNode} for \texttt{DOM\_TYPES.HRBR}
+\end{itemize}
+
+This is not just an organizational trick: it is what makes patching symmetric later. Chapter~8 will mirror this shape with a patch dispatcher.
+
+\section{Text nodes: \texttt{createTextNode}}
+For \texttt{TextVNode}, mounting is:
+
+\begin{enumerate}
+  \item Create a real text node: \texttt{document.createTextNode(vdom.value)}.
+  \item Store a stable back-pointer: \texttt{vdom.el = textNode}.
+  \item Insert it into the parent using \texttt{insert(textNode, parentEl, index)}.
+\end{enumerate}
+
+\subsection*{What the tests prove}
+	exttt{src/__tests__/mount-dom.test.ts} contains two small tests that act like a contract:
+
+\begin{itemize}
+  \item \texttt{mount a text element in a host element}: asserts the DOM contains \texttt{hello}.
+  \item \texttt{save the created text element in the vdom}: asserts \texttt{vdom.el} is a \texttt{Text} instance and points at the right content.
+\end{itemize}
+
+Read those tests as: ``If we ever refactor mounting, these properties must remain true or patching/destroying will become unreliable.''
+
+\section{Element nodes: \texttt{createElementNode} and the props/events split}
+For \texttt{ElementVNode}, Relax mounts in a deliberate order:
+
+\begin{enumerate}
+  \item Create \texttt{const element = document.createElement(tag)}.
+  \item Apply props and events via \texttt{addProps(element, vdom, hostComponent)}.
+  \item Store \texttt{vdom.el = element}.
+  \item Mount children into \texttt{element} (recursively via \texttt{mountDOM(child, element, null, hostComponent)}).
+  \item Insert the final element into the parent.
+\end{enumerate}
+
+The most important concept here is that Relax treats events specially.
+
+\subsection{\texttt{addProps}: extracting attrs vs. events}
+	exttt{addProps()} calls \texttt{extractPropsAndEvents(vdom)} (from \texttt{src/utils/props.ts}). The return value is split into:
+
+\begin{itemize}
+  \item \textbf{attrs}: everything that becomes DOM attributes/properties (\texttt{id}, \texttt{class}, \texttt{style}, \texttt{data-*}, etc).
+  \item \textbf{events}: the event map stored under \texttt{props.on}.
+\end{itemize}
+
+Then mounting wires two subsystems:
+
+\begin{itemize}
+  \item \texttt{addEventListeners(events, el, hostComponent)} returns a map of cleanup functions; this is saved as \texttt{vdom.listeners}.
+  \item \texttt{setAttributes(el, attrs)} applies the non-event attributes.
+\end{itemize}
+
+That \texttt{vdom.listeners} back-reference is critical later in Chapter~9: destroying uses it to remove listeners even if the vnode is no longer in the DOM.
+
+\subsection*{What the tests prove}
+The tests in \texttt{src/__tests__/mount-dom.test.ts} cover a small but meaningful matrix:
+
+\begin{itemize}
+  \item \textbf{attributes:} id, class, list-of-classes
+  \item \textbf{style:} a style object becomes an inline style string
+  \item \textbf{events:} clicking the element calls the handler and \texttt{vdom.listeners} is populated
+\end{itemize}
+
+These are not ``just tests''they are a spec for how Relax converts the VNode \texttt{props} object into real DOM behavior.
+
+\section{Event handler binding: the meaning of \texttt{hostComponent}}
+	exttt{mountDOM()} accepts an optional \texttt{hostComponent} argument, which gets threaded into \texttt{createElementNode(...)} and ultimately into \texttt{addEventListeners(...)}.
+
+The intent is: when a component mounts elements, those element event handlers should run with \texttt{this === componentInstance} so handler methods can mutate component state.
+
+\subsection*{What the tests prove}
+The test \texttt{where there is a host component, the event handlers are bound to it} builds a fragment containing two buttons and passes a plain object \texttt{comp = \{ count: 5 \}} as the host. Both click handlers increment \texttt{this.count}. The assertions show two things:
+
+\begin{itemize}
+  \item the same host is used for nested mounts (a button nested inside a div still binds \texttt{this} correctly)
+  \item binding is not limited to direct children
+\end{itemize}
+
+This is a key piece of ``component semantics'' even though its implemented entirely inside the mounting layer.
+
+\section{Fragments: \texttt{createFragmentNodes} and insertion indices}
+Fragments are the trickiest type to mount because a fragment is ``many nodes''.
+
+Relaxs move is simple:
+
+\begin{quote}
+  A fragment vnode stores \texttt{vdom.el = parentEl}.
+\end{quote}
+
+That is, a fragment doesnt own a DOM node. Instead, it keeps a reference to the container it was mounted in.
+
+\subsection{The index problem}
+When mounting into an explicit \texttt{index}, you want fragment children to appear starting at that position.
+But as soon as you insert the first child, the parents \texttt{childNodes} list changes, and the next childs target index must shift.
+
+Relax solves this by maintaining a local counter \texttt{idx}:
+
+\begin{itemize}
+  \item If \texttt{idx == null}, it just appends each child and doesnt care.
+  \item Otherwise, after mounting each child, it increments \texttt{idx} by the number of DOM nodes that child contributed.
+\end{itemize}
+
+The ``how many DOM nodes did this child contribute?'' logic is where fragments and components matter:
+
+\begin{itemize}
+  \item child fragment: contributes \texttt{child.children.length}
+  \item child component: contributes \texttt{child.component.elements.length}
+  \item other nodes: contribute \texttt{1}
+\end{itemize}
+
+This design implies a subtle contract with the component implementation: component instances must maintain an \texttt{elements} array listing the DOM nodes they own.
+Youll revisit that in the component lifecycle chapters.
+
+\subsection*{What the tests prove}
+	exttt{src/__tests__/mount-dom.test.ts} contains several important fragment tests:
+
+\begin{itemize}
+  \item \texttt{mount a fragment in a host element} and \texttt{mount a fragment inside a fragment...}: show that fragments flatten naturally at mount time.
+  \item \texttt{all nested fragments el references point to the parent element}: asserts the design choice \texttt{fragment.el === parentEl} even for nested fragments.
+  \item A parametrized \texttt{test.each} suite (later in the file) checks insertion-index behavior for complex nested fragment/component scenarios.
+\end{itemize}
+
+\section{Components: \texttt{createComponentNode} and asynchronous \texttt{onMounted}}
+Component mounting bridges VDOM to component instances.
+The algorithm in \texttt{createComponentNode()} is:
+
+\begin{enumerate}
+  \item Split vnode props into \texttt{props} and \texttt{events} via \texttt{extractPropsAndEvents(...)}.
+  \item Allocate the instance: \texttt{new Component(props, events, hostComponent)}.
+  \item Store external children: \texttt{component.setExternalContent(vdom.children)}.
+  \item Delegate to the component to mount itself: \texttt{component.mount(parentEl, index)}.
+  \item Store \texttt{vdom.component = component}.
+  \item Store \texttt{vdom.el = component.firstElement}.
+\end{enumerate}
+
+The last step is important: a component vnode cannot point to ``the component'' as a DOM node, so Relax points it at the first DOM element the component produced. Patching uses this to locate and replace component output.
+
+\subsection{Lifecycle scheduling and the job queue}
+Immediately after creating a component node, \texttt{mountDOM()} enqueues a lifecycle callback:
+
+\begin{quote}
+	exttt{enqueueJob(() => vdom.component.onMounted())}
+\end{quote}
+
+So \texttt{onMounted()} is intentionally asynchronous relative to ``the DOM nodes now exist''.
+This approach avoids re-entrancy hazards (mount causing mount causing mount) and aligns with how many UI systems schedule lifecycle effects.
+
+\subsection*{What the tests prove}
+	exttt{src/__tests__/mount-dom.test.ts} exercises component creation and parent-child links:
+
+\begin{itemize}
+  \item \texttt{mount a component with props}: shows that props are passed in and the instance is stored.
+  \item \texttt{mount a component with children}: shows that children can be used to build deeper trees.
+  \item \texttt{mount a component with a parent component} and \texttt{child components keep a reference to their parent component}: show that \texttt{hostComponent} threads the parent/child relationship.
+  \item \texttt{when a component with multiple elements is mounted, the vdom keeps a reference to the first element}: locks down the \texttt{vdom.el = firstElement} rule.
+\end{itemize}
+
+\section{HRBR interop: \texttt{createHrbrNode} and why \texttt{el} points to the host}
+HRBR nodes are mounted by allocating a dedicated host container element:
+
+\begin{itemize}
+  \item Create a \texttt{<span>} host.
+  \item Mark it with a dataset flag: \texttt{host.dataset.hrbr = '1'}.
+  \item Insert the host into the parent.
+  \item Call the mount factory: \texttt{instance = vdom.mount(host)}.
+  \item Store \texttt{vdom.instance = instance}.
+  \item Store \texttt{vdom.el = host} (and also \texttt{vdom.host = host}).
+\end{itemize}
+
+The comment in \texttt{src/mount-dom.ts} is worth repeating: \textbf{VDOM owns the host container, not the hosts first child.} Patch logic later locates nodes by \texttt{oldVdom.el}; if \texttt{el} pointed inside HRBR output, replacement/removal would get the wrong DOM index.
+
+\subsection*{What the tests prove}
+While the mounting tests live in \texttt{mount-dom.test.ts}, HRBR mounting is exercised via integration tests in \texttt{src/__tests__/hrbr-integration.test.ts}.
+Those tests treat HRBR blocks as ``just another vnode type'' and assert:
+
+\begin{itemize}
+  \item the DOM output appears after mounting
+  \item the block is destroyed when the VDOM is destroyed
+  \item patching preserves vs remounts based on mount factory identity
+\end{itemize}
+
+\section{Insertion mechanics: \texttt{insert(el, parentEl, index)}}
+Everything ultimately goes through \texttt{insert()}, which implements four rules:
+
+\begin{itemize}
+  \item \textbf{append:} if \texttt{index == null}, append.
+  \item \textbf{reject negative indices:} if \texttt{index < 0}, throw.
+  \item \textbf{append out-of-range:} if \texttt{index >= parent.childNodes.length}, append.
+  \item \textbf{insertBefore otherwise:} insert before \texttt{childNodes[index]}.
+\end{itemize}
+
+The tests include a negative-index case (throws) and several index-sensitive fragment suites.
+
+\section{Mini-exercises}
+\begin{enumerate}
+  \item Add a focused test to \texttt{mount-dom.test.ts} proving that mounting with an out-of-range index appends for element vnodes. (Youll be asserting the same rule \texttt{insert()} implements.)
+  \item In \texttt{mount-dom.test.ts}, find the parameterized index tests and explain why nested components contribute \texttt{component.elements.length} to the index offset.
+\end{enumerate}
+
+\section{Online resources}
+\begin{itemize}
+  \item DOM basics: \texttt{document.createElement} (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/Document/createElement}{https://developer.mozilla.org/en-US/docs/Web/API/Document/createElement}
+  \item DOM basics: \texttt{Node.insertBefore} (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}
+  \item DOM basics: \texttt{Node.appendChild} / \texttt{Element.append} (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/Element/append}{https://developer.mozilla.org/en-US/docs/Web/API/Element/append}
+  \item Event targets and listener binding (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener}{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener}
+  \item ``Why schedule effects'' background (Reacts mental model is a good reference even if implementation differs): \href{https://react.dev/learn/synchronizing-with-effects}{https://react.dev/learn/synchronizing-with-effects}
+\end{itemize}

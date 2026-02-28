@@ -1,0 +1,208 @@
+\chapter{Repo tour \& project constraints}
+
+\section{What you're looking at}
+This repository is intentionally small, but it isn't a single ``runtime''.
+It is a collection of cooperating subsystems, each with its own contract and its own tests.
+
+At a high level, you should think of Relax.js as three products living in one repo:
+
+\begin{enumerate}
+  \item \textbf{Relax VDOM runtime} (the teaching-friendly baseline) under \texttt{src/}.
+  \item \textbf{HRBR runtime} (experimental, compiled fast-path) under \texttt{runtime/}.
+  \item \textbf{Compiler} (experimental transform from TSX/JSX subset to HRBR blocks) under \texttt{compiler/}.
+\end{enumerate}
+
+Everything else exists to support one of these (docs, benchmarks, build tooling).
+
+\subsection{Directory map (first pass)}
+This repository is split into a few major areas:
+
+\begin{itemize}
+  \item \texttt{src/}: the Relax.js Virtual DOM runtime.
+  \item \texttt{runtime/}: an experimental runtime (HRBR) based on signals, scheduling, and compiled blocks.
+  \item \texttt{compiler/}: a compiler/transform that converts a JSX subset into HRBR block definitions.
+  \item \texttt{benchmarks/}: a browser harness to compare performance.
+  \item \texttt{docs/}: design notes and whitepapers.
+\end{itemize}
+
+Two more folders matter when you're thinking about correctness:
+
+\begin{itemize}
+  \item \texttt{src/__tests__/}: the VDOM runtime spec.
+  \item \texttt{runtime/__tests__/} and \texttt{compiler/__tests__/}: the HRBR + compiler spec.
+\end{itemize}
+
+\section{The constraint that shapes everything: DOM correctness in jsdom}
+Almost every implementation choice is constrained by one hard rule:
+
+\begin{quote}
+The runtime must be correct in a headless DOM (jsdom), and tests are the contract.
+\end{quote}
+
+That affects:
+
+\begin{itemize}
+  \item Attribute vs property behavior (inputs/selects are tricky in jsdom).
+  \item Event binding and cleanup.
+  \item Diff algorithms (keyed moves must preserve node identity).
+\end{itemize}
+
+\subsection{Why jsdom is a meaningful constraint}
+jsdom is \emph{not} a full browser, and that is exactly why it is useful here.
+If your runtime depends on unspecified browser behavior or timing quirks, your test suite will become flaky.
+
+Instead, tests in this repo focus on:
+
+\begin{itemize}
+  \item DOM structure (\texttt{innerHTML})
+  \item identity (whether an element is reused or replaced)
+  \item cleanup (event listeners and references are removed)
+\end{itemize}
+
+This shapes file boundaries: many helpers exist to make DOM updates deterministic and assertable.
+
+\section{How to read code in this repo (recommended path)}
+When you see a source file, immediately find its tests. That's the spec.
+
+Recommended reading order:
+
+\begin{enumerate}
+  \item \texttt{src/index.ts} (public exports)
+  \item \texttt{src/h.ts} (VNode model)
+  \item \texttt{src/mount-dom.ts} (mount)
+  \item \texttt{src/patch-dom.ts} (patch)
+  \item \texttt{src/destroy-dom.ts} (cleanup)
+  \item \texttt{src/component.ts} (components)
+\end{enumerate}
+
+\subsection{A second reading path: follow a user action}
+The fastest way to build intuitions is to follow a single user interaction end-to-end.
+For example: ``typing in an input and clicking a button adds a todo''.
+
+You can trace that across:
+
+\begin{itemize}
+  \item event normalization: \texttt{src/events.ts}
+  \item component event binding: \texttt{src/dispatcher.ts} and \texttt{src/component.ts}
+  \item scheduling: \texttt{src/scheduler.ts} (\texttt{nextTick()})
+  \item patching: \texttt{src/patch-dom.ts}
+\end{itemize}
+
+Doing this with the tests open beside you is the theme of this book.
+
+\section{A concrete example: createApp() is tiny on purpose}
+	exttt{createApp()} exists so the user has a simple lifecycle API.
+The full file is short: \texttt{src/app.ts}.
+
+Key behavior:
+
+\begin{itemize}
+  \item It creates a root VNode with \texttt{h(RootComponent, props)}.
+  \item It mounts it once.
+  \item It can unmount and fully cleanup.
+\end{itemize}
+
+\subsection{Code reference}
+See \texttt{src/app.ts}. The central calls are \texttt{mountDOM(...)} and \texttt{destroyDOM(...)}.
+
+\subsection{Test reference (what proves the contract)}
+The high-level application lifecycle is specified by \texttt{src/__tests__/app.test.ts}.
+This test file shows a full mount-to-interaction flow:
+
+\begin{itemize}
+  \item It mounts the app.
+  \item It waits for async work with \texttt{await nextTick()}.
+  \item It simulates user input by setting \texttt{input.value} and dispatching an \texttt{input} event.
+  \item It simulates clicks via \texttt{button.click()}.
+  \item It asserts DOM structure with \texttt{singleHtmlLine\`...\`}.
+\end{itemize}
+
+That single test is a great ``reading harness'' for learning how Relax wires components + events + patching.
+
+\section{Project constraint: small API surface}
+Relax exports only a few primitives (h, fragments, components, scheduler).
+Everything else is internal. That keeps the library small and also makes the tests more important.
+
+\subsection{Where to see the supported surface area}
+The public exports are in \texttt{src/index.ts} and mirrored by the \texttt{exports} map in \texttt{package.json}.
+
+In other words:
+
+\begin{itemize}
+  \item if it's not in \texttt{src/index.ts}, it's not a stable public API
+  \item tests are free to depend on internals, but users shouldn't
+\end{itemize}
+
+This book leans on that design: we can explain the internals without promising them as user-facing contracts.
+
+\section{Tests: how this repo measures correctness}
+This repository uses Vitest with a jsdom environment.
+The configuration lives in \texttt{vitest.config.js}:
+
+\begin{itemize}
+  \item test patterns: \texttt{**/__tests__/**/*.test.ts(x)}
+  \item reporters: verbose (good for learning)
+  \item environment: jsdom
+\end{itemize}
+
+\subsection{The single most important helper: singleHtmlLine}
+Many tests assert against HTML strings.
+If you try to compare raw multi-line template literals to \texttt{innerHTML}, whitespace will fight you.
+
+This repo solves that in \texttt{src/__tests__/utils.ts} with \texttt{singleHtmlLine()}:
+
+\begin{itemize}
+  \item it collapses whitespace
+  \item it removes spaces between tags (\texttt{>\s+< -> ><})
+  \item it trims
+\end{itemize}
+
+This is a micro-lesson in test design: you want assertions that are strict about structure, but forgiving about irrelevant formatting.
+
+\subsection{Where to learn semantics fastest (test tour)}
+If you're new to the codebase, these tests teach the contracts in the right order:
+
+\begin{itemize}
+  \item \texttt{src/__tests__/mount-dom.test.ts}:
+    mount behavior, fragment behavior, saving \texttt{vdom.el} references.
+  \item \texttt{src/__tests__/patch-dom.test.ts}:
+    identity reuse vs replacement, attribute updates, keyed children, and edge cases.
+  \item \texttt{src/__tests__/destroy-dom.test.ts}:
+    cleanup and idempotency, especially ``remove event listeners''.
+  \item \texttt{src/__tests__/component.test.ts}:
+    component lifecycle, props/state updates, and event binding to the host component.
+  \item \texttt{src/__tests__/jsx-react-syntax.test.tsx}:
+    TSX compatibility contract (className/onClick/fragments/components).
+\end{itemize}
+
+Each of these will be revisited later in the book when we dive into the implementation files they protect.
+
+\section{Mini-exercise}
+Open these tests and write down what they prove (one sentence each). Then locate the implementation file they exercise.
+
+\begin{itemize}
+  \item \texttt{src/__tests__/app.test.ts}
+  \item \texttt{src/__tests__/component.test.ts}
+  \item \texttt{src/__tests__/mount-dom.test.ts}
+  \item \texttt{src/__tests__/destroy-dom.test.ts}
+\end{itemize}
+
+If you can answer these, you're ready for Part II.
+
+\section{Online resources (optional, citation-ready)}
+This chapter is about reading \emph{this repo}, but a few external references help explain why these constraints and structures are common.
+
+\begin{itemize}
+  \item DOM living standard (event/bubbling/capturing model):
+    \href{https://dom.spec.whatwg.org/}{WHATWG DOM Standard}.
+  \item Event handling basics and differences between properties vs attributes:
+    \href{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener}{MDN: addEventListener},
+    \href{https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement}{MDN: HTMLElement}.
+  \item Testing DOM in Node:
+    \href{https://vitest.dev/guide/}{Vitest Guide},
+    \href{https://github.com/jsdom/jsdom}{jsdom}.
+  \item Module packaging and exports maps:
+    \href{https://nodejs.org/api/packages.html#packages_exports}{Node.js docs: \texttt{exports}}.
+\end{itemize}
+
+Later, if you want formal citations in PDF output, we can add a bibliography system to \texttt{book/main.tex} and convert these links into \texttt{\textbackslash cite\{...\}} entries.

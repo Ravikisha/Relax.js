@@ -1,0 +1,234 @@
+\chapter{What we're building (and why)}
+
+\section{The elevator pitch}
+Relax.js is a small frontend library built around a Virtual DOM (VDOM) and a component model.
+What makes this repository interesting is that it contains \emph{two} rendering strategies:
+
+\begin{enumerate}
+  \item A traditional VDOM runtime under \texttt{src/}.
+  \item An experimental compiler-assisted runtime (HRBR) designed to update the DOM through precomputed \textbf{slots}.
+\end{enumerate}
+
+The goal of this book is not only to show \emph{how to use} Relax.js, but to explain \emph{how to build it}.
+We'll read the real source code, map it to a mental model, and connect every important concept to tests.
+
+This isn't a conceptual ``frameworks 101'' book.
+It's a guided reverse-engineering and rebuild:
+
+\begin{itemize}
+  \item You will learn the smallest set of abstractions needed to describe UI.
+  \item You will see how those abstractions are represented in memory.
+  \item You will trace how a rendering pass turns them into real DOM.
+  \item You will follow how updates are scheduled and applied.
+  \item You will use the test suite as the specification that locks behavior in place.
+\end{itemize}
+
+By the end, you should be able to (1) understand every important subsystem in this repository, and (2) rebuild something similar with confidence.
+
+\section{A tiny contract: what does Relax.js promise?}
+At a high level, Relax.js promises:
+
+\begin{itemize}
+  \item You describe UI as a tree (VNode tree or compiled block).
+  \item The runtime mounts it into a DOM host element.
+  \item When state changes, only the necessary DOM updates happen.
+  \item Components have lifecycle hooks and can emit/handle events.
+\end{itemize}
+
+Those promises are verified by tests under \texttt{src/__tests__/} and (for the HRBR runtime) under \texttt{runtime/__tests__/}.
+
+\subsection{A quick terminology primer}
+You'll see these words throughout the code and tests:
+
+\begin{itemize}
+  \item \textbf{VNode}: a plain object that describes what DOM you want.
+  \item \textbf{Mount}: create DOM from a VNode for the first time.
+  \item \textbf{Patch}: update existing DOM by comparing old/new VNodes.
+  \item \textbf{Destroy}: remove DOM nodes and detach listeners.
+  \item \textbf{Host element}: the DOM element you mount the app into (often \texttt{document.body} in tests).
+  \item \textbf{HRBR block}: a compiled representation: template HTML + dynamic \emph{slots}.
+  \item \textbf{Slot}: a precomputed ``write location'' (text/attr/prop/class/style/event) in a template.
+\end{itemize}
+
+\section{Public API entry points (code references)}
+The \emph{public} exports live in \texttt{src/index.ts}:
+
+\begin{lstlisting}[style=relax,language=JavaScript]
+export { createApp } from './app'
+export { defineComponent } from './component'
+export { DOM_TYPES, h, hFragment, hSlot, hString } from './h'
+export { nextTick } from './scheduler'
+\end{lstlisting}
+
+This tells you the learning order:
+
+\begin{enumerate}
+  \item \texttt{createApp()} (app lifecycle)
+  \item \texttt{defineComponent()} (component model)
+  \item \texttt{h()/hFragment()} (VNode model)
+  \item \texttt{mountDOM()/patchDOM()/destroyDOM()} (DOM mechanics)
+  \item \texttt{nextTick()} (async scheduling in the VDOM runtime)
+\end{enumerate}
+
+\section{Why a second runtime? (HRBR in one paragraph)}
+The VDOM approach is flexible, but it has overhead: you allocate VNodes, diff lists, and interpret the tree every update.
+HRBR is the opposite trade-off:
+
+\begin{itemize}
+  \item The compiler extracts a stable template (static HTML) once.
+  \item Dynamic values become \textbf{slots} with stored DOM paths.
+  \item Updates become \emph{direct writes} to known nodes.
+\end{itemize}
+
+You'll see HRBR show up in VDOM code via \texttt{DOM_TYPES.HRBR} and \texttt{hBlock()} in \texttt{src/h.ts}.
+
+\subsection{What problem does HRBR try to solve?}
+If a UI subtree is structurally stable (same elements in the same shape, only values change), a classic VDOM update does extra work:
+
+\begin{itemize}
+  \item allocate and traverse VNodes on every update
+  \item interpret the tree to find where to write
+  \item diff children arrays (sometimes expensive)
+\end{itemize}
+
+HRBR moves some of that cost earlier (``compile time''):
+
+\begin{itemize}
+  \item build a static DOM template once
+  \item record paths to dynamic locations (slots)
+  \item update by writing directly to those DOM nodes
+\end{itemize}
+
+That doesn't make VDOM obsolete.
+It creates a spectrum:
+VDOM is the flexible general case; HRBR is an optimized fast path when the structure is known.
+
+\section{How we'll prove correctness throughout this book}
+This repository uses \textbf{Vitest} and \textbf{jsdom}.
+Our rule is simple: every time we explain a behavior, we should be able to point to a unit test.
+
+Examples:
+
+\begin{itemize}
+  \item Mounting basics: \texttt{src/__tests__/mount-dom.test.ts}
+  \item Patching/diffing: \texttt{src/__tests__/patch-dom.test.ts}
+  \item Components + lifecycle: \texttt{src/__tests__/component*.test.ts}
+  \item HRBR block runtime: \texttt{runtime/__tests__/block.test.ts}
+\end{itemize}
+
+\subsection{What ``tests as spec'' means in this repository}
+You should treat tests here as \emph{contracts}.
+When you change runtime behavior, you don't just ``fix failing tests''---you decide whether the contract changed.
+
+Most tests follow the same simple pattern:
+
+\begin{enumerate}
+  \item Set up a small DOM (usually \texttt{document.body}).
+  \item Build a VNode tree (or HRBR block).
+  \item Mount, patch, or destroy.
+  \item Assert on resulting \texttt{innerHTML} or element identity.
+\end{enumerate}
+
+That gives you two superpowers as a reader:
+
+\begin{itemize}
+  \item You can infer semantics without reading every implementation detail.
+  \item You can reproduce bugs by writing a tiny test first.
+\end{itemize}
+
+\section{Walkthrough: the smallest end-to-end loop (with real code)}
+Let's walk through the smallest app lifecycle you can observe in one sitting.
+
+\subsection{createApp(): mount and unmount}
+The application API is defined in \texttt{src/app.ts}.
+The critical part is that \texttt{createApp()} remembers three pieces of state:
+
+\begin{itemize}
+  \item \texttt{parentEl}: where we mounted
+  \item \texttt{isMounted}: guard against double mount/unmount
+  \item \texttt{vdom}: the root VNode tree
+\end{itemize}
+
+When you mount:
+\begin{enumerate}
+  \item it throws if already mounted
+  \item it creates the root VNode by calling \texttt{h(RootComponent, props)}
+  \item it calls \texttt{mountDOM(vdom, parentEl)}
+\end{enumerate}
+
+When you unmount:
+\begin{enumerate}
+  \item it throws if not mounted
+  \item it calls \texttt{destroyDOM(vdom)}
+  \item it resets internal references
+\end{enumerate}
+
+This is a small but important architectural choice: \emph{the App owns the root VNode}.
+That makes ``unmount'' a reliable cleanup boundary.
+
+\subsection{The test that proves it works}
+Open \texttt{src/__tests__/app.test.ts}.
+It reads like a story:
+
+\begin{itemize}
+  \item It creates an app via \texttt{createApp(App, \{ todos: [...] \})}.
+  \item It mounts to \texttt{document.body}.
+  \item It waits for \texttt{nextTick()} to flush async work.
+  \item It asserts a stable HTML snapshot via \texttt{singleHtmlLine\`...\`}.
+\end{itemize}
+
+Notice the discipline here: the tests make DOM updates predictable by explicitly awaiting \texttt{nextTick()}.
+That foreshadows Chapter~10, where we explain why scheduling exists and how it interacts with DOM patching.
+
+\section{Walkthrough: patching is ``same element, new values''}
+Relax's VDOM runtime is built around a simple principle:
+
+\begin{quote}
+If the old and new nodes are the ``same kind'' of node, we reuse the existing DOM element and update attributes/children.
+If they are different, we replace.
+\end{quote}
+
+The test suite encodes this principle over and over.
+For example, \texttt{src/__tests__/patch-dom.test.ts} starts with extremely small cases:
+
+\begin{itemize}
+  \item \textbf{no change}: patching identical trees should reuse \texttt{el}.
+  \item \textbf{change the root node}: patching \texttt{div -> span} replaces the root element.
+  \item \textbf{patch text}: \texttt{"foo" -> "bar"} updates only the Text node.
+\end{itemize}
+
+Those tests tell you what to look for when reading \texttt{src/patch-dom.ts}: element identity reuse is a correctness requirement, not an optimization.
+
+\section{Mini-exercise (with intent)}
+Before moving on, do this intentionally (don't just skim):
+
+\begin{enumerate}
+  \item Read \texttt{src/app.ts} and answer: what runtime calls does \texttt{createApp()} delegate to?
+  \item Read \texttt{src/__tests__/app.test.ts} and find every \texttt{await nextTick()}.
+    For each one, explain what DOM change it is waiting for.
+  \item Read the first ~5 tests in \texttt{src/__tests__/patch-dom.test.ts}.
+    For each, write a one-sentence rule (e.g., ``patching text updates textContent without replacing parent elements'').
+\end{enumerate}
+
+\section{Online resources (optional, but good context)}
+This book is grounded in the Relax.js repository, but it helps to know the broader ecosystem it draws from.
+These are references you can read alongside chapters; they are not prerequisites.
+
+\begin{itemize}
+  \item Virtual DOM background (high-level):
+  \href{https://react.dev/learn/render-and-commit}{React --- Render and Commit}.
+  \item The diffing strategy commonly used in VDOM children reconciliation:
+    \href{https://neil.fraser.name/writing/diff/}{Neil Fraser, ``An O(ND) Difference Algorithm and Its Variations''}.
+  \item Fine-grained reactivity conceptual background (signals):
+    \href{https://www.solidjs.com/docs/latest#signals}{SolidJS docs: Signals}.
+  \item Scheduling and keeping UIs responsive:
+    \href{https://developer.mozilla.org/en-US/docs/Web/API/window/requestAnimationFrame}{MDN: requestAnimationFrame},
+    \href{https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel}{MDN: MessageChannel}.
+  \item Testing DOM code in Node:
+    \href{https://vitest.dev/guide/}{Vitest Guide},
+    \href{https://github.com/jsdom/jsdom}{jsdom}. 
+\end{itemize}
+
+If you'd like, we can make these ``real'' citations later by adding a bibliography system (BibTeX or biblatex) to \texttt{book/main.tex}.
+
+% (Mini-exercise moved earlier and expanded.)

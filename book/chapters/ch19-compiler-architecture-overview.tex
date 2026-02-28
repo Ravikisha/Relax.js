@@ -1,0 +1,413 @@
+\chapter{Compiler architecture overview (prototype + Babel transform)}
+\label{ch:compiler-architecture}
+
+This chapter explains how Relax's HRBR compiler takes TSX/JSX input and produces output that mounts \emph{compiled blocks} (the fast path) or routes to the \emph{fallback runtime} when the template's structure is dynamic.
+
+The compiler currently exists in two forms:
+
+\begin{itemize}
+\item A TypeScript-AST prototype compiler in \texttt{compiler/index.ts} (used as an executable spec for template extraction).
+\item A Babel plugin scaffold in \texttt{compiler/jsx/transform.ts} (used by build tooling to transform real TSX/JSX files).
+\end{itemize}
+
+The purpose of having both is pedagogical and practical:
+
+\begin{itemize}
+\item The TS compiler is a small, deterministic ``reference'' that focuses on \emph{template + slot-path extraction}.
+\item The Babel plugin is the real integration point for user codebases.
+\end{itemize}
+
+\section{The output contract (what the runtime needs)}
+
+Before we talk about parsing and visitors, it's worth making the compiler/runtime boundary explicit.
+The compiler's job is to emit \emph{data and closures} that satisfy a small runtime API.
+Everything in the implementation is organized around making that boundary stable.
+
+\subsection{Tiny contract (2 bullets)}
+
+Given a JSX expression, the compiler must be able to produce one of:
+
+\begin{itemize}
+\item \textbf{Block mode (fast path):} \texttt{defineBlock({ templateHTML, slots })} plus a mount factory that calls \texttt{mountCompiledBlock(def, host, compiledSlots)}.
+\item \textbf{Fallback mode (safe path):} a mount factory that calls \texttt{mountFallback(...)} and delegates structural reconciliation to the runtime.
+\end{itemize}
+
+The runtime intentionally does not know how compilation works; it only requires these shapes.
+
+The HRBR runtime expects two main pieces of data.
+
+\subsection{1) A \texttt{BlockDef}: stable template + slot metadata}
+
+Defined in \texttt{runtime/block.ts}, a \texttt{BlockDef} contains:
+
+\begin{itemize}
+\item \texttt{templateHTML: string}  the stable HTML string that will be parsed once.
+\item \texttt{slots: Record<string, BlockSlot>}  the mapping from a slot key to its write kind and a DOM path.
+\end{itemize}
+
+A \texttt{BlockSlot} describes \emph{what} to write (text/attr/class/style/prop/event, etc.) and \emph{where} to write it (a childNodes index path).
+
+\subsection{2) A \texttt{CompiledSlot[]} list: how to read live values}
+
+At runtime, \texttt{mountCompiledBlock(def, host, compiledSlots)} needs an array of objects shaped like:
+
+\begin{quote}
+\texttt{\{ key: string, read: () => unknown \}}
+\end{quote}
+
+The compiler can't always inline the read closures in a pure data file.
+In particular, the TypeScript prototype compiler deliberately returns no reads; it records expression source code so a caller with lexical scope can build closures.
+
+In contrast, the Babel transform \emph{can} emit \texttt{read: () => expr} arrow functions directly into the output program, precisely because it is already transforming a file with the correct lexical scope.
+
+\section{Routing decision: block vs fallback}
+
+The compiler's core architectural decision is: \emph{can this TSX be represented as a stable HTML template?}
+If not, we must use the fallback reconciler.
+
+\subsection{Dynamic structure}
+
+The term \textbf{dynamic structure} means ``the set/shape/order of DOM nodes can change as state changes.''
+Examples:
+
+\begin{itemize}
+\item conditionals: \texttt{cond ? <div/> : null}
+\item loops/lists: \texttt{items.map(...)}
+\item fragments that change child count
+\item dynamic tag names or component tags
+\item spreading attributes (often implies unknown keys)
+\item event handlers (in the current compiler phase) if they can't be represented as static bindings
+\end{itemize}
+
+Compiled blocks are designed for \emph{stable structure} with dynamic \emph{values}.
+When structure is dynamic, we let the fallback runtime reconcile children.
+
+\subsection{How ``block vs fallback'' relates to Chapter~\ref{ch:vdom-hrbr-interop}}
+
+The compiler output doesn't mount directly into the VDOM. Instead, it produces a \emph{mount factory} that matches the HRBR vnode contract described in Chapter~\ref{ch:vdom-hrbr-interop}.
+That is why the VDOM type \texttt{DOM\_TYPES.HRBR} stores a \texttt{mount(host)} function: it is the common denominator between compiled blocks and fallback regions.
+
+\section{TypeScript prototype compiler (Phase 5 reference)}
+
+The TypeScript implementation lives in \texttt{compiler/index.ts}.
+It provides two public APIs:
+
+\begin{itemize}
+\item \texttt{compileTSXToBlock(source, opts?) -> CompileResult}
+\item \texttt{compileTSXOrFallback(source, opts?) -> CompileOrFallbackResult}
+\end{itemize}
+
+\subsection{\texttt{compileTSXToBlock():} parse  extract  render template}
+
+\textbf{Inputs}
+
+\begin{itemize}
+\item \texttt{source: string}: a single-root TSX expression (or a statement containing one).
+\item \texttt{opts.fileName?}: helps TypeScript provide useful source locations.
+\item \texttt{opts.strictTemplate?} (default true): reject patterns that can't be expressed as a static HTML template.
+\end{itemize}
+
+\textbf{Main pipeline}
+
+\begin{enumerate}
+\item Parse the input with TypeScript: \texttt{ts.createSourceFile(..., ScriptKind.TSX)}.
+\item Find the first expression via \texttt{findFirstExpression()}.
+\item Ensure the root is \texttt{JsxElement} or \texttt{JsxSelfClosingElement}.
+\item Build a \texttt{TemplateBuild} using \texttt{buildTemplate()}.
+\item Return \texttt{\{ block: \{templateHTML, slots\}, slots: [], meta \}}.
+\end{enumerate}
+
+\subsection{Determinism: why the TS compiler is a good executable spec}
+
+The implementation in \texttt{compiler/index.ts} is deliberately small and deterministic:
+
+\begin{itemize}
+\item It parses with TypeScript's parser (so syntax + TSX rules match what users write).
+\item It walks the syntax tree into a simple string renderer that produces \texttt{templateHTML}.
+\item It computes slot paths using an explicit \texttt{childIndex} counter.
+\end{itemize}
+
+This makes it ideal for teaching and for pinning down invariants (especially path semantics) before committing to a more complex Babel visitor implementation.
+
+\subsection{Paths: the compiler and runtime must agree}
+
+The most important shared invariant between compiler and runtime is how a ``path'' is interpreted.
+
+In this prototype compiler, each element maintains a \texttt{childIndex} counter, and each child node increments the counter as it is rendered.
+When the compiler emits a slot, it records the current path (a list of child indices) that identifies a target node under the template root.
+
+\paragraph{Why this works}
+
+The block runtime later parses \texttt{templateHTML} into a DOM tree and walks \texttt{childNodes[index]} repeatedly to locate the slot target.
+
+The critical detail is that the compiler counts \emph{every child node} (elements \emph{and} text nodes), because \texttt{childNodes} includes text nodes. In \texttt{compiler/index.ts} this is represented by \texttt{PathState\{ childIndex \}}.
+
+This is also why the compiler uses explicit sentinels for some dynamic expressions: it needs to ensure a real, countable node exists at the path.
+
+\subsection{Text expression handling: sentinel + slot path}
+
+In \texttt{renderJSX()}, when a child is \texttt{JsxExpression}:
+
+\begin{itemize}
+\item the compiler marks \texttt{meta.hasDynamicStructure = true}
+\item it allocates a slot key \texttt{sN}
+\item it emits a unique sentinel string \texttt{__hrbr_sN__} into the template
+\item it records a \texttt{text} slot whose path points to that text node
+\item it records the expression's source text as a ``read'' entry
+\end{itemize}
+
+This is a deliberately conservative design: any child expression could be a conditional or a list, so the prototype treats it as structure-changing.
+The Babel compiler (later in this book) uses heuristics to allow some expressions as ``text-like'' without falling back.
+
+\subsection{Void elements and template correctness}
+
+The TS compiler treats HTML void tags specially via the \texttt{VOID\_TAGS} set.
+For these tags it emits \texttt{<input ...>} rather than \texttt{<input ...></input>}.
+This matters because the runtime parses \texttt{templateHTML} through \texttt{<template>} and relies on the browser's HTML parser to build a stable node tree. Producing non-HTML-canonical markup can shift the parsed tree and break slot paths.
+
+\subsection{Attributes: literals vs expression slots}
+
+The prototype supports:
+
+\begin{itemize}
+\item boolean attributes: \texttt{<div hidden />}
+\item string literal attributes: \texttt{<div id="x" />}
+\item expression attributes: \texttt{<div className=\{count()\} />}
+\end{itemize}
+
+Expression attributes allocate slot keys and record \texttt{kind} and \texttt{name}:
+
+\begin{itemize}
+\item \texttt{className} normalizes to \texttt{class}
+\item \texttt{style} maps to a \texttt{style} slot
+\item anything else becomes an \texttt{attr} slot
+\end{itemize}
+
+The compiler also records lane hints (per slot) and ``signal-like'' hints:
+
+\begin{itemize}
+\item \texttt{meta.lanesByKey}: a compiler-to-runtime hint used by schedulers in later phases
+\item \texttt{meta.signalLikeByKey}: a heuristic that recognizes \texttt{foo()} style getters
+\end{itemize}
+
+Even when later phases choose to ignore (or reinterpret) these hints, keeping the meta separate from the structural template makes it possible to evolve scheduling policy without changing the fundamental block ABI.
+
+\subsection{Fallback decision wrapper: \texttt{compileTSXOrFallback()}}
+
+\texttt{compileTSXOrFallback()} runs \texttt{compileTSXToBlock()} and then returns:
+
+\begin{itemize}
+\item \texttt{\{ kind: 'fallback', reason: 'dynamic-structure' \}} if \texttt{meta.hasDynamicStructure} is true
+\item otherwise \texttt{\{ kind: 'block', ...result \}}
+\end{itemize}
+
+This is the high-level policy the real Babel transform is evolving toward.
+
+Note the important nuance: \texttt{compileTSXToBlock()} still returns a \texttt{BlockDef} even when \texttt{meta.hasDynamicStructure} is true. That mirrors how the Babel plugin can still hoist block defs for other expressions in the same file even if one subtree needs fallback.
+
+\section{Babel transform scaffold (real-world integration)}
+
+The Babel plugin entrypoint is exported as \texttt{hrbrJsxTransform} from \texttt{compiler/jsx/index.ts} and re-exported from \texttt{compiler/index.ts}.
+The implementation lives in \texttt{compiler/jsx/transform.ts}.
+
+\subsection{Roles of the Babel plugin}
+
+Compared to the TS prototype, the Babel plugin has additional responsibilities:
+
+\begin{itemize}
+\item Operate on full program files, not just an isolated expression string.
+\item Inject runtime imports: \texttt{defineBlock}, \texttt{mountCompiledBlock}, and optionally \texttt{mountFallback}.
+\item Generate wrapper helpers (e.g. \texttt{__hrbrBlock}) that connect emitted data literals to runtime calls.
+\item Derive stable slot keys in dev mode (optionally) so diffs are readable.
+\end{itemize}
+
+\subsection{``Block mode'' is best-effort: return \texttt{null} to fall back}
+
+The internal function \texttt{buildTemplateFromJsxElement()} tries to convert a JSX element into:
+
+\begin{itemize}
+\item \texttt{templateHTML}
+\item \texttt{slots} map
+\item \texttt{compiledSlots} array literal (with \texttt{read: () => expr})
+\end{itemize}
+
+If it sees unsupported patterns (events, dynamic elements, structural expressions), it returns \texttt{null} and marks that fallback imports are needed.
+
+\subsection{Babel transform: what ``best-effort block mode'' means in code}
+
+In \texttt{compiler/jsx/transform.ts}, block mode is essentially:
+
+\begin{itemize}
+\item Try to turn a \texttt{JSXElement} into \texttt{\{ templateHTML, slots, compiledSlots \}} using \texttt{buildTemplateFromJsxElement()}.
+\item If any unsupported structure appears, return \texttt{null}.
+\item The caller then chooses a fallback mount factory instead of a compiled-block mount factory.
+\end{itemize}
+
+The current transform is strict on purpose (e.g. it rejects events and spreads in block mode), because the project is trying to keep the block subset crisp while the fallback runtime is still evolving.
+
+\subsection{Slot key strategies: sequential vs stable (dev mode)}
+
+The Babel compiler contains two different slot key allocation styles:
+
+\begin{itemize}
+\item \textbf{Default (prod-like):} sequential keys \texttt{s0, s1, ...}.
+\item \textbf{Dev mode:} location-based keys like \texttt{s\_text\_12:18} derived from source positions.
+\end{itemize}
+
+Location-based keys are helpful because they reduce ``slot churn'' in diffs and make debugging invalid-path errors more readable.
+
+\subsection{Lane pragmas (compiler-to-scheduler hint)}
+
+The Babel plugin recognizes comment pragmas in expression containers:
+
+\begin{quote}
+\texttt{className=\{/*@lane transition*/ cls()\}}
+\end{quote}
+
+It extracts the lane and stores it on the slot metadata.
+Later chapters will connect this to the deterministic scheduler.
+
+Concretely, \texttt{extractLanePragmaFromExpressionContainer()} scans leading comments for a pattern like:\\
+	exttt{@lane transition}.
+When found, the compiler attaches \texttt{lane: "transition"} to the slot metadata object.
+
+\section{Tests-as-spec}
+
+The compiler has three layers of tests:
+
+\begin{itemize}
+\item Unit compilation tests (shape of emitted template/slots): \texttt{compiler/\_\_tests\_\_/compiler.test.ts}
+\item Snapshot tests for stability: \texttt{compiler/\_\_tests\_\_/compiler.snapshot.test.ts}
+\item End-to-end tests that mount the result in jsdom:
+  \begin{itemize}
+  \item \texttt{compiler/\_\_tests\_\_/compiler.e2e.test.ts} (TS prototype -> mountCompiledBlock)
+  \item \texttt{compiler/\_\_tests\_\_/babel-transform.e2e-jsdom.test.ts} (Babel output -> evaluate -> mountCompiledBlock)
+  \end{itemize}
+\end{itemize}
+
+In the rest of this section, we'll treat the tests as a specification of the compiler/runtime boundary.
+We won't run them here, but reading them tells you what changes are allowed without breaking the public contract.
+
+\subsection{Unit tests (TS): compile + mount sanity}
+
+	extbf{File:} \texttt{compiler/\_\_tests\_\_/compiler.test.ts}
+
+This test anchors the smallest happy path:
+
+\begin{itemize}
+\item \texttt{compileTSXToBlock()} accepts a simple intrinsic element with a dynamic attribute expression.
+\item The caller supplies \texttt{CompiledSlot\{ key: 's0', read: () => name() \}}.
+\item \texttt{mountCompiledBlock()} produces DOM matching the template, and the dynamic slot lands in the right place.
+\end{itemize}
+
+One subtle detail: the test disposes the mounted block via \texttt{mounted.dispose()}. This keeps the contract clear: compiled mounts are still reactive, and disposal is part of the lifecycle.
+
+\subsection{TS end-to-end: compile -> mount -> update without recreating root}
+
+In \texttt{compiler/\_\_tests\_\_/compiler.e2e.test.ts}:
+
+\begin{enumerate}
+\item Create a signal: \texttt{const [count, setCount] = createSignal(1)}.
+\item Compile TSX: \texttt{(<div className=\{count()\}>Count</div>)}.
+\item Mount via \texttt{mountCompiledBlock(block, host, \{ key: 's0', read: () => count() \})}.
+\item Update the signal, wait for the scheduler (microtask + \texttt{setTimeout(0)}).
+\item Assert the root element identity is preserved and only the class changed.
+\end{enumerate}
+
+This is the key end-to-end contract for compiled blocks.
+
+This test also documents a scheduling assumption: it comments that HRBR scheduling uses \texttt{setTimeout(0)} by default in tests, so updates require waiting at least one timer tick.
+
+\subsection{Babel transform unit tests: shape of emitted program}
+
+	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts}
+
+These tests assert that the plugin is producing the intended \emph{program shape}:
+
+\begin{itemize}
+\item it injects an import from the configured runtime path (default \texttt{relax/hrbr})
+\item it references \texttt{defineBlock} and \texttt{mountCompiledBlock}
+\item it hoists a \texttt{const \_\_hrbr\_block\_0 = defineBlock(...)}
+\item it emits a wrapper mount function of the form \texttt{host => \_\_hrbrBlock(host, def, slots)}
+\end{itemize}
+
+The snapshot test in this file is especially important: it pins down the exact emitted structure (templateHTML string, slots map, and compiledSlots array with \texttt{read: () => expr}).
+
+The suite also asserts two ``developer experience'' guarantees:
+
+\begin{itemize}
+\item lane pragmas are propagated to slot metadata
+\item dev mode can emit location-based keys
+\end{itemize}
+
+\subsection{Babel transform errors: the intentional block-mode subset}
+
+	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.errors.test.ts}
+
+This suite documents what is currently \emph{rejected} in block mode:
+
+\begin{itemize}
+\item event handlers (e.g. \texttt{onClick})
+\item spread attributes (\texttt{<div \{...props\} />})
+\item fragments (\texttt{<>...</>})
+\item non-intrinsic tags (components like \texttt{<Foo />})
+\end{itemize}
+
+Even if future versions route these to fallback instead of throwing, the existence of these tests is useful: it makes the current compilation subset explicit and prevents accidental expansion that would silently generate incorrect templates.
+
+\subsection{Babel transform E2E (jsdom): evaluate emitted literals + mount}
+
+	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.e2e-jsdom.test.ts}
+
+This test checks something subtle but crucial: the compiler output is not just syntactically valid---its emitted \emph{data} can actually be evaluated and mounted.
+
+Notable aspects:
+
+\begin{itemize}
+\item It extracts the object literal passed to \texttt{defineBlock(...)} from the emitted text.
+\item It extracts the compiledSlots array literal from the wrapper call.
+\item It evaluates those two pieces with \texttt{new Function(...)} while providing \texttt{cls()} and \texttt{name()} from the test scope.
+\item It mounts using \texttt{mountCompiledBlock} and asserts identity preservation across updates.
+\end{itemize}
+
+This approximates how ``real code'' will behave: the compile-time output must work with runtime scope (signals) and produce stable DOM.
+
+\subsection{Babel fallback E2E (jsdom): structural expression routes to \texttt{mountFallback}}
+
+	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.fallback.e2e-jsdom.test.ts}
+
+This suite pins down the fallback routing policy:
+
+\begin{itemize}
+\item A conditional expression in children is treated as \textbf{dynamic structure} (unsafe for block mode).
+\item The transform output must include \texttt{mountFallback}.
+\item The emitted module is evaluated, and calling \texttt{App()} returns a mount function.
+\item Updates are reactive: signal changes trigger DOM updates without throwing.
+\end{itemize}
+
+The test includes a comment that the MVP fallback spec doesn't yet clear conditional text in all cases; the contract being asserted is deliberately smaller: the pipeline compiles, mounts, and updates safely.
+
+\section{Where we go next}
+
+Chapter~\ref{ch:babel-plugin} will zoom in on the Babel visitor model and show how the plugin emits the full final shape that user code will run.
+We will also connect the ``fail block mode'' paths to the fallback runtime and reconciler described earlier.
+
+\section{Online resources}
+
+\begin{itemize}
+\item TypeScript compiler API: parsing source and working with AST nodes:\\
+\href{https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API}{TypeScript Wiki: Using the Compiler API}.
+
+\item Babel plugin authoring and visitor model:\\
+\href{https://babeljs.io/docs/en/plugins}{Babel docs: plugins},\\
+\href{https://babeljs.io/docs/en/babel-plugin-api}{Babel docs: plugin API}.
+
+\item JSX specification details (useful when deciding what constitutes ``dynamic structure''):\\
+\href{https://facebook.github.io/jsx/}{JSX spec (historical reference)}.
+
+\item Why HTML parsing matters for template correctness (void elements, tree building, etc.):\\
+\href{https://developer.mozilla.org/en-US/docs/Web/HTML/Element}{MDN: HTML elements reference}.
+
+\item Source maps basics (relevant to dev mode and debugging transforms):\\
+\href{https://sourcemaps.info/spec.html}{Source Map Revision 3 Proposal}.
+\end{itemize}

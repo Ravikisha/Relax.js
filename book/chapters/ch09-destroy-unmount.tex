@@ -1,0 +1,292 @@
+\chapter{Destroying DOM and Unmounting Components}
+
+So far we've treated the renderer as a one-way pipeline:
+
+\begin{center}
+	exttt{VNode \textrightarrow mountDOM() \textrightarrow DOM \textrightarrow patchDOM()}
+\end{center}
+
+But a real UI runtime lives and dies by teardown. If teardown is incomplete or inconsistent, it manifests as:
+
+\begin{itemize}
+  \item \textbf{leaked event listeners} (handlers still firing after nodes are removed)
+  \item \textbf{leaked component instances} (dispatch subscriptions never removed)
+  \item \textbf{zombie DOM references} (stale \texttt{vdom.el} pointers used accidentally)
+  \item \textbf{interop leaks} (third-party instances never disposed)
+\end{itemize}
+
+Relax centralizes teardown in \texttt{destroyDOM(vdom)} in \texttt{src/destroy-dom.ts}. The executable specs are primarily in:
+
+\begin{itemize}
+  \item \texttt{src/__tests__/destroy-dom.test.ts}
+  \item \texttt{src/__tests__/component-lifecycle.test.ts}
+  \item \texttt{src/__tests__/hrbr-integration.test.ts} (interop)
+\end{itemize}
+
+\section{A tiny contract for teardown}
+
+We'll use a tight contract so you can re-derive the implementation from the tests:
+
+\begin{itemize}
+  \item \textbf{Input}: a \emph{mounted} VNode subtree root.
+  \item \textbf{Effects}: remove DOM nodes, dispatch cleanup, interop cleanup, and clear runtime references.
+  \item \textbf{Idempotence}: not guaranteed. Calling destroy twice is a programmer error.
+  \item \textbf{Success criteria}: after teardown, the DOM no longer contains the rendered subtree \emph{and} the VNode tree no longer retains \texttt{.el} pointers.
+\end{itemize}
+
+That last bullet is important: removing DOM nodes is easy---cleaning the runtime state is the hard part.
+
+\section{destroyDOM(): the teardown dispatcher}
+
+The public entry point is:\ \texttt{destroyDOM(vdom)}.
+
+The implementation is built as a type-dispatcher over \texttt{vdom.type} (from \texttt{DOM\_TYPES} in \texttt{src/h.ts}).
+
+\subsection{The shared post-step: deleting \texttt{vdom.el}}
+
+At the end of \texttt{destroyDOM}, Relax does:
+
+\begin{verbatim}
+delete vdom.el
+\end{verbatim}
+
+This isn't cosmetic.
+
+\begin{itemize}
+  \item It enforces a strong invariant in tests (``every destroyed node lost its \texttt{.el}'').
+  \item It makes stale VNodes fail fast if reused accidentally.
+  \item It reduces accidental retention of DOM nodes by application code holding onto VNodes.
+\end{itemize}
+
+\section{Type-based teardown}
+
+\texttt{destroyDOM} dispatches on \texttt{vdom.type} (\texttt{DOM\_TYPES} is defined in \texttt{src/h.ts}).
+
+\subsection{Text nodes}
+
+For \texttt{DOM\_TYPES.TEXT}, \texttt{removeTextNode} asserts \texttt{el instanceof Text} and calls \texttt{el.remove()}.
+
+Test: \texttt{destroy a text element}.
+
+\subsection{Element nodes: remove element + recurse + listener cleanup}
+
+For \texttt{DOM\_TYPES.ELEMENT}, \texttt{removeElementNode} performs three distinct actions:
+
+\begin{enumerate}
+  \item Remove the element from the DOM: \texttt{el.remove()}.
+  \item Recursively destroy children: \texttt{children.forEach(destroyDOM)}.
+  \item If there are DOM event listeners stored on the VNode, detach them:
+    \begin{verbatim}
+removeEventListeners(listeners, el)
+delete vdom.listeners
+    \end{verbatim}
+\end{enumerate}
+
+The listener removal uses \texttt{removeEventListeners} from \texttt{src/events.ts}, which removes by the wrapper listener identity that was created during mount/patch.
+
+Tests:
+
+\begin{itemize}
+  \item \texttt{destroy an html element and its children}
+  \item \texttt{destroy an html element and its children recursively}
+  \item \texttt{remove an html element event listeners}
+\end{itemize}
+
+\paragraph{Ordering note: remove first, then cleanup}
+
+	exttt{removeElementNode()} removes the element from the DOM \emph{before} walking children.
+This ordering is deliberate and safe:
+
+\begin{itemize}
+  \item In the DOM, removing a parent implicitly detaches descendants from the document.
+  \item But Relax still needs to recursively teardown the VNode subtree (delete \texttt{.el}, detach listeners, unmount nested components).
+  \item Running the recursion after removal avoids intermediate states where logic could observe partially-destroyed nodes in the live document.
+\end{itemize}
+
+\subsection{Fragment nodes}
+
+Fragments are a logical grouping; they don't own a single DOM node. For \texttt{DOM\_TYPES.FRAGMENT}, \texttt{removeFragmentNodes} just destroys each child.
+
+Tests:
+
+\begin{itemize}
+  \item \texttt{destroy a fragment}
+  \item \texttt{destroy a fragment recursively}
+\end{itemize}
+
+\subsection{Component nodes: unmount + schedule \texttt{onUnmounted}}
+
+For \texttt{DOM\_TYPES.COMPONENT}, \texttt{destroyDOM} delegates to the component instance:
+
+\begin{verbatim}
+vdom.component.unmount()
+enqueueJob(() => vdom.component.onUnmounted())
+\end{verbatim}
+
+Two important details are embedded here, and both are tested:
+
+\begin{itemize}
+  \item \textbf{Unmount is synchronous structural cleanup.} It destroys the component's rendered subtree and unsubscribes internal dispatcher subscriptions.
+  \item \textbf{\texttt{onUnmounted} is scheduled.} It runs later via \texttt{enqueueJob} (\texttt{src/scheduler.ts}), matching the mount side where \texttt{onMounted} is also scheduled.
+\end{itemize}
+
+This scheduling is why the component lifecycle tests await \texttt{nextTick()} after calling \texttt{destroyDOM()}:
+
+\begin{itemize}
+  \item \texttt{a component reacts to being unmounted}
+  \item \texttt{a component reacts to being unmounted asynchronously}
+\end{itemize}
+
+\section{Inside Component.unmount() (\texttt{src/component.ts})}
+
+Components in Relax are created with \texttt{defineComponent(...)}. The generated class maintains several private fields that matter for unmount:
+
+\begin{itemize}
+  \item \texttt{\#vdom}: the last rendered subtree returned by \texttt{render()}
+  \item \texttt{\#dispatcher}: a per-component \texttt{Dispatcher} used to implement \texttt{emit()} and event handler wiring
+  \item \texttt{\#subscriptions}: unsubscribe closures returned from \texttt{dispatcher.subscribe()}
+  \item \texttt{\#isMounted} and \texttt{\#hostEl}: mount state and mount container
+\end{itemize}
+
+\subsection{Unmount sequence}
+
+Look at \texttt{unmount()} in \texttt{src/component.ts}:
+
+\begin{enumerate}
+  \item It throws if the component isn't mounted.
+  \item It destroys the rendered subtree: \texttt{destroyDOM(this.\#vdom)}.
+  \item It unsubscribes from internal dispatcher subscriptions: \texttt{this.\#subscriptions.forEach(unsubscribe)}.
+  \item It clears state: \texttt{\#vdom = null}, \texttt{\#isMounted = false}, \texttt{\#hostEl = null}, \texttt{\#subscriptions = []}.
+\end{enumerate}
+
+This means after unmount, both DOM and book-keeping references are gone.
+
+\paragraph{Why unsubscribe in \texttt{unmount()} and not in \texttt{destroyDOM()}?}
+
+Because subscriptions are a property of the component instance, not a property of the rendered VDOM nodes.
+	exttt{destroyDOM()} is intentionally ``VNode-centric''; \texttt{unmount()} is ``component-centric''.
+
+\section{HRBR nodes: dispose, destroy, and remove host}
+
+Relax also supports an experimental HRBR interop node type (\texttt{DOM\_TYPES.HRBR}).
+These nodes represent ``something else'' mounting into a host container (a block, micro-framework component, etc.).
+
+In \texttt{removeHrbrNode(vdom)} (\texttt{src/destroy-dom.ts}):
+
+\begin{itemize}
+  \item If the instance provides \texttt{dispose()} and/or \texttt{destroy()}, Relax calls them (in that order).
+  \item Then it removes the HRBR host element from the DOM.
+  \item Finally, it deletes \texttt{vdom.instance} and \texttt{vdom.host}.
+\end{itemize}
+
+This mirrors the mounting/patching behavior from earlier chapters: HRBR nodes are treated like a mounted instance with an owned host container.
+
+\paragraph{Interop rule of thumb}
+
+Relax doesn't assume what ``destroy'' means.
+It only promises it will call well-known lifecycle hooks (\texttt{dispose}/\texttt{destroy}) if present, and remove the host container it created.
+
+\section{A practical mental model}
+
+It helps to treat teardown as the inverse of mounting:
+
+\begin{itemize}
+  \item mounting creates DOM nodes and stores refs in \texttt{vdom.el}
+  \item patching preserves DOM nodes and updates refs on the new VDOM
+  \item destroying removes DOM nodes and deletes refs from the old VDOM
+\end{itemize}
+
+The explicit \texttt{delete vdom.el} makes it hard to accidentally keep using stale VNodes after tear-down.
+
+\section{Takeaways}
+
+\begin{itemize}
+  \item Relax teardown is explicit and recursive.
+  \item Element teardown removes event listeners using the stored wrapper identities.
+  \item Component teardown is two-phase: synchronous unmount + scheduled \texttt{onUnmounted} hook.
+  \item Deleting \texttt{.el} and clearing instance fields is a core anti-leak strategy.
+\end{itemize}
+
+\section{Walking the tests: what they prove}
+
+This section treats the tests as a teardown requirements document.
+
+\subsection{\texttt{destroy a text element}}
+
+From \texttt{src/__tests__/destroy-dom.test.ts}:
+
+\begin{itemize}
+  \item Mount a text VNode via \texttt{mountDOM} and assert \texttt{vdom.el} is a \texttt{Text} node.
+  \item Call \texttt{destroyDOM(vdom)}.
+  \item Assert the document is empty \emph{and} \texttt{allElementsHaveBeenDestroyed(vdom)} returns true.
+\end{itemize}
+
+The helper \texttt{allElementsHaveBeenDestroyed()} recursively checks for the absence of \texttt{.el}. This is the strongest teardown invariant in this test suite.
+
+\subsection{\texttt{destroy an html element and its children}}
+
+This test ensures an \texttt{ELEMENT} node:
+
+\begin{itemize}
+  \item removes the parent element from DOM
+  \item still destroys (cleans up) its children VNodes
+\end{itemize}
+
+It's the ``DOM removed'' + ``runtime graph cleaned'' pairing again.
+
+\subsection{\texttt{remove an html element event listeners}}
+
+This is the leak-prevention test.
+
+\begin{enumerate}
+  \item Mount a \texttt{button} with \texttt{on: \{ click: handler \}}.
+  \item Trigger a click and assert the handler is called.
+  \item Destroy the VNode.
+  \item Trigger another click on the previously captured \texttt{buttonEl} and assert the handler isn't called again.
+\end{enumerate}
+
+This works because during mount, Relax installs a wrapper listener and stores it in \texttt{vdom.listeners}. During destroy, \texttt{removeEventListeners(vdom.listeners, el)} uses those wrapper identities to detach correctly.
+
+\subsection{Recursive destruction and fragments}
+
+	exttt{destroy an html element and its children recursively}, \texttt{destroy a fragment}, and \texttt{destroy a fragment recursively} collectively prove that:
+
+\begin{itemize}
+  \item recursion always visits nested VNodes
+  \item fragment nodes are teardown-neutral: they simply forward destruction to children
+\end{itemize}
+
+\subsection{\texttt{destroy a component with subcomponents}}
+
+This test ensures that the recursion crosses component boundaries.
+The starting VNode is an element \texttt{div} containing a component.
+Destroying the root must unmount the component and destroy its rendered subtree, including nested child components.
+
+\subsection{Lifecycle scheduling tests (\texttt{component-lifecycle.test.ts})}
+
+The component lifecycle tests focus on \texttt{enqueueJob}/\texttt{nextTick()} behavior:
+
+\begin{itemize}
+  \item \texttt{onMounted} is not expected to run synchronously with \texttt{mountDOM}; the test awaits \texttt{nextTick()}.
+  \item Symmetrically, \texttt{onUnmounted} is not expected to run synchronously with \texttt{destroyDOM}; the test awaits \texttt{nextTick()}.
+\end{itemize}
+
+This enforces a stable mental model: lifecycle hooks run in the scheduler, not ``inline'' within the DOM mutation operations.
+
+\subsection{HRBR teardown behavior (\texttt{hrbr-integration.test.ts})}
+
+The HRBR integration suite demonstrates that \texttt{destroyDOM()} participates in interop cleanup.
+
+\begin{itemize}
+  \item In the ``can mount an HRBR block'' test, the block's \texttt{destroy()} clears the host; afterwards, Relax removes the host itself.
+  \item In ``patch preserves HRBR instance'', destroying triggers the instance's \texttt{destroy()} and the test asserts it was called.
+\end{itemize}
+
+\section{Online resources}
+
+\begin{itemize}
+  \item MDN: \href{https://developer.mozilla.org/en-US/docs/Web/API/Element/remove}{\texttt{Element.remove()}}
+  \item MDN: \href{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/removeEventListener}{\texttt{removeEventListener()}} and listener identity
+  \item React docs (conceptual parallel): \href{https://react.dev/reference/react/useEffect#effects-and-cleanup}{Effects and cleanup}
+  \item Vue docs (conceptual parallel): \href{https://vuejs.org/guide/essentials/lifecycle.html}{Lifecycle hooks}
+\end{itemize}

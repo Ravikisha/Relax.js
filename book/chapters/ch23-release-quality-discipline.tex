@@ -1,0 +1,283 @@
+\chapter{Release-quality discipline: tests, typecheck, lint, builds}
+\label{ch:release-quality}
+
+This chapter is about the habits that make a codebase shippable.
+Relax is a teaching framework, but it also treats its test suite as an executable spec and its build pipeline as part of correctness.
+
+The goal of this chapter is not to list commands---it's to explain \emph{why} each quality gate exists, what it catches, and how to debug failures without guessing.
+
+If you only remember one thing: each gate is a different lens on correctness.
+Typecheck defends your \emph{data model}, lint defends your \emph{human factors} (consistency and obvious mistakes), tests defend your \emph{observable behavior}, and builds defend your \emph{published artifact}.
+
+\section{The quality-gates contract}
+
+A ``release-quality'' change in this repo is expected to be green on:
+
+\begin{itemize}
+\item \textbf{Typecheck}: TypeScript compilation with \texttt{--noEmit}
+\item \textbf{Lint}: ESLint rules for consistency and obvious mistakes
+\item \textbf{Unit/integration tests}: Vitest (jsdom)
+\item \textbf{Build}: Rollup bundles for ESM + CJS, plus type bundle generation on publish
+\end{itemize}
+
+These are not redundant; they fail on different classes of bugs.
+
+\subsection{A tiny contract (inputs, outputs, failure modes)}
+
+It helps to think about the pipeline as a function that takes a working tree and returns publishable artifacts:
+
+\begin{itemize}
+\item \textbf{Input}: TypeScript source under \texttt{src/}, plus experimental surfaces under \texttt{runtime/}, \texttt{compiler/}, and the TSX runtime under \texttt{relax-jsx/}.
+\item \textbf{Output}: compiled JS bundles in \texttt{dist/esm/} and \texttt{dist/cjs/} and a declaration bundle in \texttt{dist-types/}.
+\item \textbf{Success}: consumers can import from the package \texttt{exports} map and get the runtime semantics the tests describe.
+\item \textbf{Failure modes}: ``works in tests'' but fails to typecheck; ``works locally'' but fails to bundle; ``bundles'' but exports the wrong files.
+\end{itemize}
+
+\section{Typecheck: make illegal states unrepresentable}
+
+The repo's primary TypeScript config is \texttt{tsconfig.json}.
+A few settings worth noticing:
+
+\begin{itemize}
+\item \texttt{strict: true} --- the baseline.
+\item \texttt{noUncheckedIndexedAccess: true} --- forces you to handle missing keys.
+\item \texttt{exactOptionalPropertyTypes: true} --- optional means ``may be absent'', not ``may be undefined''.
+\item \texttt{jsx: react-jsx} and \texttt{jsxImportSource: relax-jsx} --- enables the TSX layer.
+\end{itemize}
+
+Two other settings are quietly important for how the codebase is built and consumed:
+
+\begin{itemize}
+\item \texttt{moduleResolution: Bundler}: TypeScript resolves imports similarly to modern bundlers.
+In practice, this aligns the typechecker with how Rollup (and consumer bundlers) will interpret ESM.
+\item \texttt{paths} for \texttt{relax-jsx}: TS can typecheck TSX code that imports the JSX runtime via the virtual specifier \texttt{relax-jsx}.
+This is mirrored on the test side by the Vitest alias for \texttt{relax-jsx}.
+\end{itemize}
+
+The \texttt{typecheck} script (in \texttt{package.json}) runs:
+
+\begin{quote}
+\texttt{tsc -p tsconfig.json --noEmit}
+\end{quote}
+
+\subsection{Common typecheck failures (and how to debug)}
+
+\begin{itemize}
+\item \textbf{Indexing errors}: caused by \texttt{noUncheckedIndexedAccess}. Fix by narrowing or checking bounds.
+\item \textbf{Optional property mismatches}: caused by \texttt{exactOptionalPropertyTypes}. Fix by removing explicit \texttt{undefined} assignments or changing types.
+\item \textbf{DOM typing issues in tests}: Vitest uses jsdom; make sure \texttt{lib: ["DOM"]} is present (it is).
+\end{itemize}
+
+\subsection{Why there are multiple \texttt{tsconfig} files}
+
+This repo uses a small family of configs to keep responsibilities separate:
+
+\begin{itemize}
+\item \texttt{tsconfig.json}: the ``truth'' for developer typechecking.
+It enables declarations and maps, targets modern JavaScript (\texttt{ES2022}), and includes the DOM library.
+\item \texttt{tsconfig.build-types.json}: extends the base config but turns on \emph{declaration-only} emit.
+This produces the publishable \texttt{.d.ts} surface under \texttt{dist-types/}.
+\item \texttt{tsconfig.rollup.json} and \texttt{tsconfig.rollup.cjs.json}: extend the base config but disable declaration emission.
+These exist to keep Rollup builds focused on JavaScript output (ESM to \texttt{dist/esm/}, CJS to \texttt{dist/cjs/}) without creating duplicate \texttt{.d.ts} trees.
+\end{itemize}
+
+This split is release discipline in practice: build tooling stays fast and predictable, while types remain a first-class published artifact.
+
+\section{Lint: keep the surface area consistent}
+
+Lint config lives in \texttt{eslint.config.mjs}.
+It uses the ESLint 9 flat config model and \texttt{@eslint/js} recommended rules.
+
+The lint scripts are:
+
+\begin{itemize}
+\item \texttt{npm run lint} --- runs eslint on \texttt{src}
+\item \texttt{npm run lint:fix} --- applies safe auto-fixes
+\end{itemize}
+
+Note: linting only \texttt{src} is a choice. HRBR runtime and compiler code are primarily guarded by tests and typecheck, but could be added to lint scope later.
+
+\subsection{What lint catches that typecheck doesn't}
+
+TypeScript proves things about types, but lint is often better at catching:
+
+\begin{itemize}
+\item accidental unused variables or imports
+\item inconsistent patterns that make reviews harder
+\item ``looks correct'' code that has a known foot-gun shape
+\end{itemize}
+
+Even with a mostly-recommended ESLint config, getting a clean lint run is part of keeping diffs small and reviewable.
+
+\section{Tests: executable specs with jsdom}
+
+All tests use Vitest (see \texttt{vitest.config.js}).
+The environment is \texttt{jsdom}, which means:
+
+\begin{itemize}
+\item DOM APIs are available (document, elements, events)
+\item you can test DOM manipulation deterministically without a real browser
+\end{itemize}
+
+Test inclusion patterns:
+
+\begin{itemize}
+\item \texttt{**/__tests__/**/*.test.ts}
+\item \texttt{**/__tests__/**/*.test.tsx}
+\end{itemize}
+
+\subsection{The test suite structure}
+
+This repo uses tests in three roles:
+
+\begin{itemize}
+\item \textbf{Unit tests}: small functions like diffs and helpers.
+\item \textbf{Integration tests}: end-to-end flows (mount $\to$ patch $\to$ destroy, SSR $\to$ hydrate, compiler $\to$ mount).
+\item \textbf{Property/fuzz tests}: seeded tests that exercise many update sequences (e.g. reconciler and signals).
+\end{itemize}
+
+If you change invariants (like reconciliation semantics), expect to update both unit tests and fuzz oracles.
+
+\subsection{Tests-as-spec example: TSX wiring}
+
+The TSX layer is a good example of how ``typecheck + tests'' combine into a stronger guarantee.
+The typechecker is configured to understand TSX (\texttt{jsx: react-jsx} and \texttt{jsxImportSource: relax-jsx}), but tests still need to verify the \emph{runtime} behavior.
+
+In \texttt{src/__tests__/jsx-tsx.test.ts}, the test sets up a host element in jsdom, runs an example, and asserts on the resulting HTML:
+
+\begin{itemize}
+\item it writes \texttt{<div id="app"></div>} into \texttt{document.body}
+\item it locates the host element and passes it into \texttt{runHelloExample}
+\item it asserts that the returned HTML matches \texttt{<div class="hello">Hello Relax</div>}
+\end{itemize}
+
+The important release-quality point is the scope of the guarantee:
+this test doesn't just say ``TSX compiles''---it says ``the TSX runtime integrates with the DOM mounting layer and produces the expected structure''.
+
+\subsection{Debugging failing tests (a workflow)}
+
+A practical workflow:
+
+\begin{enumerate}
+\item Re-run only the failing file (Vitest supports file targeting; use the repo scripts).
+\item Read the failure output and find which invariant changed.
+\item Locate the corresponding runtime function and its other tests.
+\item Add a minimal regression test that isolates the bug.
+\item Only then, fix the implementation and re-run the focused test.
+\end{enumerate}
+
+When failures are timing-related (scheduler, signals), prefer deterministic schedulers and explicit ticking (the repo already uses this pattern).
+
+\subsection{What to do when a test failure seems ``impossible''}
+
+The fastest way to debug tough failures is to make the implicit invariant explicit:
+
+\begin{enumerate}
+\item Find the smallest assertion that fails.
+\item Name the invariant in one sentence (e.g. ``patch preserves node identity when keys and tag match'').
+\item Search for other tests that mention the same concept.
+\item Read the corresponding implementation with the invariant in mind.
+\end{enumerate}
+
+This avoids the common trap of chasing symptoms across unrelated modules.
+
+\section{Builds: ESM, CJS, and types}
+
+Relax ships multiple entrypoints (see \texttt{package.json} \texttt{exports}):
+
+\begin{itemize}
+\item \texttt{"."} --- the VDOM library
+\item \texttt{"./hrbr"} --- experimental HRBR runtime
+\item \texttt{"./compiler"} --- experimental compiler
+\end{itemize}
+
+Rollup builds:
+
+\begin{itemize}
+\item ESM: \texttt{rollup.config.mjs} -> \texttt{dist/esm/}
+\item CJS: \texttt{rollup.config.cjs.mjs} -> \texttt{dist/cjs/}
+\end{itemize}
+
+Type declaration builds:
+
+\begin{itemize}
+\item \texttt{npm run build:types} uses \texttt{tsconfig.build-types.json} (emit declarations only)
+\item \texttt{npm run prepack} runs both JS builds and types before publishing
+\end{itemize}
+
+\subsection{Why builds are a quality gate}
+
+A green test suite doesn't guarantee:
+
+\begin{itemize}
+\item exports are correct
+\item bundling doesn't pull in unexpected dependencies
+\item generated output is structurally valid for consumers
+\end{itemize}
+
+For example, the compiler bundle is large; build output sizes help you notice unexpected growth.
+
+\subsection{Build discipline: match \texttt{exports} to outputs}
+
+From \texttt{package.json}, Relax publishes multiple entry points (\texttt{"."}, \texttt{"./hrbr"}, \texttt{"./compiler"}).
+Release discipline means each export must be correct in three dimensions:
+
+\begin{itemize}
+\item \textbf{ESM path} points at something in \texttt{dist/esm/}
+\item \textbf{CJS path} points at something in \texttt{dist/cjs/} (with \texttt{.cjs} entry file names)
+\item \textbf{Types path} points at something in \texttt{dist-types/}
+\end{itemize}
+
+It's easy to accidentally break this mapping when renaming files, changing entry points, or restructuring module boundaries.
+That is why \texttt{prepack} builds both JS bundles and types before publish.
+
+\section{Release checklist (practical)}
+
+A minimal release checklist aligned with this repo:
+
+\begin{enumerate}
+\item \textbf{Typecheck}: ensure TS still models your invariants.
+\item \textbf{Lint}: ensure code style and basic safety checks pass.
+\item \textbf{Tests}: run the suite; if you're changing HRBR internals, keep an eye on fuzz determinism.
+\item \textbf{Build}: confirm ESM + CJS outputs compile.
+\item \textbf{Bench smoke (optional but recommended)}: \texttt{build:bench:smoke} to catch catastrophic perf regressions.
+\end{enumerate}
+
+\section{Evidence from this repo}
+
+This chapter is grounded in real scripts and configs:
+
+\begin{itemize}
+\item \texttt{package.json} scripts: \texttt{typecheck}, \texttt{lint}, \texttt{test}, \texttt{build}, \texttt{prepack}
+\item \texttt{vitest.config.js} (jsdom environment)
+\item \texttt{eslint.config.mjs} (flat config)
+\item Rollup configs for bundling
+\item TypeScript configs for declaration and rollup builds
+\end{itemize}
+
+In the next section of the book (appendices), we'll turn these practices into a learner-friendly ``build it from scratch'' checklist and a test-reading guide.
+
+\section{Online resources}
+
+These references mirror the key moving parts in this chapter:
+
+\begin{itemize}
+\item TypeScript \texttt{tsconfig} reference (compiler options, strictness flags):
+\href{https://www.typescriptlang.org/tsconfig}{https://www.typescriptlang.org/tsconfig}
+\item \texttt{exactOptionalPropertyTypes} (why ``optional'' is not the same as ``possibly undefined''):
+\href{https://www.typescriptlang.org/tsconfig#exactOptionalPropertyTypes}{https://www.typescriptlang.org/tsconfig\#exactOptionalPropertyTypes}
+\item \texttt{noUncheckedIndexedAccess} (making missing keys explicit):
+\href{https://www.typescriptlang.org/tsconfig#noUncheckedIndexedAccess}{https://www.typescriptlang.org/tsconfig\#noUncheckedIndexedAccess}
+\item TypeScript JSX / \texttt{jsxImportSource}:
+\href{https://www.typescriptlang.org/docs/handbook/jsx.html}{https://www.typescriptlang.org/docs/handbook/jsx.html}
+\item ESLint flat config (ESLint 9+):
+\href{https://eslint.org/docs/latest/use/configure/configuration-files}{https://eslint.org/docs/latest/use/configure/configuration-files}
+\item Vitest docs (jsdom environment, include patterns, reporters):
+\href{https://vitest.dev/guide/}{https://vitest.dev/guide/}
+\item jsdom project (what it simulates and what it doesn't):
+\href{https://github.com/jsdom/jsdom}{https://github.com/jsdom/jsdom}
+\item Rollup configuration and multi-entry builds:
+\href{https://rollupjs.org/configuration-options/}{https://rollupjs.org/configuration-options/}
+\item Node.js \texttt{package.json} \texttt{exports} field (how entry points are resolved):
+\href{https://nodejs.org/api/packages.html#exports}{https://nodejs.org/api/packages.html\#exports}
+\end{itemize}

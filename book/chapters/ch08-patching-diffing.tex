@@ -1,0 +1,420 @@
+\chapter{Patching and Diffing: Updating the DOM Efficiently}
+
+Mounting is the ``first render'' story. But real apps are dominated by \emph{updates}: state changes, input events, list reorders, and component re-renders.
+
+Relaxs patcher has one job: given an \emph{old} VNode tree that is already mounted and a \emph{new} VNode tree produced by the latest render, mutate the real DOM so it matches the new tree while reusing as much existing DOM as is safe.
+
+In Relax the patcher is both:
+
+\begin{itemize}
+  \item \textbf{small enough to read end-to-end} (in \texttt{src/patch-dom.ts}), and
+  \item \textbf{heavily specified by tests} (especially \texttt{src/__tests__/patch-dom.test.ts}).
+\end{itemize}
+
+This chapter is long because patching is where most correctness and performance edge cases live.
+
+\section{\texttt{patchDOM}: the top-level operation}
+The public entry point is:
+
+\begin{quote}
+	exttt{patchDOM(oldVdom, newVdom, parentEl, hostComponent?)}
+\end{quote}
+
+It lives in \texttt{src/patch-dom.ts}.
+
+\subsection{Contract}
+
+\begin{itemize}
+  \item \textbf{Inputs}
+    \begin{itemize}
+      \item \texttt{oldVdom}: the currently mounted VNode tree.
+      \item \texttt{newVdom}: the VNode tree produced by the latest render.
+      \item \texttt{parentEl}: the DOM parent that contains \texttt{oldVdom.el}.
+      \item \texttt{hostComponent}: optional component instance used to bind events and to account for fragment offsets.
+    \end{itemize}
+  \item \textbf{Output}
+    \begin{itemize}
+      \item Returns the patched \texttt{newVdom} (with \texttt{newVdom.el} pointing at the reused DOM).
+    \end{itemize}
+  \item \textbf{Key invariant}
+    \begin{itemize}
+      \item After patching, the returned tree (the \emph{new} VDOM) must contain correct \texttt{.el} references.
+    \end{itemize}
+\end{itemize}
+
+\subsection{Replace vs patch: areNodesEqual}
+
+The first decision is whether two nodes are ``the same'' (so we can patch in place) or different (so we must replace).
+
+Relax defines ``same'' in \texttt{src/nodes-equal.ts} via \texttt{areNodesEqual(oldNode, newNode)}.
+
+This is not a philosophical definition of equality; it is \emph{exactly} the predicate the patcher uses to decide between:
+
+\begin{itemize}
+  \item patching in place (reuse), or
+  \item destroying and remounting (replace).
+\end{itemize}
+
+The current identity rules are:
+
+\begin{itemize}
+  \item If \texttt{type} differs: not equal.
+  \item \textbf{TEXT}: always equal (text nodes are patched by content).
+  \item \textbf{ELEMENT}: equal when \texttt{tag} matches and \texttt{key} matches.
+  \item \textbf{COMPONENT}: equal when component function identity (\texttt{tag}) matches and \texttt{key} matches.
+  \item \textbf{HRBR}: equal when \texttt{mount} factory identity matches.
+\end{itemize}
+
+If nodes are not equal, \texttt{patchDOM} does a replacement:
+
+\begin{enumerate}
+  \item Find the current DOM index of \texttt{oldVdom.el} inside \texttt{parentEl} (\texttt{findIndexInParent}).
+  \item Destroy the old subtree (\texttt{destroyDOM(oldVdom)}).
+  \item Mount the new subtree at the same index (\texttt{mountDOM(newVdom, parentEl, index, hostComponent)}).
+\end{enumerate}
+
+This behavior is covered early in \texttt{src/__tests__/patch-dom.test.ts} by:
+
+\begin{itemize}
+  \item \texttt{change the root node}
+  \item \texttt{change the root node, mount in same index}
+\end{itemize}
+
+\subsection{When nodes are equal: preserve el}
+
+If nodes are equal, patching starts by reusing the DOM reference:
+
+\begin{verbatim}
+newVdom.el = oldVdom.el
+\end{verbatim}
+
+This is asserted by tests like \texttt{no change} and \texttt{sets the el in the new vdom}.
+
+\section{Node-type specific patching}
+
+After equality is established, patching dispatches on \texttt{newVdom.type} (see \texttt{DOM\_TYPES} in \texttt{src/h.ts}).
+
+\subsection{Text nodes: patchText}
+
+\texttt{patchText(oldVdom, newVdom)} compares \texttt{oldVdom.value} and \texttt{newVdom.value}. If different, it updates \texttt{Text.nodeValue}.
+
+Test: \texttt{patch text}.
+
+\subsection{Element nodes: patchElement}
+
+\texttt{patchElement(oldVdom, newVdom, hostComponent)} updates four categories of props:
+
+\begin{itemize}
+  \item Attributes/properties (everything except \texttt{class}, \texttt{style}, \texttt{on})
+  \item \texttt{class}
+  \item \texttt{style}
+  \item \texttt{on} (DOM event handlers)
+\end{itemize}
+
+Implementation detail: it destructures props like:
+
+\begin{verbatim}
+const { class: oldClass, style: oldStyle, on: oldEvents, ...oldAttrs } = oldVdom.props
+const { class: newClass, style: newStyle, on: newEvents, ...newAttrs } = newVdom.props
+\end{verbatim}
+
+and then applies targeted patchers:
+
+\begin{itemize}
+  \item \texttt{patchAttrs(el, oldAttrs, newAttrs)}
+  \item \texttt{patchClasses(el, oldClass, newClass)}
+  \item \texttt{patchStyles(el, oldStyle, newStyle)}
+  \item \texttt{patchEvents(el, oldListeners, oldEvents, newEvents, hostComponent)}
+\end{itemize}
+
+\paragraph{Micro-optimization: object identity fast paths}
+
+Notice the checks in \texttt{patchElement}:
+
+\begin{verbatim}
+if (oldAttrs !== newAttrs) { ... }
+if (oldClass !== newClass) { ... }
+if (oldStyle !== newStyle) { ... }
+\end{verbatim}
+
+In large lists, applications often reuse the same props objects (or stable sub-objects) for unchanged rows.
+These identity checks avoid unnecessary diff work.
+
+\subsection{Attributes: patchAttrs uses objectsDiff}
+
+\texttt{patchAttrs} calls \texttt{objectsDiff(oldAttrs, newAttrs)} (from \texttt{src/utils/objects.ts}) to compute \texttt{added}, \texttt{removed}, \texttt{updated}.
+
+It then:
+
+\begin{itemize}
+  \item removes: \texttt{removeAttribute(el, name)}
+  \item adds/updates: \texttt{setAttribute(el, name, value)}
+\end{itemize}
+
+Important: \texttt{setAttribute} and \texttt{removeAttribute} are the same helpers discussed in Chapter 6 (\texttt{src/attributes.ts}), including the property-vs-attribute rules.
+
+\subsection{Classes: patchClasses uses arraysDiff}
+
+\texttt{patchClasses} normalizes both old and new values into an array of class tokens using \texttt{toClassList}.
+
+Then it runs \texttt{arraysDiff(oldClasses, newClasses)} to compute \texttt{added} and \texttt{removed}, and performs:
+
+\begin{itemize}
+  \item \texttt{el.classList.remove(...removed)}
+  \item \texttt{el.classList.add(...added)}
+\end{itemize}
+
+The behavior is tested extensively in \texttt{patch class} cases in \texttt{src/__tests__/patch-dom.test.ts}.
+
+\subsection{Styles: patchStyles uses objectsDiff}
+
+\texttt{patchStyles} again uses \texttt{objectsDiff} and applies:
+
+\begin{itemize}
+  \item remove: \texttt{removeStyle(el, key)}
+  \item add/update: \texttt{setStyle(el, key, value)}
+\end{itemize}
+
+Test group: \texttt{patch style}.
+
+\subsection{Events: patchEvents}
+
+\texttt{patchEvents} compares old and new \texttt{on} objects using \texttt{objectsDiff} and performs two phases:
+
+\begin{enumerate}
+  \item \textbf{Detach} removed and updated handlers by removing their old wrapper listeners.
+  \item \textbf{Attach} added and updated handlers using \texttt{addEventListener} from \texttt{src/events.ts}.
+\end{enumerate}
+
+Why detach+attach for \emph{updated}?
+Because the wrapper listener function identity changes when the handler changes.
+
+Tests to read:
+
+\begin{itemize}
+  \item \texttt{patch event handlers} in \texttt{src/__tests__/patch-dom.test.ts}
+  \item The binding rules in \texttt{src/__tests__/events.test.ts}
+\end{itemize}
+
+\subsection{Component nodes: patchComponent}
+
+\texttt{patchComponent(oldVdom, newVdom)} preserves the component instance and pushes changes into it.
+
+Key steps:
+
+\begin{itemize}
+  \item Extract external children and props (see \texttt{extractPropsAndEvents} in \texttt{src/utils/props.ts}).
+  \item Call \texttt{component.setExternalContent(children)}.
+  \item Call \texttt{component.updateProps(props)}.
+  \item Copy instance fields:
+    \begin{itemize}
+      \item \texttt{newVdom.component = component}
+      \item \texttt{newVdom.el = component.firstElement}
+    \end{itemize}
+\end{itemize}
+
+This is how Relax achieves the "component instance is preserved" semantics tested in \texttt{patch component with props}.
+
+\subsection{HRBR nodes: patchHrbr}
+
+\subsection{A tiny but important helper: \texttt{patchDOMSameElement}}
+You will notice a second patch entry point inside \texttt{src/patch-dom.ts}:
+
+\begin{quote}
+	exttt{patchDOMSameElement(oldVdom, newVdom, hostComponent?)}
+\end{quote}
+
+It is identical to \texttt{patchDOM} except it \emph{skips the replacement path} and therefore does not need \texttt{parentEl}.
+
+This helper is used in child diffing paths where:
+
+\begin{itemize}
+  \item we already know the node should be kept (for example, keyed nodes that exist in both old and new), and
+  \item we want to avoid scanning \texttt{parentEl.childNodes} to find the current index for every child.
+\end{itemize}
+
+When youre reading patching code, seeing \texttt{patchDOMSameElement} is a clue: ``were in an optimization path, and weve already committed to reusing the node identity.''
+
+Relax contains an experimental HRBR interop mode. In \texttt{patch-dom.ts}, \texttt{patchHrbr(old, next)}:
+
+\begin{itemize}
+  \item Reuses the existing mounted instance when \texttt{old.mount === next.mount}.
+  \item Otherwise, disposes/destroys the old instance and remounts into the same host element.
+\end{itemize}
+
+This behavior matches the spec tests in \texttt{src/__tests__/hrbr-integration.test.ts}.
+
+\section{Patching children: from fast paths to general diff}
+
+After patching the node itself, Relax patches children with:
+
+\begin{verbatim}
+patchChildren(oldVdom, newVdom, hostComponent)
+\end{verbatim}
+
+This is where most performance work lives, and \texttt{src/patch-dom.ts} contains several layered strategies.
+
+\subsection{Step 0: child extraction}
+
+Children are normalized by \texttt{extractChildren(oldVdom)} / \texttt{extractChildren(newVdom)} from \texttt{src/h.ts}.
+This lets fragments and components present children uniformly.
+
+\subsection{Fast path A (opt-in): delegate keyed list reconciliation to HRBR reconciler}
+
+There is an optional integration with the runtime reconciler:
+
+\begin{verbatim}
+if (newVdom.props._reconcile === 'hrbr') { ... reconcileChildren(...) }
+\end{verbatim}
+
+This path only applies when \emph{all direct children are keyed} (keyed list). It builds \texttt{ReconcileNode} specs and lets \texttt{reconcileChildren} (from \texttt{runtime/reconciler}) patch/move nodes with a single keyed pass.
+
+You can think of it as: "VDOM delegates list diffing to a specialized keyed reconciler".
+
+\subsection{Fast path B (opt-in): _textOnly rows}
+
+For large lists of rows shaped like \texttt{<li>{label}</li>}, Relax supports an opt-in hint:
+
+\begin{itemize}
+  \item If \texttt{oldVdom.props._textOnly === true} and \texttt{newVdom.props._textOnly === true}, and
+  \item both old and new children are exactly one TEXT node,
+\end{itemize}
+
+then patchChildren patches only the text node via \texttt{patchDOMSameElement}.
+
+Test name: \texttt{patchChildren row fast path (\_textOnly)}.
+
+\subsection{Fast path C: keyed reorder via LIS}
+
+The LIS (Longest Increasing Subsequence) trick is a classic VDOM strategy:
+
+\begin{itemize}
+  \item If you can identify the subsequence of children that are already in correct relative order,
+  \item then you only need to move the remaining nodes.
+\end{itemize}
+
+Relaxs implementation is in \texttt{patchKeyedChildrenReorder(...)} and uses an internal helper \texttt{lisIndices(arr)} which computes LIS indices over a sequence of old positions (ignoring \texttt{-1} markers for new nodes).
+
+One very practical detail from the code: \texttt{elementsForChild(child)} returns \emph{multiple} DOM elements for components (using \texttt{child.component.elements}) but only one for normal elements. Thats how the reorder path correctly moves a component that renders multiple siblings.
+
+\texttt{patchKeyedChildrenReorder(oldChildren, newChildren, parentEl, hostComponent)} implements keyed reordering with minimal DOM moves:
+
+\begin{enumerate}
+  \item Ensure both sides are fully keyed.
+  \item Remove old nodes not present in the new key set.
+  \item Patch existing nodes and mark new nodes with \texttt{-1} in a sequence.
+  \item Compute the Longest Increasing Subsequence (LIS) over old indices.
+  \item Walk backwards, mounting new nodes and moving only nodes not in LIS.
+\end{enumerate}
+
+This is a classic strategy: nodes in the LIS are already in relative order, so moving the rest yields the fewest inserts/reorders.
+
+Test names to read:
+
+\begin{itemize}
+  \item \texttt{patchChildren keyed reorder fast path (LIS)}
+  \item The many keyed reorder cases in \texttt{src/__tests__/patch-dom.test.ts}
+\end{itemize}
+
+\subsection{Fast path D: stable keyed same-order}
+
+If keys are present and the order is identical, Relax avoids diff work entirely:
+
+\begin{verbatim}
+if (isStableKeyedSameOrder(oldChildren, newChildren)) {
+  for (i) patchDOMSameElement(oldChildren[i], newChildren[i])
+  return
+}
+\end{verbatim}
+
+Test name: \texttt{patchChildren fast path (stable keyed order)}.
+
+\subsection{General path: arraysDiffSequence}
+
+If none of the fast paths apply, Relax computes an edit script:
+
+\begin{verbatim}
+const diffSeq = arraysDiffSequence(oldChildren, newChildren, areNodesEqual)
+\end{verbatim}
+
+	exttt{arraysDiffSequence} is a general-purpose utility in \texttt{src/utils/arrays.ts}. Its worth reading because it is one of the algorithmic cores of Relax.
+
+It has extensive unit tests in:
+
+\begin{itemize}
+  \item \texttt{src/__tests__/diff-sequence.test.ts}
+  \item \texttt{src/__tests__/diff-sequence.fuzzy.test.ts}
+\end{itemize}
+
+It produces operations of types \texttt{ADD}, \texttt{REMOVE}, \texttt{MOVE}, \texttt{NOOP} (see \texttt{ARRAY\_DIFF\_OP}).
+
+Then \texttt{patchChildren} executes them:
+
+\begin{itemize}
+  \item \textbf{ADD}: \texttt{mountDOM(item, parentEl, index + offset, hostComponent)}
+  \item \textbf{REMOVE}: \texttt{destroyDOM(item)}
+  \item \textbf{MOVE}: move DOM nodes (component = multiple elements) and patch the moved subtree
+  \item \textbf{NOOP}: patch the subtree in place
+\end{itemize}
+
+\paragraph{Component moves}
+
+A subtle point: moving a component means moving \emph{all} DOM elements owned by that component.
+That’s why the code does:
+
+\begin{verbatim}
+const elementsToMove = isComponent(oldChild)
+  ? oldChild.component.elements
+  : [oldChild.el]
+\end{verbatim}
+
+This matches the ``component as a fragment'' mental model: the component is a logical node that may span multiple DOM siblings.
+
+\subsection{What the diff-sequence tests prove}
+The patcher relies on \texttt{arraysDiffSequence} to produce a valid edit script. The contract is captured in two test files:
+
+\begin{itemize}
+  \item \texttt{src/__tests__/diff-sequence.test.ts}: a human-readable set of exact expected operation sequences for many small cases
+  \item \texttt{src/__tests__/diff-sequence.fuzzy.test.ts}: a property-style test that generates random arrays and asserts that applying the operations reproduces the target array
+\end{itemize}
+
+The workhorse assertion is essentially:
+
+\begin{quote}
+  	exttt{applyArraysDiffSequence(oldArray, arraysDiffSequence(oldArray, newArray)) === newArray}
+\end{quote}
+
+This is a great example of how Relax uses tests: not just to assert a single result, but to lock down the correctness of an algorithm under many variations.
+
+\section{Tests to lean on}
+
+If you want to understand Relax patch semantics quickly, scan these groups in \texttt{src/__tests__/patch-dom.test.ts}:
+
+\begin{itemize}
+  \item Root replacement and \texttt{.el} preservation.
+  \item Fragment patching (nested add/remove/move).
+  \item Attribute/class/style patching.
+  \item Event handler updates and removals.
+  \item Children patching: keyed/unkeyed, moves, fast paths.
+  \item Component patching and component list semantics.
+\end{itemize}
+
+\section{Takeaways}
+
+\begin{itemize}
+  \item Relax’s patcher is layered: correct general diff + several pragmatic fast paths for real-world performance.
+  \item Keys are not just an optimization; they unlock better move semantics and fewer DOM operations.
+  \item Correctness depends on two invariants:
+    \begin{itemize}
+      \item \texttt{areNodesEqual} must be consistent across mount/patch.
+      \item \texttt{newVdom.el} (and component element arrays) must be updated to reflect reality.
+    \end{itemize}
+\end{itemize}
+
+\section{Online resources}
+\begin{itemize}
+  \item React keys and list rendering (conceptual background; implementation differs): \href{https://react.dev/learn/rendering-lists}{https://react.dev/learn/rendering-lists}
+  \item Longest Increasing Subsequence (LIS) algorithm overview: \href{https://en.wikipedia.org/wiki/Longest_increasing_subsequence}{https://en.wikipedia.org/wiki/Longest_increasing_subsequence}
+  \item DOM operations cost model (MDN on \texttt{Node.insertBefore} / \texttt{Node.removeChild}): \href{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}
+  \item Virtual DOM diffing background reading (generic): \href{https://increment.com/frontend/a-deep-dive-into-virtual-dom/}{https://increment.com/frontend/a-deep-dive-into-virtual-dom/}
+\end{itemize}

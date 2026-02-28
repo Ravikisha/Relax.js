@@ -1,0 +1,305 @@
+\chapter{Scheduling, nextTick, and Deterministic Work}
+
+Relax has \emph{two} schedulers:
+
+\begin{itemize}
+  \item A small microtask-based job queue used by the classic VDOM layer (\texttt{src/scheduler.ts}).
+  \item A more capable lane-based scheduler used by the runtime/reactive layer (\texttt{runtime/scheduler.ts}).
+\end{itemize}
+
+They serve different purposes, but they share one theme: \textbf{make UI work predictable}.
+
+Scheduling discussions tend to get vague fast ("it’s async, it’ll happen later").
+In Relax, scheduling is treated as part of the renderer’s public contract: tests depend on it, and lifecycle semantics are defined by it.
+
+This chapter is anchored in:
+
+\begin{itemize}
+  \item \texttt{src/scheduler.ts} and \texttt{src/__tests__/scheduler.test.ts}
+  \item \texttt{runtime/scheduler.ts} and \texttt{runtime/__tests__/scheduler.test.ts}
+\end{itemize}
+
+\section{The VDOM microtask job queue (\texttt{src/scheduler.ts})}
+
+The VDOM layer uses a minimal scheduling primitive: \texttt{enqueueJob(job)}.
+
+\subsection{Why it exists}
+
+Several operations in Relax are intentionally deferred:
+
+\begin{itemize}
+  \item component \texttt{onMounted()} is scheduled after mount completes
+  \item component \texttt{onUnmounted()} is scheduled after unmount begins
+\end{itemize}
+
+Deferring hook execution avoids re-entrancy surprises and gives the renderer a clean boundary: "render/mount now, run hooks shortly after".
+
+\paragraph{The hidden constraint: DOM consistency and re-entrancy}
+
+If \texttt{onMounted()} ran inside \texttt{mountDOM()}, a component could synchronously call \texttt{updateState()}, which triggers patching while the initial mount is still underway.
+By scheduling hooks, Relax ensures the mount/patch/destroy primitives finish their structural work before user hook code runs.
+
+\subsection{Data model}
+
+\texttt{src/scheduler.ts} maintains:
+
+\begin{itemize}
+  \item \texttt{jobs}: an array of queued callbacks
+  \item \texttt{isScheduled}: a flag to ensure we schedule processing only once per tick
+\end{itemize}
+
+\subsection{enqueueJob and queueMicrotask}
+
+\texttt{enqueueJob(job)} pushes the job and calls \texttt{scheduleUpdate()}.
+
+\texttt{scheduleUpdate()} is the key:
+
+\begin{verbatim}
+if (isScheduled) return
+isScheduled = true
+queueMicrotask(processJobs)
+\end{verbatim}
+
+So no matter how many jobs you enqueue, you’ll process them in a single microtask flush.
+
+\paragraph{Batching rule}
+
+The \texttt{isScheduled} latch is the batching mechanism:
+
+\begin{itemize}
+  \item enqueue one job \textrightarrow schedule one microtask
+  \item enqueue many more jobs before the microtask runs \textrightarrow still one microtask
+\end{itemize}
+
+This makes lifecycle hooks cheap even when many components mount in the same synchronous turn.
+
+\subsection{processJobs: ordering and async behavior}
+
+\texttt{processJobs()} drains \texttt{jobs} in FIFO order. For each job:
+
+\begin{itemize}
+  \item it calls \texttt{job()}
+  \item it wraps the result with \texttt{Promise.resolve(result).then(...)} to log async errors
+\end{itemize}
+
+Important nuance (documented in the code): \textbf{async jobs do not block the queue}.
+The queue keeps running other jobs; the promise continuation runs later.
+
+\paragraph{Why the queue doesn’t await}
+
+The VDOM scheduler is designed for hook-style work ("start it soon, don’t stall unrelated hooks, but surface errors").
+If it awaited each job, one slow async hook could hold up every other component’s hook.
+
+This is tested in \texttt{src/__tests__/scheduler.test.ts}:
+
+\begin{itemize}
+  \item \texttt{Asynchronous jobs enqueue more jobs} expects order \texttt{[1, 3, 2]}.
+\end{itemize}
+
+That test shows:
+
+\begin{enumerate}
+  \item async job pushes \texttt{1}
+  \item it awaits a microtask, so it pauses
+  \item the next (sync) job runs and pushes \texttt{3}
+  \item then the async job resumes and pushes \texttt{2}
+\end{enumerate}
+
+\subsection{nextTick(): what it guarantees (and what it doesn’t)}
+
+\texttt{nextTick()} is the testing and integration helper:
+
+\begin{verbatim}
+scheduleUpdate()
+return flushPromises()
+\end{verbatim}
+
+\texttt{flushPromises()} is implemented as \texttt{setTimeout(resolve)}.
+That means \textbf{nextTick resolves after the microtask flush and one macrotask turn}.
+
+The comment in \texttt{src/scheduler.ts} is explicit:
+
+\begin{quote}
+If the jobs are asynchronous, the promise will resolve before all the jobs have completed.
+\end{quote}
+
+So the contract is:
+
+\begin{itemize}
+  \item It ensures the queued jobs have been \emph{started} and synchronous effects have run.
+  \item It does not await completion of async work inside a job.
+\end{itemize}
+
+\paragraph{Practical testing guidance}
+
+	exttt{nextTick()} is a boundary for "scheduler-driven work started", not "all async completed".
+If you write a hook that does work after an \texttt{await}, you may need an additional wait (or design your test so the awaited promise resolves immediately).
+
+Tests in \texttt{src/__tests__/scheduler.test.ts} cover:
+
+\begin{itemize}
+  \item jobs run after \texttt{nextTick}
+  \item jobs run in order
+  \item jobs run after synchronous code
+\end{itemize}
+
+\section{The runtime lane scheduler (\texttt{runtime/scheduler.ts})}
+
+The runtime scheduler is built for reactive workloads and larger apps.
+Instead of a single FIFO queue, it manages multiple priority lanes:
+
+\begin{itemize}
+  \item \texttt{sync}
+  \item \texttt{input}
+  \item \texttt{default}
+  \item \texttt{transition}
+  \item \texttt{idle}
+\end{itemize}
+
+This scheduler is deterministic by design.
+It uses stable tie-breakers, explicit budgets, and a promotion system (aging + deadlines) so low-priority work eventually runs.
+
+This section is grounded directly in \texttt{runtime/scheduler.ts} and \texttt{runtime/__tests__/scheduler.test.ts}.
+
+\subsection{Creating a scheduler}
+
+The entry points:
+
+\begin{itemize}
+  \item \texttt{createScheduler(options)}
+  \item \texttt{createRequestFlush(strategy)} for how flush is triggered
+  \item \texttt{createBrowserScheduler(...)} convenience wrapper
+\end{itemize}
+
+\subsection{Budgets and time slicing}
+
+A scheduler flush is run with a budget (in milliseconds). The flush loop:
+
+\begin{itemize}
+  \item picks the next task
+  \item runs it
+  \item checks elapsed time
+  \item if budget is exceeded and work remains, schedules another flush
+\end{itemize}
+
+This behavior is tested in \texttt{runtime/__tests__/scheduler.test.ts}:
+
+\begin{itemize}
+  \item \texttt{budget enforcement: flush splits work across multiple flush calls when budget is tight}
+  \item \texttt{setFrameBudget caps the budget used by scheduled flushes}
+\end{itemize}
+
+\subsection{Lane priority and deterministic ordering}
+
+Lane priority is declared in \texttt{LANE\_PRIORITY} and selection order is:
+
+\begin{verbatim}
+sync > input > default > transition > idle
+\end{verbatim}
+
+Within a lane, tasks are sorted with deterministic tie-breakers:
+
+\begin{enumerate}
+  \item earlier deadline
+  \item earlier timestamp
+  \item lower task id
+\end{enumerate}
+
+Test: \texttt{orders tasks within a lane by explicit deadline (then timestamp/id)}.
+
+In code, the deterministic ordering is implemented by sorting each lane queue using:
+
+\begin{verbatim}
+(a.deadline - b.deadline) || (a.timestamp - b.timestamp) || (a.id - b.id)
+\end{verbatim}
+
+The final tie-breaker (\texttt{id}) is the determinism anchor: it makes equal-time scheduling stable.
+
+\subsection{Aging and promotion (starvation prevention)}
+
+To prevent starvation, the scheduler promotes work that is overdue or old.
+
+The implementation:
+
+\begin{itemize}
+  \item defines \texttt{AGING\_MS = 250}
+  \item in \texttt{pickNextTask()}, checks queue heads in weaker lanes
+  \item if a head task is overdue (deadline reached) or aged, it is promoted one lane upward
+\end{itemize}
+
+Tests:
+
+\begin{itemize}
+  \item \texttt{ages/pushes starving tasks upwards (idle -> transition)}
+  \item \texttt{promotes a task when its deadline is reached (even if it is not old enough)}
+  \item \texttt{starvation prevention: repeated promotions eventually let idle work run even under continuous input load}
+\end{itemize}
+
+This is the scheduler equivalent of "don’t let background work get stuck forever".
+
+\subsection{withBudget(): integrating user work}
+
+The scheduler also offers \texttt{withBudget(budgetMs, fn)}.
+It executes user code and, if that work consumes the budget while tasks remain, schedules continuation.
+
+Test: \texttt{withBudget schedules continuation when user code exhausts budget and tasks remain}.
+
+\section{How these schedulers relate to the book}
+
+In Part II and Part IV we saw that the VDOM layer uses \texttt{enqueueJob} to schedule lifecycle hooks.
+
+In later parts of the book (signals, blocks, hydration), we’ll lean more on the runtime scheduler.
+The runtime lane model is a foundation for:
+
+\begin{itemize}
+  \item fair scheduling of effects
+  \item batching updates
+  \item making performance tunable (frame budgets, flush strategy)
+\end{itemize}
+
+\section{Takeaways}
+
+\begin{itemize}
+  \item \texttt{src/scheduler.ts} is tiny but intentional: microtask batching + safe error logging.
+  \item \texttt{nextTick()} is a boundary for tests and integration, but does not await async job completion.
+  \item \texttt{runtime/scheduler.ts} adds lanes, deadlines, aging, and budgets for scalable reactive workloads.
+\end{itemize}
+
+\section{Walking the tests: what they prove}
+
+You can treat these as the scheduler’s executable specification.
+
+\subsection{VDOM scheduler tests (\texttt{src/__tests__/scheduler.test.ts})}
+
+\begin{description}
+  \item[Enqueued jobs run after nextTick] Proves \texttt{enqueueJob()} is deferred and does not run synchronously.
+  \item[Enqueued jobs run in order] Proves FIFO execution order in \texttt{processJobs()}.
+  \item[Jobs run after synchronous code] Proves microtasks run after the current synchronous call stack.
+  \item[Asynchronous jobs enqueue more jobs] Proves the "async doesn’t block" rule: a job that yields allows later jobs to run, producing \texttt{[1, 3, 2]}.
+\end{description}
+
+\subsection{Runtime scheduler tests (\texttt{runtime/__tests__/scheduler.test.ts})}
+
+The runtime scheduler suite uses a manual clock (\texttt{now()}) and a manual flush trigger (\texttt{requestFlush(cb)} pushes \texttt{cb} into an array).
+That technique eliminates timing flakiness and makes time-based scheduling deterministic.
+
+Key tests and the guarantees they enforce:
+
+\begin{description}
+  \item[runs tasks by lane priority] Proves lane selection order and that \texttt{sync} runs immediately.
+  \item[budget enforcement / setFrameBudget] Proves time slicing across multiple flush calls when the budget is tight.
+  \item[ages/pushes starving tasks upwards] Proves aging-based promotion (\texttt{AGING\_MS = 250}).
+  \item[promotes a task when its deadline is reached] Proves deadline-based promotion even when a task isn’t old.
+  \item[withBudget schedules continuation] Proves user code that consumes budget can trigger a continuation flush if tasks remain.
+  \item[createRequestFlush(messageChannel/raf)] Proves flush strategy selection when platform APIs exist.
+\end{description}
+
+\section{Online resources}
+
+\begin{itemize}
+  \item MDN: \href{https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask}{\texttt{queueMicrotask()}}
+  \item MDN: \href{https://developer.mozilla.org/en-US/docs/Web/JavaScript/Event_loop}{JavaScript event loop (microtasks vs. macrotasks)}
+  \item WHATWG HTML: \href{https://html.spec.whatwg.org/multipage/webappapis.html#microtask-queue}{Microtask queue (spec)}
+  \item React (conceptual parallel): \href{https://react.dev/learn/queueing-a-series-of-state-updates}{Queued updates and batching}
+  \item MDN (conceptual parallel): \href{https://developer.mozilla.org/en-US/docs/Web/API/Background_Tasks_API}{Cooperative background work}
+\end{itemize}

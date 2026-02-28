@@ -1,0 +1,329 @@
+\chapter{Hydration: Attaching HRBR to Server HTML}
+
+A block runtime has a natural relationship with server rendering:
+
+\begin{itemize}
+  \item The compiler produces a stable template shape (\texttt{templateHTML}).
+  \item The server can render that template to HTML.
+  \item The client can \emph{attach} to the existing DOM instead of rebuilding it.
+\end{itemize}
+
+In Relax HRBR v1, hydration is deliberately conservative. If anything looks wrong, it bails out and remounts client-side.
+
+This chapter is grounded in:
+
+\begin{itemize}
+  \item \texttt{runtime/hydration.ts} (hydrate implementation)
+  \item \texttt{runtime/ssr.ts} (string rendering helper used in tests)
+  \item \texttt{runtime/__tests__/hydration.test.ts}
+  \item \texttt{runtime/__tests__/ssr.test.ts}
+\end{itemize}
+
+\section{A tiny contract (what hydrateBlock promises)}
+
+Hydration is the moment where two worlds meet:
+
+\begin{itemize}
+  \item The \textbf{server} produced HTML as a string.
+  \item The \textbf{client} wants a live block instance with slot node references.
+\end{itemize}
+
+In v1, Relax uses a strict approach that is easy to reason about and hard to get subtly wrong.
+You can treat \texttt{hydrateBlock(def, host, initialValues)} as enforcing this contract:
+
+\begin{enumerate}
+  \item If there is no DOM to attach to (\texttt{host.firstElementChild == null}), hydration simply mounts a fresh block.
+  \item If the root element tag does not match the template’s root tag, hydration clears the host and mounts fresh.
+  \item If slot paths resolve to the wrong node types or to the wrong element tag names (compared to the parsed template), hydration clears the host and mounts fresh.
+  \item If everything matches, hydration returns a block-like object whose \texttt{root} and \texttt{slotNodes} refer to the server DOM nodes.
+\end{enumerate}
+
+The headline design choice is: \textbf{when in doubt, remount}. That makes correctness obvious at the cost of being less clever than incremental/partial hydration systems.
+
+\section{Hydration contract (v1)}
+
+\texttt{hydrateBlock(def, host, initialValues?)} returns a \texttt{HydratedBlock} (type alias of \texttt{MountedBlock}).
+
+Its docstring states three key assumptions:
+
+\begin{enumerate}
+  \item \texttt{host} contains exactly one root element matching the template.
+  \item Hydration does not mutate DOM; it only resolves slot node references.
+  \item On mismatch, hydration bails out and remounts client-side.
+\end{enumerate}
+
+This is a strict, "safety first" strategy: it prefers correctness over partial hydration tricks.
+
+It’s also worth noticing what the contract does \emph{not} promise:
+
+\begin{itemize}
+  \item It does not try to recover from mismatches by patching individual nodes.
+  \item It does not attempt to reconcile text/comment whitespace differences.
+  \item It does not do event delegation or partial listener attachment.
+\end{itemize}
+
+\section{The fast path: attach without rewriting}
+
+Given server markup like:
+
+\begin{verbatim}
+<div><span>A</span></div>
+\end{verbatim}
+
+and a matching block definition:
+
+\begin{verbatim}
+templateHTML: `<div><span>A</span></div>`
+slots: { a: { kind: 'text', path: [0, 0] } }
+\end{verbatim}
+
+The hydration algorithm is:
+
+\begin{enumerate}
+  \item Read \texttt{serverRoot = host.firstElementChild}.
+  \item Validate root tagName against the template (cheap check).
+  \item Resolve every slot path against \texttt{serverRoot}.
+  \item Validate slot node types, and element tagNames against the template DOM.
+  \item Return a \texttt{HydratedBlock} whose \texttt{update()} writes into those resolved nodes.
+\end{enumerate}
+
+Two details in \texttt{runtime/hydration.ts} make this efficient:
+
+\begin{itemize}
+  \item Root tag validation is a fast regex over \texttt{templateHTML} (\texttt{getRootTagName}). This allows an early bail-out without parsing a template DOM.
+  \item Slot resolution is just a \texttt{childNodes} index walk (\texttt{resolvePath}). It’s similar to \texttt{runtime/block.ts}, but hydration keeps its own copy with different error strings.
+\end{itemize}
+
+Spec: \texttt{hydrates without rewriting DOM when markup matches}.
+
+That test captures node identities before hydration and asserts identity stability after calling \texttt{hydrateBlock}:
+
+\begin{itemize}
+  \item same root element
+  \item same inner \texttt{<span>}
+  \item same text node
+\end{itemize}
+
+Then it updates slot values and checks the content changed without replacing nodes.
+
+\section{Mismatch detection: when to bail out}
+
+Hydration needs a mismatch policy. In v1 it is intentionally conservative.
+
+\subsection{Root tag mismatch}
+
+The first check is easy: compare the root tagName.
+
+Implementation: \texttt{getRootTagName(templateHTML)} uses a small regex for the first tag.
+If root tags don’t match, hydration does:
+
+\begin{verbatim}
+host.innerHTML = ''
+return mountBlock(def, host, initialValues)
+\end{verbatim}
+
+This is the first key safety property: mismatched DOM never becomes a "half-hydrated" zombie tree. We either attach cleanly or we tear down and replace.
+
+Spec: \texttt{mismatch triggers remount for subtree}.
+
+\subsection{Slot path mismatch: element tagName mismatch}
+
+Root tag matching is not enough. You can have the same root element but different internal structure.
+
+The conservative check in \texttt{runtime/hydration.ts} is:
+
+\begin{itemize}
+  \item Parse the expected template root into a detached DOM node.
+  \item For each non-text slot:
+    \begin{itemize}
+      \item resolve the same path against the expected template DOM
+      \item assert both are Elements
+      \item assert \texttt{expected.tagName === actual.tagName}
+    \end{itemize}
+\end{itemize}
+
+Why compare tag names at slot paths (instead of deep-walking the entire tree)?
+
+\begin{itemize}
+  \item Slots are where we will write later, so validating those boundaries catches many mismatches that would otherwise crash later.
+  \item It avoids paying for a full tree diff during hydration.
+  \item It keeps the rule extremely easy to explain and test.
+\end{itemize}
+
+If any assertion fails, hydration catches and bails out with client remount.
+
+Spec: \texttt{slot path element mismatch triggers bailout remount (conservative)}.
+
+The test intentionally renders:\\
+\texttt{<div><em>X</em></div>}\\
+but the template expects:\\
+\texttt{<div><span></span></div>}\\
+So hydration remounts and you end up with a \texttt{<span>}.
+
+\section{Hydrated update semantics: same slot kinds as mountBlock}
+
+Hydration returns an object that looks like a mounted block:
+
+\begin{itemize}
+  \item \texttt{root} is the server root element
+  \item \texttt{slotNodes} maps slot keys to resolved DOM nodes
+  \item \texttt{update(values)} writes into those nodes
+  \item \texttt{destroy()} removes hydrated listeners and removes \texttt{root}
+\end{itemize}
+
+The update logic supports the full set of slot kinds:
+
+\begin{itemize}
+  \item \texttt{text}: write \texttt{Text.nodeValue}
+  \item \texttt{attr}: boolean attribute semantics and SVG xlink namespace
+  \item \texttt{prop}: input correctness for \texttt{value} / \texttt{checked}
+  \item \texttt{class}: string or array join
+  \item \texttt{style}: string or object diff
+  \item \texttt{event}: bind event handler(s)
+\end{itemize}
+
+Spec: \texttt{hydrates with full slot semantics (event/attr/prop/SVG) without rewriting existing DOM}.
+
+Most of the slot patching logic is a copy of the mount-time block patching rules (Chapter 14), but hydration differs in one important place: event slots.
+
+That test verifies:
+
+\begin{itemize}
+  \item DOM identity is preserved for root/button/input/link
+  \item clicking calls the hydrated handler
+  \item boolean attribute \texttt{hidden} is present
+  \item \texttt{checked} property toggles
+  \item SVG \texttt{xlink:href} is set in the xlink namespace
+\end{itemize}
+
+\subsection{Redundant write skipping}
+
+Hydration tracks \texttt{prevValues} and skips updates when \texttt{Object.is(prev, next)}.
+This matches the block runtime’s "skip redundant writes" optimization.
+
+This is a subtle performance win because it also prevents unnecessary listener churn (given hydration’s v1 event strategy below).
+
+\section{Event slots: v1 difference vs mountBlock}
+
+There’s an intentional simplification in hydration:
+
+\begin{itemize}
+  \item \texttt{mountBlock} binds once and swaps \texttt{rec.current} (no listener churn).
+  \item \texttt{hydrateBlock} removes the previous listener and re-adds on update.
+\end{itemize}
+
+You can see this directly in \texttt{runtime/hydration.ts}:
+
+\begin{itemize}
+  \item On \texttt{event} updates, it looks up \texttt{listenersByKey[k]}.
+  \item If present, it calls \texttt{removeEventListener(prev.type, prev.handler)}.
+  \item If the new value is a function, it creates a fresh wrapper handler and calls \texttt{addEventListener(slot.name, handler)}.
+\end{itemize}
+
+This is not as optimal as the bind-once approach in \texttt{mountBlock}, but it is still correct and easy to reason about.
+
+It still avoids leaks because \texttt{destroy()} removes any listeners it attached.
+
+This choice keeps hydration simpler while still correct. If hydration becomes a performance hot spot, it can be refactored to reuse the bind-once strategy.
+
+\section{SSR helper: renderBlockToString()}
+
+\texttt{runtime/ssr.ts} provides a minimal string renderer used mainly for tests.
+
+Contract:
+
+\begin{itemize}
+  \item create a detached host element
+  \item \texttt{mountBlock(def, host, initialValues)}
+  \item read \texttt{host.innerHTML}
+  \item destroy the mounted block
+\end{itemize}
+
+This is explicitly a v1 teaching tool:
+
+\begin{itemize}
+  \item It uses the browser’s DOM implementation to do serialization.
+  \item It’s not the kind of streaming SSR engine you’d use in production.
+\end{itemize}
+
+But it has an important property: it guarantees that the HTML string shape matches \texttt{mountBlock} semantics, because it’s literally produced by the same code.
+
+Spec: \texttt{renders a block to HTML string, hydrates it, and updates via mountCompiledBlock}.
+
+This gives a full lifecycle demo:
+
+\begin{enumerate}
+  \item render HTML string from a block
+  \item insert it into the document
+  \item hydrate it without rewriting
+  \item mount a compiled block on top of the hydrated DOM and update via signals
+\end{enumerate}
+
+\section{Takeaways}
+
+\begin{itemize}
+  \item Hydration v1 is conservative: it validates structure and bails out on mismatch.
+  \item When markup matches, hydration preserves DOM identity (no rewrites).
+  \item Hydrated updates support the full slot matrix (text/attr/prop/class/style/event + SVG xlink).
+  \item SSR v1 uses the DOM to produce strings for tests; it’s simple and correct, not optimized.
+\end{itemize}
+
+\section{Walking the tests (the executable spec)}
+
+Hydration and SSR are notoriously easy to get "mostly right" and still ship broken edge cases.
+Relax locks down the v1 behavior with two test files.
+
+\subsection{\texttt{runtime/__tests__/hydration.test.ts}}
+
+This suite defines the hydration safety model.
+
+\begin{itemize}
+  \item \textbf{hydrates without rewriting DOM when markup matches}
+  captures \texttt{root/span/text} node identities before hydration, hydrates with an initial value, and asserts:
+  \begin{itemize}
+    \item the same elements/text nodes are still present (identity preserved)
+    \item only the content changes
+  \end{itemize}
+
+  \item \textbf{hydrates with full slot semantics (event/attr/prop/SVG) without rewriting existing DOM}
+  verifies the “slot matrix” works even when DOM is pre-existing:
+  \begin{itemize}
+    \item event handler is attached and called
+    \item boolean-ish attr (\texttt{hidden}) is present
+    \item \texttt{checked} is set as a property
+    \item SVG \texttt{xlink:href} is set in the xlink namespace
+  \end{itemize}
+
+  \item \textbf{mismatch triggers remount for subtree}
+  uses the wrong root tag (\texttt{<section>}) and asserts hydration replaces the entire subtree.
+
+  \item \textbf{slot path element mismatch triggers bailout remount (conservative)}
+  uses the same root tag but the wrong inner tag at a slot path (\texttt{<em>} vs expected \texttt{<span>}).
+  The test asserts that hydration bails out and remounts so the template structure is restored.
+\end{itemize}
+
+\subsection{\texttt{runtime/__tests__/ssr.test.ts}}
+
+This test is a full lifecycle demo "in miniature":
+
+\begin{enumerate}
+  \item \textbf{render} a block to an HTML string via \texttt{renderBlockToString}
+  \item insert the HTML into a host
+  \item \textbf{hydrate} without changing root/text node identities
+  \item \textbf{mountCompiledBlock} to wire signals and update the hydrated DOM
+\end{enumerate}
+
+It’s intentionally pragmatic: rather than relying on timing, it calls \texttt{mounted.update({ value: 'B' })} to assert the DOM is updated.
+The key idea being demonstrated is: \emph{hydration produces a block-shaped surface that the rest of HRBR can build on}.
+
+\section{Online resources}
+
+\begin{itemize}
+  \item \href{https://developer.mozilla.org/en-US/docs/Web/HTML/Element/template}{MDN: \texttt{<template>}} (hydration compares template structure by parsing)
+  \item \href{https://developer.mozilla.org/en-US/docs/Web/API/Element/firstElementChild}{MDN: \texttt{firstElementChild}} (the attach point)
+  \item \href{https://developer.mozilla.org/en-US/docs/Web/API/Node/childNodes}{MDN: \texttt{Node.childNodes}} (path-based DOM addressing)
+  \item \href{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener}{MDN: events + listener removal}
+  \item \href{https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute/xlink:href}{MDN: \texttt{xlink:href}} (namespaced SVG attribute semantics)
+  \item A broader hydration overview (framework-agnostic):
+  \href{https://web.dev/rendering-on-the-web/}{web.dev: Rendering on the Web}.
+\end{itemize}

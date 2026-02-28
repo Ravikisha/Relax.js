@@ -1,0 +1,309 @@
+\chapter{VDOM \texorpdfstring{$\leftrightarrow$}{<->} HRBR interop (mixed trees)}
+\label{ch:vdom-hrbr-interop}
+
+This chapter covers the experimental interop layer that allows compiled HRBR output to live \emph{inside} a Relax VDOM tree.
+The goal is practical: you can adopt HRBR incrementally (or only for hot paths) without rewriting your whole app.
+
+\section{The tiny contract: an HRBR vnode is just a mount factory}
+
+In the VDOM layer, HRBR is represented by a new vnode type, \texttt{DOM\_TYPES.HRBR}, implemented in \texttt{src/h.ts}.
+
+\subsection{VNode shape}
+
+The HRBR vnode type is defined as \texttt{HrbrVNode}:
+
+\begin{itemize}
+\item \texttt{type: DOM\_TYPES.HRBR}
+\item \texttt{mount(host: Element) -> instance}
+\item internal bookkeeping fields: \texttt{host}, \texttt{instance}, \texttt{el}
+\end{itemize}
+
+The important part is that \texttt{mount} is referentially meaningful. Two HRBR vnodes are treated as the ``same'' subtree iff:\\
+	exttt{old.mount === new.mount}.
+
+In other words, \emph{mount factory identity is the key}. This identity flows through three separate places that must agree:
+
+\begin{itemize}
+\item \texttt{src/nodes-equal.ts}: HRBR equality is \texttt{old.mount === new.mount}.
+\item \texttt{src/patch-dom.ts}: HRBR patching reuses the mounted instance on that same condition.
+\item \texttt{src/destroy-dom.ts}: HRBR teardown calls the instance hooks and removes the host wrapper.
+\end{itemize}
+
+This isn't an accident: it lets the VDOM runtime treat HRBR the same way it treats components. ``Same function identity'' means ``keep state/instance''.
+
+\subsection{HRBR instances: a minimal lifecycle interface}
+
+The VDOM runtime does \emph{not} understand HRBR internals. It only requires that \texttt{mount(host)} returns an object with the following hooks:
+
+\begin{itemize}
+\item \texttt{destroy(): void} --- required (DOM and internal cleanup).
+\item \texttt{dispose?: () => void} --- optional (reactivity teardown, unsubscribe).
+\item \texttt{update?: (values: any) => void} --- optional (to push new values).
+\end{itemize}
+
+This interface matches the objects returned from the HRBR runtimes (compiled blocks and fallback mounts), but it's also easy to fake in tests.
+
+\subsection{Creating HRBR vnodes: \texttt{hBlock()}}
+
+The helper \texttt{hBlock()} in \texttt{src/h.ts} wraps a mount factory into an HRBR vnode:
+
+\begin{quote}
+\texttt{hBlock((host) => mountCompiledBlock(def, host, compiledSlots))}
+\end{quote}
+
+This is the shape the compiler produces (or that you can use manually for experiments).
+
+\section{Mounting: why HRBR gets its own host container}
+
+Mounting happens in \texttt{src/mount-dom.ts}. The main \texttt{mountDOM()} switch includes a new case:
+
+\begin{quote}
+\texttt{case DOM\_TYPES.HRBR: createHrbrNode(vdom, parentEl, index)}
+\end{quote}
+
+\subsection{\texttt{createHrbrNode()}: mount into a dedicated \texttt{<span>}}
+
+\texttt{createHrbrNode()} creates a dedicated host element (currently a \texttt{span}) and inserts it into the parent:
+
+\begin{itemize}
+\item It sets \texttt{host.dataset.hrbr = '1'} to make the host easily recognizable in the DOM.
+\item It stores the host on the vnode: \texttt{vdom.host = host}.
+\item It calls \texttt{vdom.mount(host)} and stores the returned instance.
+\item It sets \texttt{vdom.el = host}.
+\end{itemize}
+
+The decision \emph{to set \texttt{vdom.el} to the host container} is subtle but critical.
+
+\subsubsection{Why \texttt{vdom.el = host} matters}
+
+Relax's patcher has a generic ``replace'' path:
+
+\begin{quote}
+if nodes aren't equal $\Rightarrow$ find index of \texttt{oldVdom.el} in \texttt{parentEl.childNodes} $\Rightarrow$ destroy old $\Rightarrow$ mount new at the same index.
+\end{quote}
+
+That index scan only works if \texttt{oldVdom.el} is actually a direct child of \texttt{parentEl}. For HRBR, the direct child is the wrapper host, not the inner DOM nodes produced by the HRBR runtime.
+
+So \texttt{createHrbrNode()} intentionally makes the wrapper the unit of ownership:
+
+\begin{itemize}
+\item moves are moves of the wrapper
+\item removals remove the wrapper
+\item inner churn stays encapsulated in HRBR
+\end{itemize}
+
+Even though the vnode type includes an \texttt{el?: Element} field described as ``first element produced by the block'' in \texttt{src/h.ts}, the mount code currently treats \texttt{el} as the wrapper host. This aligns with ``VDOM owns the wrapper, HRBR owns the inside''.
+
+\subsubsection{A small but useful marker: \texttt{data-hrbr="1"}}
+
+The wrapper uses \texttt{host.dataset.hrbr = '1'}. This isn't required for correctness, but it's very handy when inspecting mixed trees in DevTools: you can quickly spot the boundaries between VDOM-managed and HRBR-managed DOM.
+
+\section{Patching: stability by mount factory identity}
+
+Patching happens in \texttt{src/patch-dom.ts}. The HRBR case delegates to \texttt{patchHrbr(old, next)}.
+
+\subsection{Fast path: stable mount function means reuse}
+
+\texttt{patchHrbr()} first checks referential identity:
+
+\begin{quote}
+\texttt{if (old.mount === next.mount) \{ copy host/instance/el; return; \}}
+\end{quote}
+
+This mirrors component identity rules: if the ``type'' of the subtree hasn't changed, we preserve the mounted instance.
+
+In the actual implementation, the fast path copies internal bookkeeping from the old vnode to the new vnode:
+
+\begin{itemize}
+\item \texttt{host}
+\item \texttt{instance}
+\item \texttt{el}
+\end{itemize}
+
+That copy step is important because the patcher returns the \emph{new} vnode object, and subsequent patches/destroys must be able to reach the original HRBR host and instance.
+
+\subsection{Slow path: mount changed means dispose+destroy+remount}
+
+When \texttt{mount} changes, \texttt{patchHrbr()} treats it as a subtree replacement \emph{inside the same outer HRBR vnode type}:
+
+\begin{itemize}
+\item reuse the same \texttt{host} container
+\item if the instance supports \texttt{dispose()}, call it
+\item call \texttt{destroy()} (required)
+\item clear the host's children
+\item call \texttt{next.mount(host)} and store the new instance
+\end{itemize}
+
+Note the interplay with \texttt{areNodesEqual()}:
+
+\begin{itemize}
+\item If \texttt{areNodesEqual(old, next)} returns \emph{false}, \texttt{patchDOM()} goes through the full replace path (destroy old vnode + mount new vnode at the same index).
+\item If equality says they are the ``same type'' (both HRBR), then \texttt{patchHrbr()} is responsible for remounting when the mount factory changes.
+\end{itemize}
+
+This makes HRBR a first-class citizen in the patcher without teaching the patcher HRBR internals.
+
+\subsection{A note on where remounts happen}
+
+There are two remount scenarios and they get handled in different layers:
+
+\begin{itemize}
+\item \textbf{VNode type changes} (or HRBR \texttt{mount} identity changes per \texttt{areNodesEqual()}): handled by the generic replace-path in \texttt{patchDOM()} (destroy + mount at the same index).
+\item \textbf{Same vnode type} but HRBR \texttt{mount} changes: handled by \texttt{patchHrbr()} (dispose/destroy/clear/remount into the same wrapper).
+\end{itemize}
+
+The integration tests (Section~\ref{ch:vdom-hrbr-interop}) mostly focus on the second path, because the first isn't HRBR-specific.
+
+\section{Destroying: one call site, two optional hooks}
+
+Destroying happens in \texttt{src/destroy-dom.ts} via \texttt{removeHrbrNode(vdom)}.
+
+The HRBR instance contract is designed to work for both compiled blocks and fallback runtime objects:
+
+\begin{itemize}
+\item \texttt{destroy(): void} is required.
+\item \texttt{dispose(): void} is optional (signals cleanup / reactive graph unsubscribe).
+\end{itemize}
+
+The destroy path:
+
+\begin{enumerate}
+\item call \texttt{instance.dispose()} if present
+\item call \texttt{instance.destroy()} if present
+\item remove the host element itself from the DOM
+\end{enumerate}
+
+Because the host wrapper is removed, the HRBR subtree can't leak DOM nodes even if the inner runtime forgets to clean up.
+
+\subsection{Why both \texttt{dispose()} and \texttt{destroy()}?}
+
+This pattern matches the rest of the HRBR runtime in this book:
+
+\begin{itemize}
+\item \texttt{dispose()} is for disconnecting from reactive graphs (signals/effects) and releasing scheduled work.
+\item \texttt{destroy()} is for deterministic DOM cleanup, including nested mounts.
+\end{itemize}
+
+The VDOM runtime calls both (when present) so HRBR implementations can keep those concerns separate.
+
+\section{Tests-as-spec: the integration suite}
+
+The file \texttt{src/\_\_tests\_\_/hrbr-integration.test.ts} is the executable contract for everything above.
+It contains four key behaviors.
+
+\subsection{Test harness: what this suite is actually exercising}
+
+This isn't a unit test of the HRBR runtime itself; it's testing the integration points:
+
+\begin{itemize}
+\item \texttt{hBlock()} produces a vnode with \texttt{type: DOM\_TYPES.HRBR}.
+\item \texttt{mountDOM()} correctly creates the wrapper host and calls the mount factory.
+\item \texttt{patchDOM()} decides reuse vs remount using mount identity.
+\item \texttt{destroyDOM()} tears down and removes the wrapper.
+\end{itemize}
+
+\subsection{1) Mount an HRBR block returned from a VDOM component}
+
+The first test constructs a component whose render returns \texttt{hBlock(mount)}.
+The mount function appends a child to the provided host and returns an object with \texttt{destroy()}.
+
+Assertions:
+
+\begin{itemize}
+\item mounting the VDOM mounts the HRBR region (DOM contains \texttt{HRBR})
+\item the mount function is called exactly once
+\item destroying the VDOM destroys the HRBR region (DOM becomes empty)
+\end{itemize}
+
+\subsection{2) Event semantics: bind to the host component}
+
+The second test verifies the \emph{host component binding} convention.
+An HRBR block is mounted from inside a VDOM component, and the block defines an event slot:\\
+\texttt{\{ kind: 'event', path: [], name: 'click' \}}.
+
+The key detail is the \texttt{mountBlock(..., \{ hostComponent: this \})} option.
+It ensures the handler's \texttt{this} matches the VDOM component instance, mirroring Relax's VDOM event behavior.
+
+Assertions:
+
+\begin{itemize}
+\item clicking the button calls the handler
+\item the handler sees \texttt{this === vdom.component}
+\item the argument is an \texttt{Event}
+\end{itemize}
+
+This test is a key ``mixed tree'' guarantee: HRBR doesn't invent a new event binding model when embedded inside Relax VDOM; it can reuse Relax's convention of binding handlers to the component instance.
+
+\subsection{3) Patch: stable mount identity preserves instance}
+
+The third test mounts a component that always returns \texttt{hBlock(mount)} where \texttt{mount} is stable.
+It then patches the VDOM with another render of the same component.
+
+Assertions:
+
+\begin{itemize}
+\item \texttt{mount} was called only once
+\item the instance array length remains 1
+\item DOM remains \texttt{hello}
+\end{itemize}
+
+This is the ``no remount'' fast path.
+
+Notice what is (and isn't) asserted:
+
+\begin{itemize}
+\item It doesn't require HRBR to implement any diffing---the integration layer simply promises not to tear it down.
+\item It asserts the VDOM runtime carries the old instance forward by copying \texttt{host}/\texttt{instance} into the new vnode.
+\end{itemize}
+
+\subsection{4) Patch: changing mount identity remounts}
+
+The fourth test swaps \texttt{currentMount} from \texttt{MountA} to \texttt{MountB} and triggers a component re-render via \texttt{updateState()}.
+
+Assertions:
+
+\begin{itemize}
+\item \texttt{MountA} called once
+\item \texttt{MountB} called once
+\item DOM changes from \texttt{A} to \texttt{B}
+\end{itemize}
+
+The mechanism used here is also important: the test triggers a component re-render via \texttt{updateState()}, which causes the component's \texttt{render()} to run again and return an HRBR vnode with a different \texttt{mount} reference. This matches real application code where mount factories can accidentally change due to closures.
+
+\section{Practical guidance (and foot-guns)}
+
+\begin{itemize}
+\item \textbf{Keep mount factories stable} if you want patch-time reuse. In practice, that means hoisting the mount function out of render (or memoizing it).
+\item \textbf{Always implement \texttt{destroy()}} in your HRBR instance. Without it, detaching the host wrapper still removes DOM, but reactive resources and event hooks can leak.
+\item \textbf{Pass \texttt{hostComponent}} when you mount blocks from components} if you want event handlers to behave like VDOM events.
+\item \textbf{Don't assume DOM ownership beyond the host}. The VDOM layer treats the host wrapper as the unit of reconciliation.
+\end{itemize}
+
+\subsection{Common failure modes in mixed trees}
+
+\begin{itemize}
+\item \textbf{Accidental remounts:} if you create the mount function inline (a new closure every render), it will remount every patch. Prefer a stable function identity.
+\item \textbf{Forgetting to clear:} \texttt{patchHrbr()} explicitly clears \texttt{host} before remount. If your custom HRBR instance assumes an empty host but doesn't clean on \texttt{destroy()}, you'll get surprising leftover nodes in custom setups.
+\item \textbf{Destroying the wrong thing:} the integration treats the wrapper host as the owned node. Removing inner nodes manually from outside HRBR can break assumptions inside the HRBR runtime.
+\end{itemize}
+
+In Part~IV's later chapters, we'll connect this interop layer to the compiler output: the compiler emits \texttt{hBlock(() => mountCompiledBlock(...))} for static templates and \texttt{hBlock(() => mountFallback(...))} when it detects dynamic structure.
+
+\section{Online resources}
+
+\begin{itemize}
+\item DOM node insertion and wrapper ownership patterns:\\
+\href{https://developer.mozilla.org/en-US/docs/Web/API/Node/appendChild}{MDN: Node.appendChild},\\
+\href{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}{MDN: Node.insertBefore},\\
+\href{https://developer.mozilla.org/en-US/docs/Web/API/ChildNode/remove}{MDN: ChildNode.remove}.
+
+\item ``Identity is state'' in UI runtimes (keys and function identity are the rough analogs used here):\\
+\href{https://react.dev/learn/rendering-lists#keeping-list-items-in-order-with-key}{React docs: list keys},\\
+\href{https://vuejs.org/guide/essentials/list.html#maintaining-state}{Vue docs: maintaining state}.
+
+\item Event handler binding and the meaning of \texttt{this} in JavaScript:\\
+\href{https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/this}{MDN: \texttt{this}}.
+
+\item Data attributes used as lightweight, inspectable markers:\\
+\href{https://developer.mozilla.org/en-US/docs/Learn/HTML/Howto/Use_data_attributes}{MDN: Using data attributes}.
+\end{itemize}

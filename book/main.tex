@@ -1,0 +1,132 @@
+% Relax.js Book
+% Build target: compile with pdflatex/xelatex (see README you’ll add later)
+\documentclass[11pt,oneside]{book}
+
+% --- Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{titling}
+
+\geometry{margin=1in}
+
+% --- Color palette ---
+\definecolor{RelaxBlue}{HTML}{2563EB}
+\definecolor{RelaxGray}{HTML}{334155}
+\definecolor{RelaxLight}{HTML}{F1F5F9}
+
+% --- Hyperlinks ---
+\hypersetup{
+  colorlinks=true,
+  linkcolor=RelaxBlue,
+  urlcolor=RelaxBlue,
+  citecolor=RelaxBlue,
+  pdfauthor={Ravikisha (project) \& Contributors},
+  pdftitle={Relax.js: A Deep Build Guide}
+}
+
+% --- Chapter/section styling ---
+	itleformat{\chapter}
+  {\normalfont\huge\bfseries\color{RelaxGray}}
+  {\thechapter.}{0.6em}{}
+	itlespacing*{\chapter}{0pt}{-8pt}{18pt}
+
+% --- Headers/footers ---
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE,RO]{\nouppercase{\leftmark}}
+\fancyhead[RE,LO]{\nouppercase{\rightmark}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% --- Listings configuration for code blocks ---
+\lstdefinestyle{relax}{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{black!15},
+  backgroundcolor=\color{RelaxLight},
+  keywordstyle=\color{RelaxBlue},
+  commentstyle=\color{green!40!black},
+  stringstyle=\color{orange!60!black}
+}
+
+\title{Relax.js: A Deep Build Guide}
+\author{Ravikisha (project) \& Contributors}
+\date{\today}
+
+% --- Lightweight custom title page ---
+\pretitle{\begin{center}\Huge\bfseries\color{RelaxGray}}
+\posttitle{\par\end{center}\vspace{0.6em}}
+\preauthor{\begin{center}\large\color{RelaxGray}}
+\postauthor{\par\end{center}\vspace{0.6em}}
+\predate{\begin{center}\small\color{RelaxGray}}
+\postdate{\par\end{center}\vspace{1.2em}}
+
+\begin{document}
+
+\frontmatter
+\begin{titlepage}
+\centering
+\vspace*{2.2cm}
+{\Huge\bfseries\color{RelaxGray} Relax.js\par}
+\vspace{0.25cm}
+{\Large\color{RelaxGray} A Deep Build Guide\par}
+\vspace{1.0cm}
+{\large\color{RelaxGray} Ravikisha (project) \& Contributors\par}
+\vspace{0.6cm}
+{\small\color{RelaxGray} \today\par}
+\vfill
+\includegraphics[width=0.22\textwidth]{docs/relaxjslogo.png}\par
+\vspace*{1.0cm}
+\end{titlepage}
+\tableofcontents
+
+\mainmatter
+
+% --- Part I ---
+\input{chapters/ch01-what-and-why}
+\input{chapters/ch02-repo-tour}
+\input{chapters/ch03-tsx-jsx}
+
+% --- Part II (start) ---
+\input{chapters/ch04-vnode-model}
+\input{chapters/ch05-mounting-dom}
+\input{chapters/ch06-attributes-props}
+\input{chapters/ch07-events-dispatcher}
+\input{chapters/ch08-patching-diffing}
+\input{chapters/ch09-destroy-unmount}
+\input{chapters/ch10-scheduling-nexttick}
+\input{chapters/ch11-slots-content-projection}
+\input{chapters/ch12-hrbr-signals}
+\input{chapters/ch13-hrbr-deterministic-scheduler}
+\input{chapters/ch14-hrbr-blocks-template-slots}
+\input{chapters/ch15-hrbr-hydration-ssr-attach}
+\input{chapters/ch16-hrbr-ssr-authoring-v1}
+\input{chapters/ch17-hrbr-fallback-reconciler}
+
+% Part IV
+\input{chapters/ch18-vdom-hrbr-interop}
+\input{chapters/ch19-compiler-architecture-overview}
+\input{chapters/ch20-babel-plugin-in-detail}
+\input{chapters/ch21-devtools-instrumentation}
+\input{chapters/ch22-benchmarks-methodology}
+\input{chapters/ch23-release-quality-discipline}
+
+\backmatter
+
+\chapter{Appendix: notation}
+This book uses \texttt{file/path.ts} to reference source files.
+Symbol names are written like \texttt{h()} or \texttt{mountDOM()}.
+
+\end{document}

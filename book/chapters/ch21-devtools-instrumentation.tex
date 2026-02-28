@@ -1,0 +1,283 @@
+\chapter{Devtools and instrumentation (optional)}
+\label{ch:devtools}
+
+Relax's HRBR runtime is designed to be deterministic and debuggable.
+This chapter documents the small \emph{optional} devtools surface in \texttt{runtime/devtools.ts} and how the rest of the runtime reports events into it.
+
+The design goals are:
+
+\begin{itemize}
+\item \textbf{Low overhead by default}: counters for heavyweight instrumentation (DOM ops, allocations) are disabled unless explicitly enabled.
+\item \textbf{Always hookable}: events can be observed via a hook regardless of whether counting is enabled.
+\item \textbf{Stable semantics}: the runtime emits a small number of event types at well-defined points.
+\end{itemize}
+
+\section{The API surface: five functions and two helpers}
+
+All of devtools lives in \texttt{runtime/devtools.ts}.
+The public API is:
+
+\begin{itemize}
+\item \texttt{setDevtoolsHook(hook | null)}  register/unregister a global event sink
+\item \texttt{getDevtoolsCounters()}  get a defensive copy of counters
+\item \texttt{resetDevtoolsCounters()}  zero all counters
+\item \texttt{setInstrumentationEnabled(boolean)}  enable counting for expensive instrumentation
+\item \texttt{isInstrumentationEnabled()}  query the flag
+\end{itemize}
+
+And the helper emission functions used across the runtime:
+
+\begin{itemize}
+\item \texttt{emitDevtoolsEvent(event)}  core increment + forward logic
+\item \texttt{emitDomOp(op)} and \texttt{emitAlloc(kind, count?)}  convenience wrappers
+\end{itemize}
+
+The reactivity and scheduling layers re-export these through \texttt{runtime/index.ts} so ``public HRBR'' users can import them.
+
+\subsection{Tiny contract (what you can rely on)}
+
+The devtools module is deliberately small, but it still has a stable contract:
+
+\begin{itemize}
+\item If you install a hook with \texttt{setDevtoolsHook()}, it will receive \emph{every} emitted event.
+\item Counters are best-effort metrics intended for debugging/perf investigation, not correctness.
+\item Expensive counters (DOM ops, allocations) are disabled by default and must be explicitly enabled.
+\item \texttt{getDevtoolsCounters()} returns a copy (so the internal counter object can't be mutated externally).
+\end{itemize}
+
+\section{Event model}
+
+Devtools events are a tagged union \texttt{DevtoolsEvent}:
+
+\begin{itemize}
+\item \texttt{slotWrite}: emitted when a block slot write is attempted
+\item \texttt{scheduleComputation}: emitted when a reactive computation is scheduled
+\item \texttt{flushStart} / \texttt{flushEnd(durationMs)}: emitted by the deterministic scheduler
+\item \texttt{domOp(op)}: emitted by the block runtime around DOM mutations (counted only when instrumentation is enabled)
+\item \texttt{alloc(kind, count?)}: emitted by allocation sites (counted only when instrumentation is enabled)
+\end{itemize}
+
+The idea is that you can build either:
+
+\begin{itemize}
+\item simple counters (the built-in ones), or
+\item richer tooling (log streams, flamegraphs, dashboards) via the hook.
+\end{itemize}
+
+\section{Counters: what is tracked and when}
+
+The internal counters live in a module-local object \texttt{_counters}:
+
+\begin{itemize}
+\item \texttt{slotWrites}
+\item \texttt{scheduledComputations}
+\item \texttt{flushes}
+\item \texttt{flushTimeMs}
+\item \texttt{domOps} (instrumentation gated)
+\item \texttt{allocs} (instrumentation gated)
+\end{itemize}
+
+\subsection{Defensive reads: \texttt{getDevtoolsCounters()}}
+
+\texttt{getDevtoolsCounters()} returns \texttt{\{ ..._counters \}}.
+This is important: tests and users can't mutate internal state by holding onto the object.
+
+The corresponding reset function, \texttt{resetDevtoolsCounters()}, mutates the internal object in-place. That choice keeps object identity stable for any internal references while still providing deterministic test setup.
+
+\subsection{Why DOM ops and allocs are gated}
+
+Counting DOM operations and allocations often requires adding emission calls in hot loops.
+The devtools system separates \emph{event forwarding} from \emph{counter increments}:
+
+\begin{itemize}
+\item Events are always forwarded to the hook.
+\item Counter increments for \texttt{domOp} and \texttt{alloc} only happen when \texttt{_instrumentationEnabled} is true.
+\end{itemize}
+
+This split is implemented directly in \texttt{runtime/devtools.ts}:
+
+\begin{itemize}
+\item \texttt{emitDevtoolsEvent()} always forwards to \texttt{_hook?.(event)}.
+\item Only the \texttt{domOp} and \texttt{alloc} branches check \texttt{_instrumentationEnabled} before touching counters.
+\end{itemize}
+
+\section{Emission: increment + forward}
+
+\texttt{emitDevtoolsEvent(event)} does two things:
+
+\begin{enumerate}
+\item updates counters based on the event type
+\item forwards the event to \texttt{_hook} if present
+\end{enumerate}
+
+In pseudo-code, the key policy is:
+
+\begin{quote}
+\texttt{always forward to hook; only count domOp/alloc when enabled}
+\end{quote}
+
+The convenience wrappers \texttt{emitDomOp()} and \texttt{emitAlloc()} add one more optimization:
+
+\begin{itemize}
+\item if instrumentation is disabled \emph{and no hook is installed}, they return immediately
+\end{itemize}
+
+This prevents needless event objects from being allocated on the hot path.
+
+\subsection{A subtle performance point: "no hook" short-circuit}
+
+Notice the early return:
+
+\begin{quote}
+	exttt{if (!enabled \&\& !hook) return}
+\end{quote}
+
+This means there are three distinct operating modes:
+
+\begin{itemize}
+\item \textbf{Default mode (recommended for production):} no hook; instrumentation disabled. Most hot-path emitters become no-ops.
+\item \textbf{Streaming mode:} hook installed; instrumentation disabled. Events still flow, but counters don't track domOps/allocs.
+\item \textbf{Instrumentation mode:} instrumentation enabled (hook optional). Counters track domOps/allocs.
+\end{itemize}
+
+\section{Where events come from in the runtime}
+
+The core runtime emits events from a few key paths:
+
+\subsection{Blocks: slot writes and DOM operations}
+
+In \texttt{runtime/block.ts}:
+
+\begin{itemize}
+\item Every slot write emits \texttt{\{ type: 'slotWrite', slotKind, slotKey \}}.
+\item Many DOM mutations are annotated with \texttt{emitDomOp('setText')}, \texttt{emitDomOp('setAttribute')}, etc.
+\end{itemize}
+
+This provides a cheap ``what changed'' signal even without full DOM diffing.
+
+\subsubsection{Slot writes: one event per attempted update}
+
+In \texttt{runtime/block.ts}, every slot application includes:
+
+\begin{quote}
+	exttt{emitDevtoolsEvent(\{ type: 'slotWrite', slotKind: slot.kind, slotKey: key \})}
+\end{quote}
+
+This is intentionally emitted even when the runtime later decides to skip a DOM write (for example when values are \texttt{Object.is} equal). That makes slotWrites a measure of "reactive updates attempted" rather than "DOM updates performed".
+
+\subsubsection{DOM operations: a vocabulary of \texttt{domOp} strings}
+
+The block runtime calls \texttt{emitDomOp(...)} around operations like:
+
+\begin{itemize}
+\item \texttt{setText}
+\item \texttt{setAttribute} / \texttt{removeAttribute}
+\item \texttt{setProperty}
+\item \texttt{styleSetProperty} / \texttt{styleRemoveProperty}
+\item \texttt{addEventListener} / \texttt{removeEventListener}
+\end{itemize}
+
+The string payload keeps the event cheap to allocate and flexible to extend.
+
+\subsection{Scheduler: flush timing}
+
+In \texttt{runtime/scheduler.ts}, the flush loop emits:
+
+\begin{itemize}
+\item \texttt{flushStart} at the beginning
+\item \texttt{flushEnd(durationMs)} at the end
+\end{itemize}
+
+This is the basis for simple performance dashboards.
+
+In \texttt{runtime/scheduler.ts}, these events are emitted inside \texttt{flush(...)}:
+
+\begin{itemize}
+\item \texttt{flushStart} at the beginning
+\item \texttt{flushEnd(durationMs)} at the end (duration computed using the scheduler's \texttt{now()} source)
+\end{itemize}
+
+Because the scheduler is designed to be deterministic (queues sorted by lane/priority and stable promotion rules), these timing events are also useful when you want to prove "same inputs produce the same flushing pattern".
+
+\subsection{Signals: scheduled computations}
+
+In \texttt{runtime/signals.ts}, scheduling a non-sync computation emits \texttt{scheduleComputation}.
+The devtools counter is intentionally `how many computations were scheduled`, not `how many ran`.
+
+The payload includes optional \texttt{name} and \texttt{lane} metadata taken from the computation object. That metadata isn't required for semantics, but it makes event streams much more useful in practice (you can group by lane or by effect name when debugging).
+
+\section{Tests-as-spec}
+
+There are two test files that define the intended behavior.
+
+\subsection{\texttt{runtime/\_\_tests\_\_/devtools.test.ts}}
+
+This suite checks two high-level properties:
+
+\begin{itemize}
+\item \textbf{slotWrites are counted} when \texttt{mountBlock()} applies initial values and when \texttt{update()} applies new values.
+\item \textbf{scheduledComputations and flush metrics are counted} when the scheduler runs and when signals schedule work.
+\end{itemize}
+
+In the scheduler portion, the test uses \texttt{createScheduler({ requestFlush: (cb) => cb() })} to make flushing deterministic.
+
+Reading this test as a contract gives you the intended semantics:
+
+\begin{itemize}
+\item Slot writes must be observed during both mount and update.
+\item Scheduler flush events must be emitted even when a custom \texttt{requestFlush} runs synchronously.
+\item Signal scheduling should increment a counter even if the actual effect execution happens immediately (depending on lane/batching).
+\end{itemize}
+
+\subsection{\texttt{runtime/\_\_tests\_\_/instrumentation.test.ts}}
+
+This suite locks in the \emph{gating} behavior:
+
+\begin{itemize}
+\item without instrumentation enabled, \texttt{domOps} stays at 0 even though the runtime emits DOM op events
+\item after calling \texttt{setInstrumentationEnabled(true)}, DOM-related operations increment \texttt{domOps}
+\end{itemize}
+
+This is a very important behavioral line for performance: many hot paths call \texttt{emitDomOp()} all the time, and the test documents that these calls must not inflate counters unless instrumentation is explicitly enabled.
+
+\section{How you might use this in practice}
+
+Two common patterns:
+
+\begin{itemize}
+\item \textbf{Counters dashboard}: poll \texttt{getDevtoolsCounters()} and display deltas per second.
+\item \textbf{Event stream}: set a hook via \texttt{setDevtoolsHook((e) => \{ ... \})} and record or filter events.
+\end{itemize}
+
+A practical rule of thumb:
+
+\begin{itemize}
+\item enable instrumentation only in debug builds or perf investigations
+\item leave it off in production unless you have a carefully designed sampling strategy
+\end{itemize}
+
+\subsection{A simple pattern: hook + manual aggregation}
+
+If you want detailed breakdowns without touching the built-in counters, install a hook and aggregate in userland:
+
+\begin{itemize}
+\item Count per-domain domOps (e.g. \texttt{setText} vs \texttt{setAttribute})
+\item Track flush durations into histograms
+\item Group schedule events by lane
+\end{itemize}
+
+This works even when instrumentation is disabled, because the hook still receives events.
+
+\section{Online resources}
+
+\begin{itemize}
+\item Performance measurement pitfalls and best practices (timers, main-thread work, long tasks):\\
+\href{https://web.dev/articles/rail}{web.dev: RAIL performance model},\\
+\href{https://developer.mozilla.org/en-US/docs/Web/API/Performance/now}{MDN: \texttt{performance.now()}}.
+
+\item Observability patterns for UI runtimes (profilers, tracing, counters):\\
+\href{https://opentelemetry.io/docs/what-is-opentelemetry/}{OpenTelemetry: overview}.
+
+\item Source maps and error locations are why devtools often care about source positions:\\
+\href{https://sourcemaps.info/spec.html}{Source Map Revision 3 Proposal}.
+\end{itemize}

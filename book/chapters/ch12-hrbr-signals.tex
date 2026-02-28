@@ -1,0 +1,382 @@
+\chapter{HRBR Signals: a Small Deterministic Reactive Graph}
+
+Part III begins the HRBR runtime. Unlike the VDOM runtime (\texttt{src/*}), HRBR is a "compiled fast path" whose job is to:
+
+\begin{itemize}
+  \item track fine-grained dependencies (signals)
+  \item schedule updates deterministically (scheduler lanes)
+  \item update DOM directly in blocks (later chapters)
+\end{itemize}
+
+This chapter focuses on the reactive graph implementation in \texttt{runtime/signals.ts}.
+
+\section{Public API: the contract we have to satisfy}
+
+The file \texttt{runtime/index.ts} exports these symbols from \texttt{runtime/signals.ts}:
+
+\begin{itemize}
+  \item \texttt{createSignal(initial) -> [read, write]}
+  \item \texttt{createEffect(fn, options?) -> \{ dispose() \}}
+  \item \texttt{createMemo(fn, opts?) -> readMemo}
+  \item \texttt{batch(fn) -> result}
+  \item \texttt{untrack(fn) -> result}
+\end{itemize}
+
+The executable specification lives in:
+
+\begin{itemize}
+  \item \texttt{runtime/__tests__/signals.test.ts}
+  \item \texttt{runtime/__tests__/signals.determinism.test.ts}
+  \item \texttt{runtime/__tests__/signals.fuzz.test.ts}
+\end{itemize}
+
+\section{Mental model}
+
+You can read \texttt{runtime/signals.ts} as a deliberately small version of a Solid-like graph:
+
+\begin{itemize}
+  \item A \textbf{signal} is a node with a current value and a list of observers.
+  \item An \textbf{effect} is a computation that re-runs when its dependencies (signals/memos) change.
+  \item A \textbf{memo} is a computation that behaves like a derived signal.
+\end{itemize}
+
+Two design constraints keep showing up in the implementation and tests:
+
+\begin{enumerate}
+  \item \textbf{Determinism}: observer notification runs in stable creation order.
+  \item \textbf{Leak-safety}: disposing a computation must detach it from all sources.
+\end{enumerate}
+
+There’s a third, more pragmatic constraint you’ll see in the code:
+
+\begin{itemize}
+  \item \textbf{Low ceremony}: everything is implemented with plain objects and a few intrusive linked lists.
+\end{itemize}
+
+This is not a ``fully-featured'' reactive system; it’s a compact kernel meant to be embedded into compiled blocks.
+
+\section{Core data structures: intrusive lists for stable order}
+
+In \texttt{runtime/signals.ts} you will see a set of internal types:
+
+\begin{itemize}
+  \item \texttt{SignalNode<T>} holds \texttt{value} and an intrusive doubly-linked list of observers: \texttt{observersHead/observersTail}.
+  \item \texttt{Computation} represents an effect or memo computation.
+  \item \texttt{ObserverLink} is the node stored in the signal's observer list.
+  \item \texttt{SourceLink} is a reverse edge stored on the computation so it can detach from sources on re-run/dispose.
+\end{itemize}
+
+The key technique: when a computation reads a signal, \texttt{addObserver(node, currentComputation)} inserts the computation into the signal's observer list \emph{sorted by computation id}.
+
+Computation ids come from a global counter:
+
+\begin{verbatim}
+let nextId = 0
+
+comp._id = nextId++
+\end{verbatim}
+
+Because ids are monotonically increasing, the observer list is stable and deterministic by construction.
+
+\subsection{Why two linked lists (observer list + source list)?}
+
+Each dependency edge is represented twice:
+
+\begin{itemize}
+  \item a forward link in the signal’s \texttt{observersHead/observersTail} list (who should be scheduled when the signal changes)
+  \item a reverse link in the computation’s \texttt{sourcesHead/sourcesTail} list (what should be detached before re-run/dispose)
+\end{itemize}
+
+This dual representation is what makes ``conditional dependencies'' safe: each run starts by detaching previous sources and then re-registering based on the reads that actually occur.
+
+\section{Dependency capture: \texttt{currentComputation}}
+
+Reactive systems need a way to know "who is currently running".
+
+This file uses a single global pointer:
+
+\begin{verbatim}
+let currentComputation: Computation | null
+\end{verbatim}
+
+\subsection{Signal reads}
+
+In \texttt{createSignal()}, the reader is:
+
+\begin{itemize}
+  \item return \texttt{node.value}
+  \item if \texttt{currentComputation != null}, also call \texttt{addObserver(node, currentComputation)}
+\end{itemize}
+
+That means dependencies are collected by running the effect/memo function and letting reads "register".
+
+\paragraph{No dedupe (by design)}
+
+You may notice \texttt{addObserver()} explicitly does not deduplicate observers.
+This is safe because every run begins with \texttt{unlinkAllSources(comp)}, which removes all prior edges.
+So duplicates can only occur within a single run, and a well-behaved effect/memo typically reads each signal at most once.
+
+\subsection{\texttt{untrack(fn)}}
+
+\texttt{untrack(fn)} temporarily sets \texttt{currentComputation = null} while executing \texttt{fn}.
+
+Spec (\texttt{runtime/__tests__/signals.test.ts}):
+
+\begin{itemize}
+  \item \texttt{untrack prevents dependency registration}
+\end{itemize}
+
+In other words: you can read a signal without subscribing.
+
+\section{Writes: schedule observers, preserve order}
+
+In \texttt{createSignal()}, the writer:
+
+\begin{enumerate}
+  \item computes \texttt{nextValue} (supports "functional set" style)
+  \item bails out if \texttt{Object.is(nextValue, node.value)}
+  \item updates \texttt{node.value}
+  \item walks the observer list and schedules each observer
+\end{enumerate}
+
+There’s a subtle but important line in the loop:
+
+\begin{quote}
+Capture \texttt{next} first, because running an observer can unsubscribe/resubscribe and mutate the list.
+\end{quote}
+
+In code (comments preserved):
+
+\begin{verbatim}
+const next = cur.next
+scheduleComputation(cur.comp)
+cur = next
+\end{verbatim}
+
+This ensures we traverse the original linked list in deterministic order.
+
+\paragraph{What gets scheduled?}
+
+When a signal is written, Relax schedules the dependent computations.
+Scheduling does not necessarily mean ``run immediately'' (see batching and lanes), but it always preserves the \emph{creation order} contract.
+
+\section{Effects: cleanup, re-run, disposal}
+
+\subsection{Cleanup semantics}
+
+Effects may return an optional cleanup function:
+
+\begin{verbatim}
+createEffect(() => {
+  ...
+  return () => cleanup()
+})
+\end{verbatim}
+
+The runtime guarantees cleanup runs:
+
+\begin{itemize}
+  \item before an effect re-runs
+  \item when the effect is disposed
+\end{itemize}
+
+Spec: \texttt{effect cleanup runs before re-run and on dispose}.
+
+In code, the cleanup is stored on the computation object as \texttt{comp.cleanup} and executed in a try/finally block both in \texttt{run()} and \texttt{dispose()}.
+
+\subsection{Detaching and resubscribing: \texttt{unlinkAllSources(comp)}}
+
+Before each run, the runtime calls \texttt{unlinkAllSources(comp)}.
+That function walks the computation's \texttt{sourcesHead} list and unlinks each corresponding \texttt{ObserverLink} from the signal's observer list.
+
+This gives the common reactive invariant:
+
+\begin{quote}
+An effect's dependencies are exactly the signals it read during its last run.
+\end{quote}
+
+It also enables conditional dependencies (read signal A in one run, read signal B in another) without leaking observers.
+
+\paragraph{Leak-safety note}
+
+	exttt{unlinkAllSources()} also deliberately nulls out fields on the link objects (with \texttt{@ts-expect-error} comments).
+That’s not required for correctness, but it makes accidental retention less likely in this prototype implementation.
+
+\subsection{Dispose}
+
+Disposing an effect sets \texttt{_disposed} and detaches from all sources.
+
+Specs:
+
+\begin{itemize}
+  \item \texttt{disposed effects fully detach: further writes do not schedule work}
+  \item leak-ish checks in \texttt{runtime/__tests__/signals.determinism.test.ts}
+\end{itemize}
+
+\section{Re-entrancy: scheduling while running}
+
+In \texttt{scheduleComputation(computation)} there is an explicit re-entrancy rule:
+
+\begin{itemize}
+  \item if the computation is \texttt{_running}, do not recursively call \texttt{run()}
+  \item instead, add it to a \texttt{pending} \texttt{Set}
+\end{itemize}
+
+Then \texttt{flushPendingIfNeeded()} runs pending computations after the current run unwinds.
+
+\subsection{Two reasons computations are delayed}
+
+The same \texttt{pending} set is used for two distinct delay cases:
+
+\begin{itemize}
+  \item \textbf{re-entrancy}: a computation schedules itself while it’s already running
+  \item \textbf{batching}: writes should not trigger intermediate runs until the batch boundary
+\end{itemize}
+
+Both cases end up in the same deterministic flush code path.
+
+Spec: \texttt{re-entrancy: effect that schedules itself via writes does not recurse infinitely}.
+
+The test constructs an effect that reads a signal and writes it again until a fixed point is reached.
+The expected (deterministic) log is:
+
+\begin{verbatim}
+[0, 1, 2, 3]
+\end{verbatim}
+
+\section{Batching: a flush boundary}
+
+\texttt{batch(fn)} increments \texttt{isBatching} and makes writes collect work into \texttt{pending}.
+When the outer-most batch finishes, it flushes the pending set sorted by computation id.
+
+Specs (\texttt{runtime/__tests__/signals.test.ts}):
+
+\begin{itemize}
+  \item \texttt{batch groups multiple writes into a single effect re-run}
+  \item \texttt{batch() is a flush boundary: nested batches still only produce one re-run after outer finishes}
+  \item \texttt{batch() returns the callback result and preserves deterministic effect order after flush}
+\end{itemize}
+
+This is the first place you see HRBR's theme: \emph{deterministic scheduling is part of the user-facing contract}.
+
+\paragraph{Implementation detail: deterministic flush}
+
+At batch end, pending computations are flushed by sorting on \texttt{_id}:
+
+\begin{verbatim}
+Array.from(pending).sort((a,b) => a._id - b._id)
+\end{verbatim}
+
+This is why the tests can assert stable order like \texttt{['a:2', 'b:2']}.
+
+\section{Memos: derived signals with equality}
+
+\texttt{createMemo(fn, opts?)} creates a computation whose output is stored in a \texttt{SignalNode<T>}.
+
+Important details:
+
+\begin{itemize}
+  \item the memo lazily computes on first read (\texttt{if (!hasValue) comp.run()})
+  \item it supports an equality function \texttt{opts.equals} (defaults to \texttt{Object.is})
+  \item it notifies observers only when the memo value actually changes
+\end{itemize}
+
+Spec: \texttt{createMemo computes from signals and updates dependents}.
+
+\paragraph{Memo invalidation path}
+
+When the memo value changes, it walks \texttt{node.observersHead} and schedules each observer computation.
+So effects that read a memo are notified exactly like effects that read a base signal.
+
+\section{Lanes: effects can be scheduled via the runtime scheduler}
+
+\texttt{createEffect} accepts options:\\
+\texttt{\{ lane?: Lane, budgetMs?: number \}}.
+
+If \texttt{lane === 'sync'} (the default), the initial run executes immediately.
+
+If \texttt{lane !== 'sync'}, \texttt{createEffect} creates a scheduler via \texttt{createScheduler()} (from \texttt{runtime/scheduler.ts}) and schedules runs into that lane.
+
+\subsection{How non-sync lanes are tested}
+
+In \texttt{runtime/__tests__/signals.test.ts}, the tests override \texttt{globalThis.setTimeout} to capture scheduled flush callbacks into an array.
+This makes scheduler-driven effects deterministic in unit tests:
+
+\begin{itemize}
+  \item createEffect({ lane: 'default' }) does \emph{not} run immediately
+  \item the test manually drains the flush queue to trigger the run
+\end{itemize}
+
+Specs:
+
+\begin{itemize}
+  \item \texttt{createEffect({ lane }) schedules initial run (non-sync)}
+  \item \texttt{createEffect forwards budgetMs to scheduler.schedule}
+\end{itemize}
+
+The tests intercept \texttt{setTimeout} to make scheduler flushing deterministic in unit tests.
+
+\section{Determinism tests and fuzz tests}
+
+Determinism is explicitly tested at three levels:
+
+\begin{itemize}
+  \item Unit test: \texttt{effects run deterministically (creation order)}
+  \item Determinism suite: build a random-but-seeded graph and compare logs across fresh instances (\texttt{signals.determinism.test.ts})
+  \item Property/fuzz: randomly generate operations (set/batch/dispose) and ensure identical logs for the same seed (\texttt{signals.fuzz.test.ts})
+\end{itemize}
+
+These tests are the reason the implementation invests in sorted observer lists and stable flush ordering.
+
+\section{Walking the tests: what they prove}
+
+This chapter is easiest to internalize by reading the tests as executable requirements.
+
+\subsection{Core semantics (\texttt{runtime/__tests__/signals.test.ts})}
+
+\begin{description}
+  \item[tracks dependencies and re-runs] Proves that reads register dependencies and writes schedule effects. Also proves the \texttt{Object.is} bail-out on repeated values.
+  \item[untrack prevents dependency registration] Proves that \texttt{untrack} temporarily disables dependency capture.
+  \item[batch groups writes] Proves that multiple writes inside a batch yield a single re-run.
+  \item[nested batch is a flush boundary] Proves \texttt{isBatching} is a counter and only the outermost batch flushes.
+  \item[deterministic effect order] Proves flush order is creation order (based on \texttt{_id}).
+  \item[cleanup runs before re-run and on dispose] Proves cleanup semantics for both re-run and disposal.
+  \item[disposed effects fully detach] Proves \texttt{unlinkAllSources} works: disposed computations aren’t scheduled by later writes.
+  \item[re-entrancy convergence] Proves the pending-set mechanism prevents infinite recursion and produces a deterministic sequence.
+  \item[lane scheduling + budgetMs forwarding] Proves non-sync effects are scheduled through the runtime scheduler and that \texttt{budgetMs} is passed through.
+  \item[memos] Proves memo recomputation + dependent effect notification.
+\end{description}
+
+\subsection{Determinism suite (\texttt{signals.determinism.test.ts})}
+
+This suite tests the strongest property: \emph{same seed + same operation sequence yields the same log across fresh runtime instances}.
+
+It also includes a practical leak-ish check: after disposing effect 0, it mutates signals repeatedly and asserts there are no new log entries starting with \texttt{e0:}.
+
+\subsection{Fuzz/property tests (\texttt{signals.fuzz.test.ts})}
+
+The fuzz suite generates nested batches, writes, and disposals.
+The primary assertion is determinism (two independent runs produce identical logs).
+
+It also has a smoke property about disposal effectiveness: if effects were disposed, the final mass-write should not trigger an absurd number of logs (catching obvious detach bugs).
+
+\section{Online resources}
+
+These systems are common in UI runtimes; the references below help connect the dots without assuming the exact same API surface.
+
+\begin{itemize}
+  \item SolidJS (conceptual baseline): \href{https://www.solidjs.com/docs/latest#reactivity}{Fine-grained reactivity}
+  \item Preact Signals (conceptual): \href{https://preactjs.com/guide/v10/signals/}{Signals and effects}
+  \item React (contrast): \href{https://react.dev/learn/render-and-commit}{Render/commit model vs. fine-grained graphs}
+  \item A good ``reactivity under the hood'' talk: \href{https://www.youtube.com/watch?v=2H5zYj1fM9U}{SolidJS reactivity deep dive (video)}
+  \item Linked list background (for intrusive lists): \href{https://en.wikipedia.org/wiki/Linked_list}{Linked list}
+\end{itemize}
+
+\section{Takeaways}
+
+\begin{itemize}
+  \item Signals store intrusive observer lists, sorted by computation creation id.
+  \item Effects detach and re-subscribe each run, enabling conditional dependencies safely.
+  \item Batching and re-entrancy are implemented with a pending set plus deterministic flush ordering.
+  \item Lanes integrate with the scheduler so work can be delayed and budgeted.
+\end{itemize}

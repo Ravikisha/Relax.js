@@ -1,0 +1,218 @@
+\chapter{Attributes, properties, classes, and styles (\texttt{src/attributes.ts})}
+
+This chapter is the ``DOM edge'' chapter.
+Mounting (Chapter~5) can create elements in a few lines, but \emph{correctly configuring those elements} is where UI libraries accumulate complexity.
+
+Relax keeps its attribute system intentionally small: a handful of rules, continuously validated by broad jsdom test coverage.
+
+\section{Why this chapter matters}
+Browsers expose multiple mechanisms that look similar but behave differently:
+
+\begin{enumerate}
+  \item \textbf{DOM attributes}: strings stored in the elements attribute map (example: \texttt{el.getAttribute('id')}).
+  \item \textbf{DOM properties}: live fields on the element object (example: \texttt{(input as any).value}).
+  \item \textbf{Special cased fields}: \texttt{className} and \texttt{style} have their own APIs and behavior.
+\end{enumerate}
+
+If you set the wrong one, you can get subtle bugs. For instance, setting \texttt{value} as an attribute on \texttt{<input>} wont behave like setting the property in many scenarios.
+
+Relaxs pragmatic rule is:
+
+\begin{quote}
+  	extbf{Rule:} if the name starts with \texttt{data-}, set an \emph{attribute}; otherwise set a \emph{property}.
+\end{quote}
+
+You can see this rule directly in \texttt{setAttribute()} in \texttt{src/attributes.ts}.
+
+\section{Contract: \texttt{setAttributes(el, attrs)}}
+The top-level API is:
+
+\begin{quote}
+	exttt{setAttributes(el: HTMLElement, attrs: ElementVNodeProps)}
+\end{quote}
+
+This function is used during mount (Chapter~5) and also during patches when props change (Chapter~8).
+
+\subsection*{Inputs}
+\begin{itemize}
+  \item \texttt{el}: a real DOM element.
+  \item \texttt{attrs}: Relaxs element props object (roughly: \texttt{id}, \texttt{class}, \texttt{style}, and anything else).
+\end{itemize}
+
+\subsection*{Behavior}
+	exttt{setAttributes()} applies attributes in three phases:
+
+\begin{enumerate}
+  \item split out \texttt{class} and \texttt{style}
+  \item delete \texttt{key} (VDOM identity only)
+  \item for each remaining entry: \texttt{setAttribute(el, name, value)}
+\end{enumerate}
+
+\subsection{Important invariant: \texttt{key} is not a DOM attribute}
+Relax uses \texttt{key} for diffing lists and stabilizing identity. It should never appear on the real DOM.
+
+To enforce this, key removal happens in two places:
+
+\begin{itemize}
+  \item \texttt{src/attributes.ts}: deletes \texttt{otherAttrs.key}
+  \item \texttt{src/utils/props.ts}: deletes \texttt{props.key} when extracting props/events
+\end{itemize}
+
+The duplication is intentional: it keeps each layer correct even if used in isolation.
+
+\section{Class handling: replacement semantics}
+Relax exposes \texttt{class} as either:
+
+\begin{itemize}
+  \item a string (example: \texttt{"foo bar"})
+  \item an array of class tokens (example: \texttt{["foo", "bar"]})
+\end{itemize}
+
+Implementation detail (\texttt{setClass()} in \texttt{src/attributes.ts}):
+
+\begin{itemize}
+  \item it clears \texttt{el.className = ''}
+  \item if \texttt{className} is a string, it assigns \texttt{el.className = className}
+  \item if its an array, it does \texttt{el.classList.add(...className)}
+\end{itemize}
+
+This makes class setting \textbf{replacement based}, not incremental diff. That's a conscious simplicity trade-off.
+
+\subsection*{What the tests prove}
+The first three tests in \texttt{src/__tests__/attributes.test.ts} provide the contract:
+
+\begin{itemize}
+  \item \texttt{setting a class from a string}
+  \item \texttt{setting a class from an array}
+  \item \texttt{updating the class} (proves replacement, not accumulation)
+\end{itemize}
+
+\section{Style handling: direct assignment}
+Relaxs \texttt{style} prop is a plain object:
+
+\begin{quote}
+	exttt{\{ style: \{ color: 'red', backgroundColor: 'blue' \} \}}
+\end{quote}
+
+For each \texttt{[name, value]} pair, \texttt{setAttributes()} calls \texttt{setStyle(el, name, value)}, which does a direct assignment:
+
+\begin{quote}
+	exttt{(el.style as any)[name] = value}
+\end{quote}
+
+Removal goes through \texttt{removeStyle()} which sets the field to \texttt{null}.
+
+One subtle consequence: \texttt{setAttributes()} does not diff old vs new style objects. If you call it twice, the second call only assigns the fields present in the second objectit does \emph{not} remove fields that were present previously unless you explicitly remove them.
+
+\subsection*{What the tests prove}
+	exttt{setting styles} and \texttt{updating styles} assert that style fields are applied by assignment and can coexist across multiple calls.
+
+\section{The core rule: \texttt{setAttribute(el, name, value)}}
+The function \texttt{setAttribute()} is the heart of the module:
+
+\begin{enumerate}
+  \item If \texttt{value == null} \textrightarrow{} call \texttt{removeAttribute(el, name)}.
+  \item Else if \texttt{name.startsWith('data-')} \textrightarrow{} call \texttt{el.setAttribute(name, String(value))}.
+  \item Else \textrightarrow{} write as a property: \texttt{(el as any)[name] = value}.
+\end{enumerate}
+
+This is where Relax chooses ``property first'' semantics. The benefit is correctness for form controls and boolean-ish fields.
+
+\subsection*{What the tests prove: the matrix}
+	exttt{src/__tests__/attributes.test.ts} is a deliberately wide matrix of real DOM behavior.
+
+Highlights:
+
+\begin{itemize}
+  \item \textbf{Generic element properties:}
+    	exttt{hidden}, \texttt{tabIndex} (including \texttt{tabIndex} removal resulting in \texttt{-1}).
+  \item \textbf{Input type=text properties:}
+    	exttt{value}, \texttt{placeholder}, \texttt{disabled}, \texttt{minLength}, \texttt{size}, and more.
+  \item \textbf{Checkbox / radio:}
+    	exttt{checked} is a property and removal resets to \texttt{false}.
+  \item \textbf{Select:}
+    setting \texttt{value} to a missing option results in \texttt{''}.
+  \item \textbf{Anchors/buttons/spans:}
+    properties like \texttt{href}, \texttt{disabled}, and \texttt{textContent} behave like live fields.
+\end{itemize}
+
+This test suite is doing an important job: it prevents ``helpful refactors'' from changing semantics that look equivalent but arent.
+
+\section{Removal: \texttt{removeAttribute(el, name)} and jsdom quirks}
+Removing an attribute sounds simple but isnt.
+
+Relax tries to clear both levels:
+
+\begin{enumerate}
+  \item it attempts to set the property to \texttt{null} inside a \texttt{try/catch}
+  \item it always calls \texttt{el.removeAttribute(name)}
+\end{enumerate}
+
+The \texttt{try/catch} exists because some properties throw when assigned \texttt{null} (depending on element type and environment).
+When that happens, Relax logs a warning:
+
+\begin{quote}
+	exttt{Failed to set "<name>" to null on <TAG>}
+\end{quote}
+
+That warning is not a test failure; its a visibility aid for cases where property clearing is not permitted.
+
+\section{Props vs events: \texttt{extractPropsAndEvents} (\texttt{src/utils/props.ts})}
+Relax stores event handlers under \texttt{props.on}. Before mounting or constructing a component instance, it needs to split the two.
+
+	exttt{extractPropsAndEvents(vdom)} does exactly that:
+
+\begin{itemize}
+  \item \texttt{events}: \texttt{vdom.props.on} (defaulting to \texttt{\{\}})
+  \item \texttt{props}: everything else (and it deletes \texttt{key})
+\end{itemize}
+
+This split is used in two places youve already seen:
+
+\begin{itemize}
+  \item element mounting: \texttt{addEventListeners(events, el, hostComponent)} and \texttt{setAttributes(el, props)}
+  \item component mounting: \texttt{new Component(props, events, hostComponent)}
+\end{itemize}
+
+\subsection*{What the tests prove}
+	exttt{src/__tests__/props.test.ts} is intentionally small and crisp:
+
+\begin{itemize}
+  \item empty input yields empty outputs
+  \item \texttt{key} is ignored
+  \item non-event fields remain in \texttt{props}
+  \item \texttt{on: \{...\}} becomes \texttt{events}
+\end{itemize}
+
+Treat these as invariants: if you ever change the VNode prop shape, these tests are the first alarm bell.
+
+\section{Design notes (trade-offs)}
+Relaxs attribute model is intentionally simple:
+
+\begin{itemize}
+  \item it mostly treats prop names as property names
+  \item it special-cases only \texttt{data-*}, \texttt{class}, and \texttt{style}
+  \item it relies on a test matrix to ensure that simplicity doesnt break real DOM behavior
+\end{itemize}
+
+If you were extending Relax, likely next steps would be:
+
+\begin{itemize}
+  \item richer SVG support (namespaces and attribute/property differences)
+  \item style diff/removal semantics (tracking old style object)
+  \item explicit boolean attribute reflection rules (attribute presence vs property value)
+\end{itemize}
+
+\section{Mini-exercises}
+\begin{enumerate}
+  \item Add a new case to the matrix in \texttt{src/__tests__/attributes.test.ts} for \texttt{<textarea>} value behavior.
+  \item Add a test that asserts \texttt{setAttributes(el, \{ key: 'x', id: 'y' \})} does not create a \texttt{key} attribute in the DOM.
+\end{enumerate}
+
+\section{Online resources}
+\begin{itemize}
+  \item Attributes vs. properties (MDN, conceptual background): \href{https://developer.mozilla.org/en-US/docs/Web/API/Element}{https://developer.mozilla.org/en-US/docs/Web/API/Element}
+  \item \texttt{HTMLElement.dataset} and \texttt{data-*} attributes (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/dataset}{https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/dataset}
+  \item Form control properties like \texttt{value} and \texttt{checked} (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/HTMLInputElement}{https://developer.mozilla.org/en-US/docs/Web/API/HTMLInputElement}
+  \item CSSOM style API (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/CSSStyleDeclaration}{https://developer.mozilla.org/en-US/docs/Web/API/CSSStyleDeclaration}
+\end{itemize}
