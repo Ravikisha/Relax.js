@@ -229,13 +229,26 @@ Groups multiple nodes without creating a parent DOM element.
 The HRBR runtime work starts with fine-grained reactivity primitives under `runtime/`.
 
 ```ts
-import { batch, createEffect, createSignal, untrack } from './runtime'
+import { batch, createEffect, createMemo, createSignal, untrack } from './runtime'
 
 const [count, setCount] = createSignal(0)
 
 const effect = createEffect(() => {
   console.log('count =', count())
 })
+
+const doubled = createMemo(() => count() * 2)
+createEffect(() => {
+  console.log('doubled =', doubled())
+})
+
+// Optionally schedule effects through the deterministic scheduler
+createEffect(
+  () => {
+    console.log('scheduled doubled =', doubled())
+  },
+  { lane: 'default', budgetMs: 5, name: 'log-doubled' }
+)
 
 batch(() => {
   setCount(1)
@@ -247,13 +260,26 @@ untrack(() => count())
 effect.dispose()
 ```
 
-Tests live in `runtime/__tests__/signals.test.ts`.
+Notes:
+- `dispose()` fully detaches the effect from all tracked signals/memos, so later writes won't reschedule it.
+- If an effect writes to a signal it reads, it won't recursively re-enter; it will schedule another run after the current one unwinds.
+
+Tests live in `runtime/__tests__/signals.test.ts`. Property/fuzz coverage lives in `runtime/__tests__/signals.fuzz.test.ts` (seeded PRNG helper: `runtime/__tests__/prng.ts`). Determinism/leak-oriented coverage lives in `runtime/__tests__/signals.determinism.test.ts`.
 
 ---
 
 ## HRBR Runtime (Phase 2): Scheduler
 
 Phase 2 adds a small deterministic scheduler to support time-sliced work.
+
+Determinism rules (current):
+
+- Across lanes: tasks run by lane priority: `sync > input > default > transition > idle`.
+- Within a lane: tasks are ordered by `(deadline, timestamp, id)`.
+- Starvation prevention: if a lane's **head** task waits longer than the aging threshold, exactly **one** head
+  task is promoted one step toward higher priority before picking the next task.
+- Deadlines: a task may be scheduled with an explicit absolute `deadline` (in `now()` units). When the head
+  task in a low-priority lane is **overdue**, it is eligible for promotion even if it hasn't aged long enough.
 
 ```ts
 import { createScheduler } from './runtime'
@@ -267,11 +293,39 @@ scheduler.schedule('input', () => {
 
 // Run work until a budget is exhausted.
 scheduler.flush({ budgetMs: 2 })
+
+// Budget helpers
+import { withBudget, setFrameBudget } from './runtime'
+setFrameBudget(5)
+withBudget(2, () => {
+  // do expensive user work...
+})
+
+// Browser flush strategies
+import { createBrowserScheduler } from './runtime'
+
+const browserScheduler = createBrowserScheduler({
+  strategy: 'messageChannel', // 'timeout' | 'messageChannel' | 'raf'
+  defaultBudgetMs: 5,
+})
 ```
 
 Tests live in `runtime/__tests__/scheduler.test.ts` and a small usage example is in `examples/scheduler/basic.ts`.
 
 ---
+
+## HRBR Runtime (Phase 3): Compiled blocks (template + slots)
+
+Phase 3 mounts a compiled `BlockDef` (static HTML + a list of dynamic slots) and updates DOM nodes directly.
+
+Slot semantics (current):
+
+- `event` slots: handlers are bound once per node and updates swap the handler without leaking listeners.
+- Boolean attributes: treated as present/absent (e.g. `disabled={true}` sets the attribute, `false`/`null` removes it).
+- Input props: `value` and `checked` are applied via DOM properties for correct control behavior.
+- SVG namespaces: supports `xlink:*` attributes using the xlink namespace.
+
+Tests live in `runtime/__tests__/block.test.ts`.
 
 ## HRBR Compiler (Babel JSX transform)
 

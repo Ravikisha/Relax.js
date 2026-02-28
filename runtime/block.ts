@@ -2,7 +2,7 @@ import { assert } from '../src/utils/assert'
 import { batch, createEffect } from './signals'
 import { createScheduler, type Lane } from './scheduler'
 
-export type BlockSlotKind = 'text' | 'attr'
+export type BlockSlotKind = 'text' | 'attr' | 'prop' | 'class' | 'style' | 'event'
 
 export type TextSlot = {
   kind: 'text'
@@ -36,7 +36,15 @@ export type StyleSlot = {
   path: number[]
 }
 
-export type BlockSlot = TextSlot | AttrSlot | PropSlot | ClassSlot | StyleSlot
+export type EventSlot = {
+  kind: 'event'
+  /** Path from the template root to an Element */
+  path: number[]
+  /** DOM event name, e.g. 'click' */
+  name: string
+}
+
+export type BlockSlot = TextSlot | AttrSlot | PropSlot | ClassSlot | StyleSlot | EventSlot
 
 export type BlockDef = {
   templateHTML: string
@@ -59,6 +67,81 @@ export type MountedBlock = {
   slotNodes: Record<string, Node>
   update(values: Record<string, unknown>): void
   destroy(): void
+}
+
+function isSvgElement(el: Element): boolean {
+  // SVGElement may not exist in all runtimes, so we use namespaceURI.
+  return el.namespaceURI === 'http://www.w3.org/2000/svg'
+}
+
+function setMaybeNamespacedAttribute(el: Element, name: string, value: string) {
+  // Minimal SVG correctness: use xlink namespace for xlink:* attrs if present.
+  if (isSvgElement(el) && name.startsWith('xlink:')) {
+    el.setAttributeNS('http://www.w3.org/1999/xlink', name, value)
+  } else {
+    el.setAttribute(name, value)
+  }
+}
+
+function removeMaybeNamespacedAttribute(el: Element, name: string) {
+  if (isSvgElement(el) && name.startsWith('xlink:')) {
+  el.removeAttributeNS('http://www.w3.org/1999/xlink', name.slice('xlink:'.length))
+  } else {
+    el.removeAttribute(name)
+  }
+}
+
+function isBooleanishAttribute(name: string): boolean {
+  // A small safe subset; can be expanded later.
+  return (
+    name === 'disabled' ||
+    name === 'checked' ||
+    name === 'selected' ||
+    name === 'readonly' ||
+    name === 'readOnly' ||
+    name === 'multiple' ||
+    name === 'hidden' ||
+    name === 'required'
+  )
+}
+
+function normalizeBooleanAttrName(name: string): string {
+  // HTML attributes are case-insensitive but DOM uses lowercase.
+  if (name === 'readOnly') return 'readonly'
+  return name.toLowerCase()
+}
+
+function setAttr(el: Element, name: string, next: unknown) {
+  if (next == null || next === false) {
+    removeMaybeNamespacedAttribute(el, normalizeBooleanAttrName(name))
+    return
+  }
+
+  if (isBooleanishAttribute(name)) {
+    // Boolean attributes are present/absent.
+    setMaybeNamespacedAttribute(el, normalizeBooleanAttrName(name), '')
+    return
+  }
+
+  setMaybeNamespacedAttribute(el, name, String(next))
+}
+
+function setProp(el: any, name: string, next: unknown) {
+  // Input correctness: value/checked should map to properties.
+  if (name === 'value') {
+    el.value = next == null ? '' : String(next)
+    return
+  }
+  if (name === 'checked') {
+    el.checked = Boolean(next)
+    return
+  }
+  el[name] = next
+}
+
+type ListenerRecord = {
+  type: string
+  handler: EventListener
 }
 
 function parseTemplate(templateHTML: string): Element {
@@ -88,6 +171,8 @@ export function mountBlock(def: BlockDef, host: Element, initialValues: Record<s
     slotNodes[name] = node
   }
 
+  const listenersByKey: Record<string, ListenerRecord | undefined> = Object.create(null)
+
   const block: MountedBlock = {
     host,
     root: instanceRoot,
@@ -110,18 +195,14 @@ export function mountBlock(def: BlockDef, host: Element, initialValues: Record<s
           case 'attr': {
             assert(node.nodeType === Node.ELEMENT_NODE, `[hrbr/block] slot '${key}' expected an Element node`)
             const el = node as Element
-            if (next == null || next === false) {
-              el.removeAttribute(slot.name)
-            } else {
-              el.setAttribute(slot.name, String(next))
-            }
+            setAttr(el, slot.name, next)
             break
           }
 
           case 'prop': {
             assert(node.nodeType === Node.ELEMENT_NODE, `[hrbr/block] slot '${key}' expected an Element node`)
             const el = node as any
-            el[slot.name] = next
+            setProp(el, slot.name, next)
             break
           }
 
@@ -159,10 +240,39 @@ export function mountBlock(def: BlockDef, host: Element, initialValues: Record<s
             }
             break
           }
+
+          case 'event': {
+            assert(node.nodeType === Node.ELEMENT_NODE, `[hrbr/block] slot '${key}' expected an Element node`)
+            const el = node as Element
+
+            const prev = listenersByKey[key]
+            if (prev) {
+              el.removeEventListener(prev.type, prev.handler)
+              listenersByKey[key] = undefined
+            }
+
+            if (typeof next !== 'function') {
+              break
+            }
+
+            const handler: EventListener = (ev) => (next as any)(ev)
+            el.addEventListener(slot.name, handler)
+            listenersByKey[key] = { type: slot.name, handler }
+            break
+          }
         }
       }
     },
     destroy() {
+      for (const [key, rec] of Object.entries(listenersByKey)) {
+        if (!rec) continue
+        const slot = def.slots[key]
+        if (!slot || slot.kind !== 'event') continue
+        const node = slotNodes[key]
+        if (node && node.nodeType === Node.ELEMENT_NODE) {
+          ;(node as Element).removeEventListener(rec.type, rec.handler)
+        }
+      }
       instanceRoot.remove()
     },
   }

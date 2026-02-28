@@ -1,10 +1,10 @@
 import { batch, createEffect } from './signals'
 import { createScheduler, type Lane } from './scheduler'
-import { reconcileChildren, type ReconcileNode } from './reconciler'
+import { reconcileChildren, type ReconcileNode, type ReconcileItem } from './reconciler'
 
 export type FallbackRenderResult = {
 	/** Direct children specs to reconcile into the host */
-	children: ReconcileNode[]
+	children: ReconcileItem[]
 	/** When true, force unkeyed reconciliation for this render */
 	keyed?: boolean
 }

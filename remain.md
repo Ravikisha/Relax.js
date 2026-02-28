@@ -44,7 +44,7 @@ This roadmap upgrades each area to the design targets in `plan.md`.
 
 ### Tasks
 
-- [ ] **Define packages/entrypoints**
+- [x] **Define packages/entrypoints** ✅
   - `relax` (existing VDOM runtime)
   - `relax/hrbr` (new runtime entry)
   - `relax/compiler` (Babel plugin + helpers)
@@ -71,31 +71,31 @@ Your plan targets **O(dependents)** propagation with minimal allocations.
 
 ### Tasks
 
-- [ ] Replace `Set`-based observers/sources with **intrusive linked lists** or pooled arrays
+- [x] Replace `Set`-based observers/sources with **intrusive linked lists** or pooled arrays ✅
   - keep stable ordering by `(lanePriority, creationId)`
   - avoid allocations inside `signal.set()` except unavoidable scheduling nodes
 
-- [ ] Add **memos / computed values**
+- [x] Add **memos / computed values** ✅
   - `createMemo(fn, options?)`
   - memo invalidation and dependency tracking
 
-- [ ] Add **effect options** (plan API)
+- [x] Add **effect options** (plan API) ✅
   - `createEffect(fn, { lane, budgetMs, name })`
   - ensure options are used by scheduler
 
-- [ ] Add **transaction semantics**
+- [x] Add **transaction semantics** ✅
   - nested `batch()` behavior specified
   - consistent “flush boundary” behavior
 
-- [ ] Add robust cleanup
+- [x] Add robust cleanup ✅
   - ensure disposed computations fully detach
   - handle re-entrancy (an effect scheduling itself)
 
-### Tests (must-haves)
+## Tests (must-haves)
 
-- [ ] property/fuzz tests for random signal graphs and update sequences
-- [ ] determinism tests across runs (same event sequence ⇒ same flush order/log)
-- [ ] leak tests (dispose ⇒ no observers remain)
+- [x] property/fuzz tests ✅
+- [x] determinism tests across runs (same event sequence ⇒ same flush order/log) ✅
+- [x] leak tests (dispose ⇒ no observers remain) ✅
 
 ---
 
@@ -105,28 +105,29 @@ Your plan’s novelty is a deterministic scheduler with budgets and lanes.
 
 ### Tasks
 
-- [ ] Make budgeting a first-class API
+- [x] Make budgeting a first-class API ✅
   - export `withBudget(budgetMs, fn)` from HRBR entry
   - `scheduler.setFrameBudget(ms)` (global cap)
   - define how per-task `budgetMs` composes with global frame budgets
 
-- [ ] Deterministic flush rules (spec + implementation)
+- [x] Deterministic flush rules (spec + implementation) ✅
   - clear tie-breakers: `(lanePriority, effectivePriority, createdId)`
   - clarify when tasks are reordered/promoted
 
-- [ ] Add “deadline” semantics
+
+- [x] Add “deadline” semantics ✅
   - tasks can be scheduled with explicit `deadline`
   - promotion logic uses deadline/age deterministically
 
-- [ ] Integrate real browser scheduling strategies
+- [x] Integrate real browser scheduling strategies ✅
   - `MessageChannel` microtask-like flush option
   - `requestAnimationFrame` flush option for frame budget alignment
   - keep a universal fallback for non-browser (tests)
 
 ### Tests
 
-- [ ] starvation prevention tests
-- [ ] budget enforcement tests (work is split across flushes)
+- [x] starvation prevention tests ✅
+- [x] budget enforcement tests (work is split across flushes) ✅
 
 ---
 
@@ -136,7 +137,7 @@ Current `runtime/block.ts` supports text/attr/prop/class/style. Production needs
 
 ### Tasks
 
-- [ ] Slot types parity with plan
+- [x] Slot types parity with plan ✅
   - `event` slots (bind once, stable handler updates)
   - boolean attributes semantics
   - `value`/`checked` input props correctness
@@ -200,17 +201,17 @@ Your plan wants a lightweight keyed reconciler used only when structure is dynam
 
 ### Tasks
 
-- [ ] Upgrade keyed diff algorithm
+- [x] Upgrade keyed diff algorithm ✅
   - implement two-ended scan + LIS move minimization
   - ensure minimal DOM ops (moves vs recreate)
   - stable handling of mixed keyed/unkeyed (dev warning)
 
-- [ ] Support “logical item ⇒ multiple DOM nodes” (range/fragment items)
+- [x] Support “logical item ⇒ multiple DOM nodes” (range/fragment items) ✅
   - represent a child as a **range** (start/end anchors) rather than single node
   - crucial for components/fragments where one keyed item expands to multiple nodes
   - update reconciler contract accordingly
 
-- [ ] Provide dev diagnostics
+- [x] Provide dev diagnostics ✅
   - duplicate keys
   - unstable keys detection
 

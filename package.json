@@ -9,19 +9,37 @@
     "web",
     "development"
   ],
-  "exports": "./dist/relax.js",
-  "main": "dist/relax.js",
-  "module": "dist/relax.js",
+  "exports": {
+    ".": {
+  "types": "./dist-types/src/index.d.ts",
+      "import": "./dist/esm/index.js",
+    "require": "./dist/cjs/index.cjs"
+    },
+    "./hrbr": {
+  "types": "./dist-types/runtime/index.d.ts",
+      "import": "./dist/esm/hrbr.js",
+    "require": "./dist/cjs/hrbr.cjs"
+    },
+    "./compiler": {
+  "types": "./dist-types/compiler/index.d.ts",
+      "import": "./dist/esm/compiler.js",
+    "require": "./dist/cjs/compiler.cjs"
+    }
+  },
+  "main": "dist/cjs/index.cjs",
+  "module": "dist/esm/index.js",
+  "types": "dist-types/src/index.d.ts",
   "files": [
-    "dist/relax.js",
-    "dist/relax.min.js"
+    "dist/",
+  "dist-types/"
   ],
   "homepage": "",
   "bugs": {
     "url": "https://github.com/ravikisha/Relax.js/issues"
   },
   "scripts": {
-    "build": "rollup -c",
+  "build": "rollup -c && rollup -c rollup.config.cjs.mjs",
+  "build:types": "tsc -p tsconfig.build-types.json",
     "build:bench": "rollup -c rollup.benchmarks.config.mjs",
     "serve:bench": "npm run -s build:bench && npx --yes http-server -p 4173 -c-1 .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -30,7 +48,7 @@
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test:coverage": "vitest run --coverage",
-    "prepack": "npm run build"
+  "prepack": "npm run build && npm run build:types"
   },
   "author": "Ravi Kishan",
   "license": "MIT",

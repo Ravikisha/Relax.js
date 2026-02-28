@@ -104,6 +104,98 @@ describe('runtime/block (phase 3)', () => {
     expect(div.getAttribute('style')).toBe(null)
   })
 
+  it('supports event slots: binds once and updates handler without leaking listeners', () => {
+    const h = host()
+
+    const block = defineBlock({
+      templateHTML: `<button>ok</button>`,
+      slots: {
+        onClick: { kind: 'event', path: [], name: 'click' },
+      },
+    })
+
+    const calls: string[] = []
+    const mounted = mountBlock(block, h, {
+      onClick: () => calls.push('a'),
+    })
+
+    const btn = h.querySelector('button') as HTMLButtonElement
+    btn.click()
+    expect(calls).toEqual(['a'])
+
+    mounted.update({
+      onClick: () => calls.push('b'),
+    })
+
+    btn.click()
+    expect(calls).toEqual(['a', 'b'])
+
+    mounted.destroy()
+    // After destroy, it should not call new handlers.
+    btn.click()
+    expect(calls).toEqual(['a', 'b'])
+  })
+
+  it('treats boolean attributes as present/absent (attr slots)', () => {
+    const h = host()
+    const block = defineBlock({
+      templateHTML: `<input />`,
+      slots: {
+        disabled: { kind: 'attr', path: [], name: 'disabled' },
+      },
+    })
+
+    const mounted = mountBlock(block, h, { disabled: true })
+    const input = h.querySelector('input')!
+    expect(input.hasAttribute('disabled')).toBe(true)
+
+    mounted.update({ disabled: false })
+    expect(input.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('updates input value/checked via property semantics for prop slots', () => {
+    const h = host()
+
+    const block = defineBlock({
+      templateHTML: `<div><input id="t" /><input id="c" type="checkbox" /></div>`,
+      slots: {
+        value: { kind: 'prop', path: [0], name: 'value' },
+        checked: { kind: 'prop', path: [1], name: 'checked' },
+      },
+    })
+
+    const mounted = mountBlock(block, h, { value: 'a', checked: true })
+    const t = h.querySelector('#t') as HTMLInputElement
+    const c = h.querySelector('#c') as HTMLInputElement
+
+    expect(t.value).toBe('a')
+    expect(c.checked).toBe(true)
+
+    mounted.update({ value: null, checked: 0 })
+    expect(t.value).toBe('')
+    expect(c.checked).toBe(false)
+  })
+
+  it('sets xlink:* attributes with the xlink namespace on SVG elements', () => {
+    const h = host()
+
+    const block = defineBlock({
+      templateHTML: `<svg xmlns="http://www.w3.org/2000/svg"><a></a></svg>`,
+      slots: {
+        href: { kind: 'attr', path: [0], name: 'xlink:href' },
+      },
+    })
+
+    const mounted = mountBlock(block, h, { href: '#x' })
+    const a = h.querySelector('a') as any
+
+    // namespaceURI for xlink href
+    expect(a.getAttributeNS('http://www.w3.org/1999/xlink', 'href')).toBe('#x')
+
+    mounted.update({ href: null })
+    expect(a.getAttributeNS('http://www.w3.org/1999/xlink', 'href')).toBe(null)
+  })
+
   it('resolvePath walks childNodes indices', () => {
     const root = document.createElement('div')
     root.innerHTML = `<span>hi</span>`

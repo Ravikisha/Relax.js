@@ -1,26 +1,26 @@
-import commonjs from "@rollup/plugin-commonjs";
-import { nodeResolve } from "@rollup/plugin-node-resolve";
-import terser from "@rollup/plugin-terser";
-import cleanup from "rollup-plugin-cleanup";
-import filesize from "rollup-plugin-filesize";
-import typescript from "@rollup/plugin-typescript";
+import commonjs from '@rollup/plugin-commonjs';
+import { nodeResolve } from '@rollup/plugin-node-resolve';
+import cleanup from 'rollup-plugin-cleanup';
+import filesize from 'rollup-plugin-filesize';
+import typescript from '@rollup/plugin-typescript';
 
+/** @type {import('rollup').RollupOptions} */
 export default {
-  input: "src/index.ts",
-  plugins: [commonjs(), nodeResolve(), typescript({ tsconfig: './tsconfig.json' }), cleanup()],
-  output: [
-    {
-      file: "dist/relax.js",
-      format: "esm",
-      plugins: [filesize()],
-    },
-    {
-      file: "dist/relax.min.js",
-      format: "esm",
-      plugins: [terser(), filesize()],
-    },
-  ],
+  input: {
+    index: 'src/index.ts',
+    hrbr: 'runtime/index.ts',
+    compiler: 'compiler/index.ts',
+  },
+  plugins: [commonjs(), nodeResolve(), typescript({ tsconfig: './tsconfig.rollup.json' }), cleanup()],
+  output: {
+    dir: 'dist/esm',
+    format: 'esm',
+    entryFileNames: '[name].js',
+    sourcemap: true,
+    plugins: [filesize()],
+  },
 };
 
-// Note: HRBR TypeScript entrypoints will be added in a follow-up once `/runtime` is implemented.
+// Note: If we want single-file minified bundles, we can add a separate Rollup config
+// (one input per config) since named multi-input builds require `output.dir`.
 

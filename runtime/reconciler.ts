@@ -2,6 +2,18 @@ import { assert } from '../src/utils/assert'
 
 export type Key = string | number
 
+export type ReconcileRange = {
+	kind: 'range'
+	/** Optional key for keyed reconciliation */
+	key?: Key
+	/** Create the DOM nodes for this logical item (in order) */
+	create(): Node[]
+	/** Patch existing DOM nodes for this logical item (in order) */
+	patch(nodes: Node[]): void
+	/** Optional cleanup when this logical item is removed */
+	destroy?(nodes: Node[]): void
+}
+
 export type ReconcileNode = {
 	key?: Key
 	/** Create a new DOM node for this logical node */
@@ -12,12 +24,61 @@ export type ReconcileNode = {
 	destroy?(node: Node): void
 }
 
+export type ReconcileItem = ReconcileNode | ReconcileRange
+
 export type ReconcileOptions = {
 	keyed?: boolean
+	/** When true, emit console warnings for suspicious usage patterns. */
+	dev?: boolean
 }
 
-function getNodeKey(n: ReconcileNode): Key | null {
-	return n.key ?? null
+function devWarn(enabled: boolean, msg: string) {
+	if (!enabled) return
+	// eslint-disable-next-line no-console
+	console.warn(msg)
+}
+
+function isRange(n: ReconcileItem): n is ReconcileRange {
+	return (n as any).kind === 'range'
+}
+
+// Longest Increasing Subsequence on an array of numbers, ignoring -1.
+// Returns indices into `arr` that form the LIS.
+function lisIndices(arr: number[]) {
+	const n = arr.length
+	const prev = new Array<number>(n).fill(-1)
+	const tails: number[] = [] // indices
+
+	for (let i = 0; i < n; i++) {
+		const v = arr[i]!
+		if (v < 0) continue
+
+		let lo = 0
+		let hi = tails.length
+		while (lo < hi) {
+			const mid = (lo + hi) >> 1
+			if (arr[tails[mid]!]! < v) lo = mid + 1
+			else hi = mid
+		}
+
+		if (lo > 0) prev[i] = tails[lo - 1]!
+		if (lo === tails.length) tails.push(i)
+		else tails[lo] = i
+	}
+
+	// Reconstruct indices
+	const out: number[] = []
+	let k = tails.length > 0 ? tails[tails.length - 1]! : -1
+	while (k !== -1) {
+		out.push(k)
+		k = prev[k]!
+	}
+	out.reverse()
+	return out
+}
+
+function getNodeKey(n: ReconcileItem): Key | null {
+	return (n as any).key ?? null
 }
 
 function getDomKey(node: Node): Key | null {
@@ -29,6 +90,48 @@ function setDomKey(node: Node, key: Key | null) {
 	;(node as any).__hrbrKey = key
 }
 
+type RangeRecord = {
+	key: Key | null
+	start: Node
+	end: Node
+	nodes: Node[]
+}
+
+function setDomRangeLen(node: Node, len: number) {
+	;(node as any).__hrbrRangeLen = len
+}
+
+function getDomRangeLen(node: Node): number {
+	const v = (node as any).__hrbrRangeLen
+	return typeof v === 'number' && v > 0 ? v : 1
+}
+
+function buildCurrentRanges(host: Node): RangeRecord[] {
+	const out: RangeRecord[] = []
+	const nodes = Array.from(host.childNodes)
+	for (let i = 0; i < nodes.length; ) {
+		const start = nodes[i]!
+		const len = getDomRangeLen(start)
+		const slice = nodes.slice(i, i + len)
+		const end = slice[slice.length - 1]!
+		out.push({ key: getDomKey(start), start, end, nodes: slice })
+		i += len
+	}
+	return out
+}
+
+function insertNodesBefore(host: Node, nodes: Node[], anchor: ChildNode | null) {
+	for (let i = 0; i < nodes.length; i++) host.insertBefore(nodes[i]!, anchor)
+}
+
+function moveRangeBefore(host: Node, range: RangeRecord, anchor: ChildNode | null) {
+	// Move from end -> start to preserve order when inserting before the same anchor.
+	for (let i = range.nodes.length - 1; i >= 0; i--) {
+		host.insertBefore(range.nodes[i]!, anchor)
+		anchor = range.nodes[i] as any
+	}
+}
+
 /**
  * Patch `host.childNodes` so they match `next`.
  *
@@ -37,42 +140,63 @@ function setDomKey(node: Node, key: Key | null) {
  * - When keyed, keys must be unique among siblings.
  * - Nodes that remain are patched in place (no replacement) when possible.
  */
-export function reconcileChildren(host: Node, next: ReconcileNode[], opts: ReconcileOptions = {}): void {
-	const keyed = opts.keyed ?? next.some((n) => n.key != null)
+export function reconcileChildren(host: Node, next: ReconcileItem[], opts: ReconcileOptions = {}): void {
+	const dev = opts.dev ?? false
+	const hasSomeKeys = next.some((n) => (n as any).key != null)
+	const hasSomeNoKeys = next.some((n) => (n as any).key == null)
+	if (hasSomeKeys && hasSomeNoKeys) {
+		devWarn(dev, '[hrbr/reconciler] mixed keyed and unkeyed children: unkeyed nodes will be treated as unstable and may be removed during keyed reconciliation')
+	}
+	const keyed = opts.keyed ?? hasSomeKeys
 	if (!keyed) return reconcileChildrenUnkeyed(host, next)
-	return reconcileChildrenKeyed(host, next)
+	return reconcileChildrenKeyed(host, next, dev)
 }
 
-function reconcileChildrenUnkeyed(host: Node, next: ReconcileNode[]) {
-	const current = Array.from(host.childNodes)
+function reconcileChildrenUnkeyed(host: Node, next: ReconcileItem[]) {
+	const current = buildCurrentRanges(host)
 	const common = Math.min(current.length, next.length)
 
 	for (let i = 0; i < common; i++) {
-		next[i]!.patch(current[i]!)
+		const spec = next[i]!
+		const range = current[i]!
+		if (isRange(spec)) spec.patch(range.nodes)
+		else spec.patch(range.start)
 	}
 
 	// remove extra
 	for (let i = current.length - 1; i >= next.length; i--) {
-		const node = current[i]!
-		host.removeChild(node)
+		const range = current[i]!
+		for (let j = range.nodes.length - 1; j >= 0; j--) host.removeChild(range.nodes[j]!)
 	}
 
 	// append missing
 	for (let i = common; i < next.length; i++) {
-		const created = next[i]!.create()
-		setDomKey(created, getNodeKey(next[i]!))
+		const spec = next[i]!
+		if (isRange(spec)) {
+			const created = spec.create()
+			if (created.length > 0) {
+				setDomKey(created[0]!, getNodeKey(spec))
+				setDomRangeLen(created[0]!, created.length)
+				insertNodesBefore(host, created, null)
+			}
+			continue
+		}
+		const created = spec.create()
+		setDomKey(created, getNodeKey(spec))
+		setDomRangeLen(created, 1)
 		host.appendChild(created)
 	}
 }
 
-function reconcileChildrenKeyed(host: Node, next: ReconcileNode[]) {
-	const currentNodes = Array.from(host.childNodes)
-	const keyToNode = new Map<Key, Node>()
-	const used = new Set<Node>()
+function reconcileChildrenKeyed(host: Node, next: ReconcileItem[], dev: boolean) {
+	const currentRanges = buildCurrentRanges(host)
+	const currentNodesFlat = Array.from(host.childNodes)
+	void currentNodesFlat
 
-	for (const node of currentNodes) {
-		const k = getDomKey(node)
-		if (k != null) keyToNode.set(k, node)
+	// Map current keyed ranges by start key.
+	const keyToRange = new Map<Key, RangeRecord>()
+	for (const r of currentRanges) {
+		if (r.key != null) keyToRange.set(r.key, r)
 	}
 
 	// Validate uniqueness in `next`
@@ -86,42 +210,174 @@ function reconcileChildrenKeyed(host: Node, next: ReconcileNode[]) {
 		}
 	}
 
-	let anchor: ChildNode | null = host.firstChild
-
-	for (let i = 0; i < next.length; i++) {
-		const spec = next[i]!
-		const k = getNodeKey(spec)
-
-		let node: Node | null = null
-		if (k != null) node = keyToNode.get(k) ?? null
-
-		if (node) {
-			used.add(node)
-			spec.patch(node)
-
-			// Move into correct position if needed.
-			if (node !== anchor) {
-				host.insertBefore(node, anchor)
+	// Unstable key detection: if the host already contains keyed children and `next` keys are disjoint,
+	// the caller is likely generating unstable keys. This isn't always wrong (full replace), so we warn only.
+	{
+		const prevKeys = new Set<Key>()
+		for (const r of currentRanges) {
+			if (r.key != null) prevKeys.add(r.key)
+		}
+		if (prevKeys.size > 0) {
+			let overlap = 0
+			for (const n of next) {
+				const k = getNodeKey(n)
+				if (k != null && prevKeys.has(k)) overlap++
 			}
+			if (overlap === 0) {
+				devWarn(
+					dev,
+					'[hrbr/reconciler] next children keys have no overlap with previous keyed children; if this is not a full replace, keys may be unstable (e.g. using array index)'
+				)
+			}
+		}
+	}
 
-			anchor = node.nextSibling
+	// Build arrays of keys to do a two-ended scan.
+	const oldKeys: Key[] = []
+	for (let i = 0; i < currentRanges.length; i++) {
+		const k = currentRanges[i]!.key
+		if (k != null) oldKeys.push(k)
+	}
+	const newKeys: Key[] = []
+	for (let i = 0; i < next.length; i++) {
+		const k = getNodeKey(next[i]!)
+		if (k != null) newKeys.push(k)
+	}
+
+	const usedStarts = new Set<Node>()
+
+	// Fast two-ended scan for common prefix/suffix stability.
+	let oldStart = 0
+	let oldEnd = oldKeys.length - 1
+	let newStart = 0
+	let newEnd = newKeys.length - 1
+
+	while (oldStart <= oldEnd && newStart <= newEnd) {
+		const osk = oldKeys[oldStart]!
+		const nsk = newKeys[newStart]!
+		if (osk !== nsk) break
+		const range = keyToRange.get(osk)!
+		usedStarts.add(range.start)
+		const spec = next[newStart]!
+		if (isRange(spec)) spec.patch(range.nodes)
+		else spec.patch(range.start)
+		oldStart++
+		newStart++
+	}
+
+	while (oldStart <= oldEnd && newStart <= newEnd) {
+		const oek = oldKeys[oldEnd]!
+		const nek = newKeys[newEnd]!
+		if (oek !== nek) break
+		const range = keyToRange.get(oek)!
+		usedStarts.add(range.start)
+		const spec = next[newEnd]!
+		if (isRange(spec)) spec.patch(range.nodes)
+		else spec.patch(range.start)
+		oldEnd--
+		newEnd--
+	}
+
+	// Middle section: LIS-based move minimization.
+	// Build old-index sequence for new middle keys.
+	const oldIndexByKey = new Map<Key, number>()
+	for (let i = oldStart; i <= oldEnd; i++) {
+		oldIndexByKey.set(oldKeys[i]!, i)
+	}
+
+	const middleLen = newEnd - newStart + 1
+	const seq: number[] = new Array(middleLen)
+	const existingRanges: Array<RangeRecord | null> = new Array(middleLen)
+
+	for (let i = 0; i < middleLen; i++) {
+		const key = newKeys[newStart + i]!
+		const oldIndex = oldIndexByKey.get(key)
+		if (oldIndex == null) {
+			seq[i] = -1
+			existingRanges[i] = null
+			continue
+		}
+		seq[i] = oldIndex
+		const range = keyToRange.get(key) ?? null
+		existingRanges[i] = range
+		if (range) {
+			usedStarts.add(range.start)
+			const spec = next[newStart + i]!
+			if (isRange(spec)) spec.patch(range.nodes)
+			else spec.patch(range.start)
+		}
+	}
+
+	const keep = new Set<number>(lisIndices(seq))
+
+	// Anchor is the DOM node we insert before. Start from the right boundary.
+	let anchor: ChildNode | null = null
+	if (newEnd + 1 < next.length) {
+		const boundaryKey = getNodeKey(next[newEnd + 1]!)
+		if (boundaryKey != null) anchor = (keyToRange.get(boundaryKey)?.start as ChildNode | undefined) ?? null
+	}
+
+	// Walk backward so anchor is always correct.
+	for (let i = middleLen - 1; i >= 0; i--) {
+		const specIndex = newStart + i
+		const spec = next[specIndex]!
+		const k = getNodeKey(spec)
+		if (k == null) continue
+
+		const existing = existingRanges[i]
+		if (!existing) {
+			if (isRange(spec)) {
+				const created = spec.create()
+				if (created.length > 0) {
+					setDomKey(created[0]!, k)
+					setDomRangeLen(created[0]!, created.length)
+					insertNodesBefore(host, created, anchor)
+					anchor = created[0] as any
+				}
+				continue
+			}
+			const created = spec.create()
+			setDomKey(created, k)
+			setDomRangeLen(created, 1)
+			host.insertBefore(created, anchor)
+			anchor = created as any
 			continue
 		}
 
-		// Create new node
-		const created = spec.create()
-		setDomKey(created, k)
-		if (anchor) host.insertBefore(created, anchor)
-		else host.appendChild(created)
-		anchor = created.nextSibling
+		if (keep.has(i)) {
+			anchor = existing.start as any
+			continue
+		}
+
+		moveRangeBefore(host, existing, anchor)
+		anchor = existing.start as any
 	}
 
-	// Remove nodes not used.
-	for (const node of currentNodes) {
-		if (used.has(node)) continue
+	// Ensure the prefix is in the right place (if it isn't already).
+	// We don't try to be clever here; insertBefore is a no-op if already correct.
+	let prefixAnchor: ChildNode | null = host.firstChild
+	for (let i = 0; i < newStart; i++) {
+		const k = getNodeKey(next[i]!)
+		if (k == null) continue
+		const range = keyToRange.get(k) ?? null
+		if (!range) continue
+		moveRangeBefore(host, range, prefixAnchor)
+		prefixAnchor = range.end.nextSibling
+	}
 
-		// If node had a key, it wasn't in next. If node had no key, we also remove it,
-		// because keyed mode assumes full control of the children list.
-		host.removeChild(node)
+	// Remove nodes not used. If a node has no key, keyed mode owns the list and removes it.
+	for (const r of currentRanges) {
+		if (r.key != null) {
+			if (usedStarts.has(r.start)) continue
+			const spec = next.find((n) => getNodeKey(n as any) === r.key) as ReconcileItem | undefined
+			if (spec && isRange(spec) && spec.destroy) spec.destroy(r.nodes)
+			if (spec && !isRange(spec) && (spec as ReconcileNode).destroy) (spec as ReconcileNode).destroy!(r.start)
+			for (let j = r.nodes.length - 1; j >= 0; j--) host.removeChild(r.nodes[j]!)
+			continue
+		}
+		// unkeyed range (owned by keyed mode)
+		for (let j = r.nodes.length - 1; j >= 0; j--) {
+			if ((r.nodes[j] as any).parentNode === host) host.removeChild(r.nodes[j]!)
+		}
 	}
 }
