@@ -1,3 +1,17 @@
+\contentsline {chapter}{Copyright}{i}{chapter*.1}%
+\contentsline {chapter}{Preface}{ii}{chapter*.2}%
+\contentsline {section}{Project links}{ii}{section*.3}%
+\contentsline {section}{Who this book is for}{ii}{section*.3}%
+\contentsline {section}{How to read it}{iii}{section*.3}%
+\contentsline {section}{A note on links and citations}{iii}{Item.4}%
+\contentsline {section}{Versioning}{iii}{Item.4}%
+\contentsline {chapter}{Developer Notes}{iv}{chapter*.4}%
+\contentsline {section}{Author}{iv}{section*.5}%
+\contentsline {section}{Project links}{iv}{section*.5}%
+\contentsline {section}{Why I built this}{iv}{section*.5}%
+\contentsline {section}{How this repository goes beyond the starting point}{v}{section*.5}%
+\contentsline {section}{How to use this book as a build log}{v}{section*.5}%
+\contentsline {section}{Attribution note}{v}{section*.5}%
 \contentsline {chapter}{\numberline {1}What we're building (and why)}{1}{chapter.1}%
 \contentsline {section}{\numberline {1.1}What you'll build}{1}{section.1.1}%
 \contentsline {section}{\numberline {1.2}What you'll learn}{1}{section.1.2}%
@@ -133,19 +147,19 @@
 \contentsline {section}{\numberline {8.2}\texttt {patchDOM}: the top-level operation}{59}{section.8.2}%
 \contentsline {subsection}{\numberline {8.2.1}Contract}{59}{subsection.8.2.1}%
 \contentsline {subsection}{\numberline {8.2.2}Replace vs patch: areNodesEqual}{60}{subsection.8.2.2}%
-\contentsline {paragraph}{Why identity is intentionally strict}{60}{paragraph*.2}%
-\contentsline {paragraph}{A renderer mental model: identity answers ``can I mutate in place?''}{60}{paragraph*.3}%
+\contentsline {paragraph}{Why identity is intentionally strict}{60}{paragraph*.7}%
+\contentsline {paragraph}{A renderer mental model: identity answers ``can I mutate in place?''}{60}{paragraph*.8}%
 \contentsline {subsection}{\numberline {8.2.3}When nodes are equal: preserve el}{61}{subsection.8.2.3}%
 \contentsline {section}{\numberline {8.3}Node-type specific patching}{61}{section.8.3}%
 \contentsline {subsection}{\numberline {8.3.1}Text nodes: patchText}{61}{subsection.8.3.1}%
 \contentsline {subsection}{\numberline {8.3.2}Element nodes: patchElement}{61}{subsection.8.3.2}%
-\contentsline {paragraph}{Micro-optimization: object identity fast paths}{62}{paragraph*.4}%
+\contentsline {paragraph}{Micro-optimization: object identity fast paths}{62}{paragraph*.9}%
 \contentsline {subsection}{\numberline {8.3.3}Attributes: patchAttrs uses objectsDiff}{62}{subsection.8.3.3}%
 \contentsline {subsection}{\numberline {8.3.4}Classes: patchClasses uses arraysDiff}{62}{subsection.8.3.4}%
 \contentsline {subsection}{\numberline {8.3.5}Styles: patchStyles uses objectsDiff}{62}{subsection.8.3.5}%
 \contentsline {subsection}{\numberline {8.3.6}Events: patchEvents}{62}{subsection.8.3.6}%
-\contentsline {paragraph}{Why this detail matters so much}{63}{paragraph*.5}%
-\contentsline {paragraph}{Diagram: event patching as identity management}{63}{paragraph*.6}%
+\contentsline {paragraph}{Why this detail matters so much}{63}{paragraph*.10}%
+\contentsline {paragraph}{Diagram: event patching as identity management}{63}{paragraph*.11}%
 \contentsline {subsection}{\numberline {8.3.7}Component nodes: patchComponent}{63}{subsection.8.3.7}%
 \contentsline {subsection}{\numberline {8.3.8}HRBR nodes: patchHrbr}{64}{subsection.8.3.8}%
 \contentsline {subsection}{\numberline {8.3.9}A tiny but important helper: \texttt {patchDOMSameElement}}{64}{subsection.8.3.9}%
@@ -156,10 +170,10 @@
 \contentsline {subsection}{\numberline {8.4.4}Fast path C: keyed reorder via LIS}{65}{subsection.8.4.4}%
 \contentsline {subsection}{\numberline {8.4.5}Fast path D: stable keyed same-order}{66}{subsection.8.4.5}%
 \contentsline {subsection}{\numberline {8.4.6}General path: arraysDiffSequence}{67}{subsection.8.4.6}%
-\contentsline {paragraph}{What is \texttt {offset}?}{68}{paragraph*.7}%
-\contentsline {paragraph}{MOVE for components (multi-element reality)}{69}{paragraph*.8}%
+\contentsline {paragraph}{What is \texttt {offset}?}{68}{paragraph*.12}%
+\contentsline {paragraph}{MOVE for components (multi-element reality)}{69}{paragraph*.13}%
 \contentsline {subsection}{\numberline {8.4.7}What the patch-children tests specify (without running them)}{70}{subsection.8.4.7}%
-\contentsline {paragraph}{Component moves}{70}{paragraph*.9}%
+\contentsline {paragraph}{Component moves}{70}{paragraph*.14}%
 \contentsline {subsection}{\numberline {8.4.8}What the diff-sequence tests prove}{70}{subsection.8.4.8}%
 \contentsline {section}{\numberline {8.5}Tests to lean on}{71}{section.8.5}%
 \contentsline {section}{\numberline {8.6}Takeaways}{71}{section.8.6}%
@@ -168,26 +182,26 @@
 \contentsline {section}{\numberline {9.1}Diagram: render lifecycle as a loop (mount \textrightarrow patch \textrightarrow destroy)}{72}{section.9.1}%
 \contentsline {section}{\numberline {9.2}A tiny contract for teardown}{73}{section.9.2}%
 \contentsline {subsection}{\numberline {9.2.1}Two different things you must destroy (from scratch)}{73}{subsection.9.2.1}%
-\contentsline {paragraph}{Why this matters in practice}{73}{paragraph*.10}%
+\contentsline {paragraph}{Why this matters in practice}{73}{paragraph*.15}%
 \contentsline {section}{\numberline {9.3}destroyDOM(): the teardown dispatcher}{73}{section.9.3}%
 \contentsline {subsection}{\numberline {9.3.1}The shared post-step: deleting \texttt {vdom.el}}{74}{subsection.9.3.1}%
 \contentsline {subsection}{\numberline {9.3.2}A quick mental trace: what gets touched?}{74}{subsection.9.3.2}%
 \contentsline {section}{\numberline {9.4}Type-based teardown}{75}{section.9.4}%
 \contentsline {subsection}{\numberline {9.4.1}Text nodes}{75}{subsection.9.4.1}%
 \contentsline {subsection}{\numberline {9.4.2}Element nodes: remove element + recurse + listener cleanup}{75}{subsection.9.4.2}%
-\contentsline {paragraph}{Ordering note: remove first, then cleanup}{75}{paragraph*.11}%
-\contentsline {subsubsection}{A short code reading (as JavaScript)}{76}{subsubsection*.12}%
+\contentsline {paragraph}{Ordering note: remove first, then cleanup}{75}{paragraph*.16}%
+\contentsline {subsubsection}{A short code reading (as JavaScript)}{76}{subsubsection*.17}%
 \contentsline {subsection}{\numberline {9.4.3}Fragment nodes}{76}{subsection.9.4.3}%
 \contentsline {subsection}{\numberline {9.4.4}Component nodes: unmount + schedule \texttt {onUnmounted}}{76}{subsection.9.4.4}%
-\contentsline {subsubsection}{From scratch: why is \texttt {onUnmounted} scheduled?}{77}{subsubsection*.13}%
+\contentsline {subsubsection}{From scratch: why is \texttt {onUnmounted} scheduled?}{77}{subsubsection*.18}%
 \contentsline {section}{\numberline {9.5}Inside Component.unmount() (\texttt {src/component.ts})}{77}{section.9.5}%
 \contentsline {subsection}{\numberline {9.5.1}Unmount sequence}{78}{subsection.9.5.1}%
 \contentsline {subsection}{\numberline {9.5.2}Unmount in one annotated snippet (as JavaScript)}{78}{subsection.9.5.2}%
-\contentsline {paragraph}{Why unsubscribe in \texttt {unmount()} and not in \texttt {destroyDOM()}?}{78}{paragraph*.14}%
+\contentsline {paragraph}{Why unsubscribe in \texttt {unmount()} and not in \texttt {destroyDOM()}?}{78}{paragraph*.19}%
 \contentsline {section}{\numberline {9.6}HRBR nodes: dispose, destroy, and remove host}{78}{section.9.6}%
 \contentsline {subsection}{\numberline {9.6.1}From scratch: HRBR is about \emph {ownership boundaries}}{79}{subsection.9.6.1}%
 \contentsline {subsection}{\numberline {9.6.2}The destroy sequence (as JavaScript)}{80}{subsection.9.6.2}%
-\contentsline {paragraph}{Interop rule of thumb}{80}{paragraph*.15}%
+\contentsline {paragraph}{Interop rule of thumb}{80}{paragraph*.20}%
 \contentsline {subsection}{\numberline {9.6.3}How HRBR teardown relates to patching (what the tests prove)}{80}{subsection.9.6.3}%
 \contentsline {section}{\numberline {9.7}A practical mental model}{81}{section.9.7}%
 \contentsline {subsection}{\numberline {9.7.1}A leak-prevention checklist you can reuse}{81}{subsection.9.7.1}%
@@ -220,20 +234,20 @@
 \contentsline {section}{\numberline {10.2}The VDOM microtask job queue (\texttt {src/scheduler.ts})}{88}{section.10.2}%
 \contentsline {subsection}{\numberline {10.2.1}From scratch: one thread, a call stack, and two queues}{88}{subsection.10.2.1}%
 \contentsline {subsection}{\numberline {10.2.2}Why it exists}{88}{subsection.10.2.2}%
-\contentsline {paragraph}{The hidden constraint: DOM consistency and re-entrancy}{88}{paragraph*.16}%
+\contentsline {paragraph}{The hidden constraint: DOM consistency and re-entrancy}{88}{paragraph*.21}%
 \contentsline {subsection}{\numberline {10.2.3}Data model}{88}{subsection.10.2.3}%
 \contentsline {subsection}{\numberline {10.2.4}enqueueJob and queueMicrotask}{89}{subsection.10.2.4}%
-\contentsline {paragraph}{Batching rule}{89}{paragraph*.17}%
+\contentsline {paragraph}{Batching rule}{89}{paragraph*.22}%
 \contentsline {subsection}{\numberline {10.2.5}processJobs: ordering and async behavior}{89}{subsection.10.2.5}%
-\contentsline {subsubsection}{A code walk (as JavaScript)}{89}{subsubsection*.18}%
-\contentsline {paragraph}{Why the queue doesn’t await}{90}{paragraph*.19}%
+\contentsline {subsubsection}{A code walk (as JavaScript)}{89}{subsubsection*.23}%
+\contentsline {paragraph}{Why the queue doesn’t await}{90}{paragraph*.24}%
 \contentsline {subsection}{\numberline {10.2.6}nextTick(): what it guarantees (and what it doesn’t)}{91}{subsection.10.2.6}%
-\contentsline {paragraph}{Practical testing guidance}{91}{paragraph*.20}%
-\contentsline {subsubsection}{Why does \texttt {flushPromises()} use \texttt {setTimeout}?}{91}{subsubsection*.21}%
-\contentsline {subsubsection}{Batching correctness: a tiny proof sketch}{91}{subsubsection*.22}%
-\contentsline {subsubsection}{Timeline: why the tests produce those arrays}{92}{subsubsection*.23}%
-\contentsline {paragraph}{Jobs run after synchronous code (expects \texttt {[4, 1, 2, 3]})}{92}{paragraph*.24}%
-\contentsline {paragraph}{Asynchronous jobs enqueue more jobs (expects \texttt {[1, 3, 2]})}{92}{paragraph*.25}%
+\contentsline {paragraph}{Practical testing guidance}{91}{paragraph*.25}%
+\contentsline {subsubsection}{Why does \texttt {flushPromises()} use \texttt {setTimeout}?}{91}{subsubsection*.26}%
+\contentsline {subsubsection}{Batching correctness: a tiny proof sketch}{91}{subsubsection*.27}%
+\contentsline {subsubsection}{Timeline: why the tests produce those arrays}{92}{subsubsection*.28}%
+\contentsline {paragraph}{Jobs run after synchronous code (expects \texttt {[4, 1, 2, 3]})}{92}{paragraph*.29}%
+\contentsline {paragraph}{Asynchronous jobs enqueue more jobs (expects \texttt {[1, 3, 2]})}{92}{paragraph*.30}%
 \contentsline {section}{\numberline {10.3}The runtime lane scheduler (\texttt {runtime/scheduler.ts})}{93}{section.10.3}%
 \contentsline {subsection}{\numberline {10.3.1}Creating a scheduler}{93}{subsection.10.3.1}%
 \contentsline {subsection}{\numberline {10.3.2}Budgets and time slicing}{93}{subsection.10.3.2}%
@@ -253,23 +267,23 @@
 \contentsline {section}{\numberline {10.9}Exercises}{97}{section.10.9}%
 \contentsline {section}{\numberline {10.10}Chapter summary}{97}{section.10.10}%
 \contentsline {chapter}{\numberline {11}Slots and Content Projection}{98}{chapter.11}%
-\contentsline {paragraph}{What problem are slots solving?}{98}{paragraph*.26}%
-\contentsline {paragraph}{Tiny contract (keep this in your head)}{98}{paragraph*.27}%
+\contentsline {paragraph}{What problem are slots solving?}{98}{paragraph*.31}%
+\contentsline {paragraph}{Tiny contract (keep this in your head)}{98}{paragraph*.32}%
 \contentsline {section}{\numberline {11.1}Diagram: component render \textrightarrow slot rewrite \textrightarrow normal VDOM}{99}{section.11.1}%
 \contentsline {section}{\numberline {11.2}Slot VNodes: \texttt {hSlot} and the SLOT marker}{99}{section.11.2}%
 \contentsline {subsection}{\numberline {11.2.1}Why track \texttt {didCreateSlot}?}{99}{subsection.11.2.1}%
-\contentsline {paragraph}{How the optimization is wired (\texttt {src/component.ts})}{100}{paragraph*.28}%
+\contentsline {paragraph}{How the optimization is wired (\texttt {src/component.ts})}{100}{paragraph*.33}%
 \contentsline {subsection}{\numberline {11.2.2}Authoring from scratch: what the user writes vs. what Relax sees}{100}{subsection.11.2.2}%
 \contentsline {section}{\numberline {11.3}fillSlots(): projecting external children into a component}{101}{section.11.3}%
 \contentsline {subsection}{\numberline {11.3.1}Contract}{101}{subsection.11.3.1}%
 \contentsline {subsection}{\numberline {11.3.2}A more precise contract: invariants you can rely on}{101}{subsection.11.3.2}%
-\contentsline {paragraph}{Why FRAGMENT?}{102}{paragraph*.29}%
+\contentsline {paragraph}{Why FRAGMENT?}{102}{paragraph*.34}%
 \contentsline {subsection}{\numberline {11.3.3}Choosing between default and external content}{102}{subsection.11.3.3}%
 \contentsline {subsection}{\numberline {11.3.4}Slots with no content are removed}{103}{subsection.11.3.4}%
-\contentsline {paragraph}{A subtle implementation detail}{103}{paragraph*.30}%
+\contentsline {paragraph}{A subtle implementation detail}{103}{paragraph*.35}%
 \contentsline {subsection}{\numberline {11.3.5}A subtle but crucial point: \texttt {children} is not "DOM children"}{103}{subsection.11.3.5}%
 \contentsline {subsection}{\numberline {11.3.6}A code-walk of \texttt {fillSlots} (in plain JavaScript)}{103}{subsection.11.3.6}%
-\contentsline {paragraph}{Important: the real implementation differs slightly from the teaching version}{104}{paragraph*.31}%
+\contentsline {paragraph}{Important: the real implementation differs slightly from the teaching version}{104}{paragraph*.36}%
 \contentsline {subsection}{\numberline {11.3.7}Shape detail: why \texttt {hSlot([defaultContent])} is special}{104}{subsection.11.3.7}%
 \contentsline {section}{\numberline {11.4}Why fillSlots skips component children during traversal}{105}{section.11.4}%
 \contentsline {subsection}{\numberline {11.4.1}Why this boundary matters in real apps}{105}{subsection.11.4.1}%
@@ -301,32 +315,32 @@
 \contentsline {subsection}{\numberline {12.6.2}Diagram: forward observers vs. reverse sources}{115}{subsection.12.6.2}%
 \contentsline {section}{\numberline {12.7}Dependency capture: \texttt {currentComputation}}{116}{section.12.7}%
 \contentsline {subsection}{\numberline {12.7.1}Signal reads}{116}{subsection.12.7.1}%
-\contentsline {subsubsection}{From scratch: the global pointer trick}{116}{subsubsection*.32}%
-\contentsline {paragraph}{No dedupe (by design)}{117}{paragraph*.33}%
+\contentsline {subsubsection}{From scratch: the global pointer trick}{116}{subsubsection*.37}%
+\contentsline {paragraph}{No dedupe (by design)}{117}{paragraph*.38}%
 \contentsline {subsection}{\numberline {12.7.2}\texttt {untrack(fn)}}{117}{subsection.12.7.2}%
 \contentsline {section}{\numberline {12.8}Writes: schedule observers, preserve order}{117}{section.12.8}%
-\contentsline {paragraph}{What gets scheduled?}{118}{paragraph*.34}%
+\contentsline {paragraph}{What gets scheduled?}{118}{paragraph*.39}%
 \contentsline {subsection}{\numberline {12.8.1}A precise code-walk: \texttt {scheduleComputation} and the \texttt {pending} set}{118}{subsection.12.8.1}%
-\contentsline {subsubsection}{Why re-entrancy and batching share the same queue}{119}{subsubsection*.35}%
-\contentsline {subsubsection}{Timeline: the re-entrancy convergence test}{119}{subsubsection*.36}%
+\contentsline {subsubsection}{Why re-entrancy and batching share the same queue}{119}{subsubsection*.40}%
+\contentsline {subsubsection}{Timeline: the re-entrancy convergence test}{119}{subsubsection*.41}%
 \contentsline {section}{\numberline {12.9}Effects: cleanup, re-run, disposal}{120}{section.12.9}%
 \contentsline {subsection}{\numberline {12.9.1}Cleanup semantics}{120}{subsection.12.9.1}%
 \contentsline {subsection}{\numberline {12.9.2}Detaching and resubscribing: \texttt {unlinkAllSources(comp)}}{120}{subsection.12.9.2}%
 \contentsline {subsection}{\numberline {12.9.3}Conditional dependencies in slow motion (the reason \texttt {unlinkAllSources} exists)}{121}{subsection.12.9.3}%
-\contentsline {subsubsection}{What the implementation guarantees}{121}{subsubsection*.37}%
-\contentsline {paragraph}{Leak-safety note}{121}{paragraph*.38}%
+\contentsline {subsubsection}{What the implementation guarantees}{121}{subsubsection*.42}%
+\contentsline {paragraph}{Leak-safety note}{121}{paragraph*.43}%
 \contentsline {section}{\numberline {12.10}The tests as specs: what behavior is non-negotiable}{122}{section.12.10}%
 \contentsline {subsection}{\numberline {12.10.1}Core semantics: \texttt {runtime/\_\_tests\_\_/signals.test.ts}}{122}{subsection.12.10.1}%
-\contentsline {subsubsection}{A senior reading of the suite: what it forces in the implementation}{122}{subsubsection*.39}%
+\contentsline {subsubsection}{A senior reading of the suite: what it forces in the implementation}{122}{subsubsection*.44}%
 \contentsline {subsection}{\numberline {12.10.2}Determinism + leak-ish checks: \texttt {signals.determinism.test.ts}}{122}{subsection.12.10.2}%
 \contentsline {subsection}{\numberline {12.10.3}Fuzz/property checks: \texttt {signals.fuzz.test.ts}}{123}{subsection.12.10.3}%
 \contentsline {subsection}{\numberline {12.10.4}Dispose}{123}{subsection.12.10.4}%
 \contentsline {section}{\numberline {12.11}Re-entrancy: scheduling while running}{123}{section.12.11}%
 \contentsline {subsection}{\numberline {12.11.1}Two reasons computations are delayed}{123}{subsection.12.11.1}%
 \contentsline {section}{\numberline {12.12}Batching: a flush boundary}{123}{section.12.12}%
-\contentsline {paragraph}{Implementation detail: deterministic flush}{124}{paragraph*.40}%
+\contentsline {paragraph}{Implementation detail: deterministic flush}{124}{paragraph*.45}%
 \contentsline {section}{\numberline {12.13}Memos: derived signals with equality}{124}{section.12.13}%
-\contentsline {paragraph}{Memo invalidation path}{124}{paragraph*.41}%
+\contentsline {paragraph}{Memo invalidation path}{124}{paragraph*.46}%
 \contentsline {section}{\numberline {12.14}Lanes: effects can be scheduled via the runtime scheduler}{124}{section.12.14}%
 \contentsline {subsection}{\numberline {12.14.1}How non-sync lanes are tested}{124}{subsection.12.14.1}%
 \contentsline {section}{\numberline {12.15}Determinism tests and fuzz tests}{125}{section.12.15}%
@@ -342,16 +356,16 @@
 \contentsline {section}{\numberline {13.1}The contract: schedules tasks, flushes deterministically}{128}{section.13.1}%
 \contentsline {subsection}{\numberline {13.1.1}Why a scheduler exists (not just ``because React has one'')}{128}{subsection.13.1.1}%
 \contentsline {subsection}{\numberline {13.1.2}A concrete mental model: 5 queues + 1 deterministic pick loop}{129}{subsection.13.1.2}%
-\contentsline {paragraph}{A tiny scheduler contract}{130}{paragraph*.42}%
+\contentsline {paragraph}{A tiny scheduler contract}{130}{paragraph*.47}%
 \contentsline {section}{\numberline {13.2}Lanes: latency categories and fixed priority order}{130}{section.13.2}%
 \contentsline {subsection}{\numberline {13.2.1}What lanes are (and what they are not)}{130}{subsection.13.2.1}%
 \contentsline {subsection}{\numberline {13.2.2}What is a lane in practice?}{131}{subsection.13.2.2}%
 \contentsline {subsection}{\numberline {13.2.3}The sync lane}{131}{subsection.13.2.3}%
-\contentsline {paragraph}{Why still enqueue sync tasks?}{131}{paragraph*.43}%
+\contentsline {paragraph}{Why still enqueue sync tasks?}{131}{paragraph*.48}%
 \contentsline {section}{\numberline {13.3}Flush strategies: how work gets a time slice}{131}{section.13.3}%
 \contentsline {subsection}{\numberline {13.3.1}createRequestFlush(strategy)}{132}{subsection.13.3.1}%
 \contentsline {subsection}{\numberline {13.3.2}createBrowserScheduler() convenience}{132}{subsection.13.3.2}%
-\contentsline {paragraph}{Why these strategies exist}{132}{paragraph*.44}%
+\contentsline {paragraph}{Why these strategies exist}{132}{paragraph*.49}%
 \contentsline {section}{\numberline {13.4}Deterministic ordering inside a lane}{132}{section.13.4}%
 \contentsline {subsection}{\numberline {13.4.1}Where deadlines come from}{132}{subsection.13.4.1}%
 \contentsline {subsection}{\numberline {13.4.2}Three tie-breakers, one guarantee (and why we need all three)}{133}{subsection.13.4.2}%
@@ -384,7 +398,7 @@
 \contentsline {subsection}{\numberline {14.4.2}Slot}{143}{subsection.14.4.2}%
 \contentsline {section}{\numberline {14.5}Why paths (and not querySelector)?}{143}{section.14.5}%
 \contentsline {subsection}{\numberline {14.5.1}Path stability: whitespace is part of your ABI}{144}{subsection.14.5.1}%
-\contentsline {paragraph}{Practical rule for compilers}{144}{paragraph*.45}%
+\contentsline {paragraph}{Practical rule for compilers}{144}{paragraph*.50}%
 \contentsline {section}{\numberline {14.6}The public API (surface area)}{144}{section.14.6}%
 \contentsline {section}{\numberline {14.7}defineBlock(): the type boundary}{145}{section.14.7}%
 \contentsline {section}{\numberline {14.8}mountBlock(): instantiate template + resolve slot nodes}{145}{section.14.8}%
@@ -393,16 +407,16 @@
 \contentsline {section}{\numberline {14.9}update(values): slot patching rules}{146}{section.14.9}%
 \contentsline {subsection}{\numberline {14.9.1}Slot kind dispatch at a glance}{147}{subsection.14.9.1}%
 \contentsline {subsection}{\numberline {14.9.2}text slots}{147}{subsection.14.9.2}%
-\contentsline {paragraph}{DOM ops (what actually happens)}{147}{paragraph*.46}%
-\contentsline {paragraph}{Gotcha: Text slots are strict about node type}{147}{paragraph*.47}%
+\contentsline {paragraph}{DOM ops (what actually happens)}{147}{paragraph*.51}%
+\contentsline {paragraph}{Gotcha: Text slots are strict about node type}{147}{paragraph*.52}%
 \contentsline {subsection}{\numberline {14.9.3}attr slots (including boolean attributes and SVG xlink)}{148}{subsection.14.9.3}%
-\contentsline {paragraph}{DOM ops summary}{148}{paragraph*.48}%
+\contentsline {paragraph}{DOM ops summary}{148}{paragraph*.53}%
 \contentsline {subsection}{\numberline {14.9.4}prop slots (input correctness)}{148}{subsection.14.9.4}%
-\contentsline {paragraph}{Why prop slots exist at all}{148}{paragraph*.49}%
+\contentsline {paragraph}{Why prop slots exist at all}{148}{paragraph*.54}%
 \contentsline {subsection}{\numberline {14.9.5}class slots}{149}{subsection.14.9.5}%
 \contentsline {subsection}{\numberline {14.9.6}style slots}{149}{subsection.14.9.6}%
 \contentsline {subsection}{\numberline {14.9.7}event slots: bind once, swap handler}{149}{subsection.14.9.7}%
-\contentsline {subsubsection}{Matching Relax VDOM semantics: hostComponent binding}{149}{subsubsection*.50}%
+\contentsline {subsubsection}{Matching Relax VDOM semantics: hostComponent binding}{149}{subsubsection*.55}%
 \contentsline {section}{\numberline {14.10}Lifecycle: destroy vs dispose, and idempotency}{150}{section.14.10}%
 \contentsline {subsection}{\numberline {14.10.1}Why the destroyed guard matters in a scheduled world}{150}{subsection.14.10.1}%
 \contentsline {section}{\numberline {14.11}mountCompiledBlock(): wiring signals to slot writes}{150}{section.14.11}%
@@ -410,12 +424,12 @@
 \contentsline {subsection}{\numberline {14.11.2}Why coalescing matters (and how it stays deterministic)}{151}{subsection.14.11.2}%
 \contentsline {subsection}{\numberline {14.11.3}Timeline: what happens when two signals change in the same tick}{152}{subsection.14.11.3}%
 \contentsline {subsection}{\numberline {14.11.4}Annotated walkthrough: \texttt {mountCompiledBlock()} line-by-line}{152}{subsection.14.11.4}%
-\contentsline {paragraph}{\texttt {lane} + \texttt {scheduler}: where the commit runs}{153}{paragraph*.51}%
-\contentsline {paragraph}{Initial read: mount with a consistent snapshot}{153}{paragraph*.52}%
-\contentsline {paragraph}{The coalescing state: \texttt {pending} + \texttt {scheduled}}{153}{paragraph*.53}%
-\contentsline {paragraph}{\texttt {flushPending()}: the commit phase}{154}{paragraph*.54}%
-\contentsline {paragraph}{Per-slot effects: producers that only schedule once}{154}{paragraph*.55}%
-\contentsline {paragraph}{Disposal: stop reactive producers, then remove DOM}{154}{paragraph*.56}%
+\contentsline {paragraph}{\texttt {lane} + \texttt {scheduler}: where the commit runs}{153}{paragraph*.56}%
+\contentsline {paragraph}{Initial read: mount with a consistent snapshot}{153}{paragraph*.57}%
+\contentsline {paragraph}{The coalescing state: \texttt {pending} + \texttt {scheduled}}{153}{paragraph*.58}%
+\contentsline {paragraph}{\texttt {flushPending()}: the commit phase}{154}{paragraph*.59}%
+\contentsline {paragraph}{Per-slot effects: producers that only schedule once}{154}{paragraph*.60}%
+\contentsline {paragraph}{Disposal: stop reactive producers, then remove DOM}{154}{paragraph*.61}%
 \contentsline {subsection}{\numberline {14.11.5}Lane choice is part of the compiled contract}{155}{subsection.14.11.5}%
 \contentsline {subsection}{\numberline {14.11.6}Disposal stops reactive updates}{155}{subsection.14.11.6}%
 \contentsline {section}{\numberline {14.12}Composition: nested blocks and fallback regions}{155}{section.14.12}%
@@ -507,9 +521,9 @@
 \contentsline {subsection}{\numberline {18.1.4}Creating HRBR vnodes: \texttt {hBlock()}}{193}{subsection.18.1.4}%
 \contentsline {section}{\numberline {18.2}Mounting: why HRBR gets its own host container}{194}{section.18.2}%
 \contentsline {subsection}{\numberline {18.2.1}\texttt {createHrbrNode()}: mount into a dedicated \texttt {<span>}}{194}{subsection.18.2.1}%
-\contentsline {subsubsection}{Why \texttt {vdom.el = host} matters}{194}{subsubsection*.57}%
+\contentsline {subsubsection}{Why \texttt {vdom.el = host} matters}{194}{subsubsection*.62}%
 \contentsline {subsection}{\numberline {18.2.2}Edge cases this design avoids}{195}{subsection.18.2.2}%
-\contentsline {subsubsection}{A small but useful marker: \texttt {data-hrbr="1"}}{195}{subsubsection*.58}%
+\contentsline {subsubsection}{A small but useful marker: \texttt {data-hrbr="1"}}{195}{subsubsection*.63}%
 \contentsline {section}{\numberline {18.3}Patching: stability by mount factory identity}{195}{section.18.3}%
 \contentsline {subsection}{\numberline {18.3.1}Fast path: stable mount function means reuse}{196}{subsection.18.3.1}%
 \contentsline {subsection}{\numberline {18.3.2}Slow path: mount changed means dispose+destroy+remount}{197}{subsection.18.3.2}%
@@ -548,7 +562,7 @@
 \contentsline {subsection}{\numberline {19.3.1}\texttt {compileTSXToBlock():} parse -> extract -> render template}{208}{subsection.19.3.1}%
 \contentsline {subsection}{\numberline {19.3.2}Determinism: why the TS compiler is a good executable spec}{208}{subsection.19.3.2}%
 \contentsline {subsection}{\numberline {19.3.3}Paths: the compiler and runtime must agree}{209}{subsection.19.3.3}%
-\contentsline {paragraph}{Why this works}{209}{paragraph*.59}%
+\contentsline {paragraph}{Why this works}{209}{paragraph*.64}%
 \contentsline {subsection}{\numberline {19.3.4}The one gotcha that causes most bugs: \texttt {childNodes} includes text nodes}{209}{subsection.19.3.4}%
 \contentsline {subsection}{\numberline {19.3.5}Walkthrough: compute a slot path by hand}{209}{subsection.19.3.5}%
 \contentsline {subsection}{\numberline {19.3.6}What the TS prototype actually returns (and why the reads are empty)}{210}{subsection.19.3.6}%
@@ -604,10 +618,10 @@
 \contentsline {subsection}{\numberline {20.3.1}Why inject at \texttt {Program.exit}?}{228}{subsection.20.3.1}%
 \contentsline {section}{\numberline {20.4}The core visitor: \texttt {JSXElement(path)}}{228}{section.20.4}%
 \contentsline {subsection}{\numberline {20.4.1}Success path: compile into a block}{228}{subsection.20.4.1}%
-\contentsline {subsubsection}{Hoisting: why \texttt {defineBlock(...)} lives at module scope}{229}{subsubsection*.60}%
+\contentsline {subsubsection}{Hoisting: why \texttt {defineBlock(...)} lives at module scope}{229}{subsubsection*.65}%
 \contentsline {subsection}{\numberline {20.4.2}Failure path: route to fallback}{229}{subsection.20.4.2}%
-\contentsline {paragraph}{Why fallback exists}{229}{paragraph*.61}%
-\contentsline {paragraph}{Current fallback subset}{229}{paragraph*.62}%
+\contentsline {paragraph}{Why fallback exists}{229}{paragraph*.66}%
+\contentsline {paragraph}{Current fallback subset}{229}{paragraph*.67}%
 \contentsline {subsection}{\numberline {20.4.3}Fallback synthesis: what gets captured (and what doesn't)}{230}{subsection.20.4.3}%
 \contentsline {section}{\numberline {20.5}Template extraction: \texttt {buildTemplateFromJsxElement()}}{230}{section.20.5}%
 \contentsline {subsection}{\numberline {20.5.1}Supported subset (today)}{230}{subsection.20.5.1}%
@@ -657,8 +671,8 @@
 \contentsline {subsection}{\numberline {21.4.1}A subtle performance point: "no hook" short-circuit}{244}{subsection.21.4.1}%
 \contentsline {section}{\numberline {21.5}Where events come from in the runtime}{245}{section.21.5}%
 \contentsline {subsection}{\numberline {21.5.1}Blocks: slot writes and DOM operations}{245}{subsection.21.5.1}%
-\contentsline {subsubsection}{Slot writes: one event per attempted update}{245}{subsubsection*.63}%
-\contentsline {subsubsection}{DOM operations: a vocabulary of \texttt {domOp} strings}{245}{subsubsection*.64}%
+\contentsline {subsubsection}{Slot writes: one event per attempted update}{245}{subsubsection*.68}%
+\contentsline {subsubsection}{DOM operations: a vocabulary of \texttt {domOp} strings}{245}{subsubsection*.69}%
 \contentsline {subsection}{\numberline {21.5.2}Scheduler: flush timing}{245}{subsection.21.5.2}%
 \contentsline {subsection}{\numberline {21.5.3}Signals: scheduled computations}{246}{subsection.21.5.3}%
 \contentsline {section}{\numberline {21.6}Tests-as-spec}{246}{section.21.6}%
@@ -679,55 +693,106 @@
 \contentsline {subsection}{\numberline {22.3.1}Why ``real browser'' matters}{252}{subsection.22.3.1}%
 \contentsline {subsection}{\numberline {22.3.2}A small but important detail: Node/jsdom fallback exists}{253}{subsection.22.3.2}%
 \contentsline {section}{\numberline {22.4}The harness contract}{253}{section.22.4}%
-\contentsline {subsection}{\numberline {22.4.1}Benchmark case shape}{253}{subsection.22.4.1}%
-\contentsline {subsection}{\numberline {22.4.2}What counts as ``one tick''? (and why that matters)}{253}{subsection.22.4.2}%
-\contentsline {subsection}{\numberline {22.4.3}Tiny contract for a fair \texttt {BenchmarkCase}}{254}{subsection.22.4.3}%
-\contentsline {subsection}{\numberline {22.4.4}Warmup vs measure windows}{254}{subsection.22.4.4}%
-\contentsline {subsection}{\numberline {22.4.5}Reported metrics: avg + p95 + drops}{254}{subsection.22.4.5}%
-\contentsline {subsection}{\numberline {22.4.6}How to read results (avg vs p95 vs drops)}{254}{subsection.22.4.6}%
-\contentsline {section}{\numberline {22.5}Profiles and seeded runs}{255}{section.22.5}%
-\contentsline {subsection}{\numberline {22.5.1}Profiles via URL parameters}{255}{subsection.22.5.1}%
-\contentsline {subsection}{\numberline {22.5.2}Benchmark variables (every knob you can turn)}{255}{subsection.22.5.2}%
-\contentsline {subsection}{\numberline {22.5.3}Examples: URL parameters in practice}{256}{subsection.22.5.3}%
-\contentsline {subsection}{\numberline {22.5.4}Seeded RNG}{257}{subsection.22.5.4}%
-\contentsline {section}{\numberline {22.6}The benchmark runner UI}{257}{section.22.6}%
-\contentsline {subsection}{\numberline {22.6.1}Why \texttt {host.innerHTML = ''} between runs matters}{257}{subsection.22.6.1}%
-\contentsline {section}{\numberline {22.7}Cases: what they measure}{257}{section.22.7}%
-\contentsline {subsection}{\numberline {22.7.1}Case study: \texttt {text-1m}}{258}{subsection.22.7.1}%
-\contentsline {subsection}{\numberline {22.7.2}What should you expect from \texttt {text-1m}?}{258}{subsection.22.7.2}%
-\contentsline {subsection}{\numberline {22.7.3}Case study: \texttt {list-10k-1pct}}{258}{subsection.22.7.3}%
-\contentsline {subsection}{\numberline {22.7.4}What \texttt {list-10k-1pct} tries to model}{258}{subsection.22.7.4}%
-\contentsline {subsection}{\numberline {22.7.5}Case study: \texttt {widgets-200}}{259}{subsection.22.7.5}%
-\contentsline {subsection}{\numberline {22.7.6}Extra cases in \texttt {cases/more.ts} (and what each means)}{259}{subsection.22.7.6}%
-\contentsline {section}{\numberline {22.8}Build modes matter (dev vs prod)}{259}{section.22.8}%
-\contentsline {subsection}{\numberline {22.8.1}What the Rollup configs actually do}{260}{subsection.22.8.1}%
-\contentsline {section}{\numberline {22.9}Perf smoke (CI-friendly)}{260}{section.22.9}%
-\contentsline {subsection}{\numberline {22.9.1}What perf-smoke is actually specifying}{260}{subsection.22.9.1}%
-\contentsline {subsection}{\numberline {22.9.2}Why the thresholds are wide}{260}{subsection.22.9.2}%
-\contentsline {section}{\numberline {22.10}Instrumentation and benchmarks: keep them separate}{261}{section.22.10}%
-\contentsline {section}{\numberline {22.11}Online resources}{261}{section.22.11}%
-\contentsline {section}{\numberline {22.12}Checklist: how to run a fair comparison}{261}{section.22.12}%
-\contentsline {section}{\numberline {22.13}Interpreting a real output (example walkthrough)}{261}{section.22.13}%
-\contentsline {section}{\numberline {22.14}Why this benchmark approach is better than ``single number'' benchmarks}{262}{section.22.14}%
-\contentsline {section}{\numberline {22.15}Online resources}{263}{section.22.15}%
-\contentsline {chapter}{\numberline {23}Release-quality discipline: tests, typecheck, lint, builds}{264}{chapter.23}%
-\contentsline {section}{\numberline {23.1}The quality-gates contract}{264}{section.23.1}%
-\contentsline {subsection}{\numberline {23.1.1}A tiny contract (inputs, outputs, failure modes)}{265}{subsection.23.1.1}%
-\contentsline {section}{\numberline {23.2}Typecheck: make illegal states unrepresentable}{265}{section.23.2}%
-\contentsline {subsection}{\numberline {23.2.1}Common typecheck failures (and how to debug)}{266}{subsection.23.2.1}%
-\contentsline {subsection}{\numberline {23.2.2}Why there are multiple \texttt {tsconfig} files}{266}{subsection.23.2.2}%
-\contentsline {section}{\numberline {23.3}Lint: keep the surface area consistent}{266}{section.23.3}%
-\contentsline {subsection}{\numberline {23.3.1}What lint catches that typecheck doesn't}{267}{subsection.23.3.1}%
-\contentsline {section}{\numberline {23.4}Tests: executable specs with jsdom}{267}{section.23.4}%
-\contentsline {subsection}{\numberline {23.4.1}The test suite structure}{267}{subsection.23.4.1}%
-\contentsline {subsection}{\numberline {23.4.2}Tests-as-spec example: TSX wiring}{267}{subsection.23.4.2}%
-\contentsline {subsection}{\numberline {23.4.3}Debugging failing tests (a workflow)}{268}{subsection.23.4.3}%
-\contentsline {subsection}{\numberline {23.4.4}What to do when a test failure seems ``impossible''}{268}{subsection.23.4.4}%
-\contentsline {section}{\numberline {23.5}Builds: ESM, CJS, and types}{268}{section.23.5}%
-\contentsline {subsection}{\numberline {23.5.1}Why builds are a quality gate}{269}{subsection.23.5.1}%
-\contentsline {subsection}{\numberline {23.5.2}Build discipline: match \texttt {exports} to outputs}{269}{subsection.23.5.2}%
-\contentsline {section}{\numberline {23.6}Release checklist (practical)}{270}{section.23.6}%
-\contentsline {section}{\numberline {23.7}Evidence from this repo}{270}{section.23.7}%
-\contentsline {section}{\numberline {23.8}Online resources}{270}{section.23.8}%
-\contentsline {chapter}{Appendix: notation}{271}{chapter*.65}%
-\contentsline {chapter}{References}{272}{chapter*.66}%
+\contentsline {subsection}{\numberline {22.4.1}From scratch: the minimal mental model}{253}{subsection.22.4.1}%
+\contentsline {subsection}{\numberline {22.4.2}Benchmark case shape}{254}{subsection.22.4.2}%
+\contentsline {subsection}{\numberline {22.4.3}The actual types (spec-level)}{254}{subsection.22.4.3}%
+\contentsline {subsection}{\numberline {22.4.4}What counts as ``one tick''? (and why that matters)}{255}{subsection.22.4.4}%
+\contentsline {subsection}{\numberline {22.4.5}Tiny contract for a fair \texttt {BenchmarkCase}}{255}{subsection.22.4.5}%
+\contentsline {subsection}{\numberline {22.4.6}Warmup vs measure windows}{255}{subsection.22.4.6}%
+\contentsline {subsection}{\numberline {22.4.7}Reported metrics: avg + p95 + drops}{256}{subsection.22.4.7}%
+\contentsline {subsection}{\numberline {22.4.8}How to read results (avg vs p95 vs drops)}{256}{subsection.22.4.8}%
+\contentsline {subsection}{\numberline {22.4.9}The core measurement loop (the code that matters)}{256}{subsection.22.4.9}%
+\contentsline {section}{\numberline {22.5}Profiles and seeded runs}{258}{section.22.5}%
+\contentsline {subsection}{\numberline {22.5.1}Profiles via URL parameters}{258}{subsection.22.5.1}%
+\contentsline {subsection}{\numberline {22.5.2}From scratch: why profiles exist at all}{258}{subsection.22.5.2}%
+\contentsline {subsection}{\numberline {22.5.3}Benchmark variables (every knob you can turn)}{258}{subsection.22.5.3}%
+\contentsline {subsection}{\numberline {22.5.4}Profile parsing (and the important clamps)}{259}{subsection.22.5.4}%
+\contentsline {subsection}{\numberline {22.5.5}Examples: URL parameters in practice}{260}{subsection.22.5.5}%
+\contentsline {subsection}{\numberline {22.5.6}Seeded RNG}{261}{subsection.22.5.6}%
+\contentsline {subsection}{\numberline {22.5.7}The PRNG implementation (and why it is ``good enough'')}{261}{subsection.22.5.7}%
+\contentsline {section}{\numberline {22.6}The benchmark runner UI}{262}{section.22.6}%
+\contentsline {subsection}{\numberline {22.6.1}Why \texttt {host.innerHTML = ''} between runs matters}{262}{subsection.22.6.1}%
+\contentsline {section}{\numberline {22.7}Cases: what they measure}{263}{section.22.7}%
+\contentsline {subsection}{\numberline {22.7.1}Case study: \texttt {text-1m}}{263}{subsection.22.7.1}%
+\contentsline {subsection}{\numberline {22.7.2}What should you expect from \texttt {text-1m}?}{263}{subsection.22.7.2}%
+\contentsline {subsection}{\numberline {22.7.3}Case study: \texttt {list-10k-1pct}}{263}{subsection.22.7.3}%
+\contentsline {subsection}{\numberline {22.7.4}What \texttt {list-10k-1pct} tries to model}{264}{subsection.22.7.4}%
+\contentsline {subsection}{\numberline {22.7.5}Case study: \texttt {widgets-200}}{264}{subsection.22.7.5}%
+\contentsline {subsection}{\numberline {22.7.6}Extra cases in \texttt {cases/more.ts} (and what each means)}{264}{subsection.22.7.6}%
+\contentsline {section}{\numberline {22.8}Build modes matter (dev vs prod)}{265}{section.22.8}%
+\contentsline {subsection}{\numberline {22.8.1}What the Rollup configs actually do}{265}{subsection.22.8.1}%
+\contentsline {section}{\numberline {22.9}Perf smoke (CI-friendly)}{265}{section.22.9}%
+\contentsline {subsection}{\numberline {22.9.1}What perf-smoke is actually specifying}{265}{subsection.22.9.1}%
+\contentsline {subsection}{\numberline {22.9.2}Perf smoke is a test, but for a different failure mode}{266}{subsection.22.9.2}%
+\contentsline {subsection}{\numberline {22.9.3}Why the thresholds are wide}{266}{subsection.22.9.3}%
+\contentsline {subsection}{\numberline {22.9.4}Reading the perf-smoke source as a spec}{266}{subsection.22.9.4}%
+\contentsline {section}{\numberline {22.10}Instrumentation and benchmarks: keep them separate}{267}{section.22.10}%
+\contentsline {section}{\numberline {22.11}Online resources}{267}{section.22.11}%
+\contentsline {section}{\numberline {22.12}Checklist: how to run a fair comparison}{268}{section.22.12}%
+\contentsline {section}{\numberline {22.13}Interpreting a real output (example walkthrough)}{268}{section.22.13}%
+\contentsline {section}{\numberline {22.14}Why this benchmark approach is better than ``single number'' benchmarks}{269}{section.22.14}%
+\contentsline {section}{\numberline {22.15}Online resources}{269}{section.22.15}%
+\contentsline {chapter}{\numberline {23}Release-quality discipline: tests, typecheck, lint, builds}{270}{chapter.23}%
+\contentsline {section}{\numberline {23.1}The quality-gates contract}{270}{section.23.1}%
+\contentsline {subsection}{\numberline {23.1.1}A tiny contract (inputs, outputs, failure modes)}{271}{subsection.23.1.1}%
+\contentsline {section}{\numberline {23.2}Typecheck: make illegal states unrepresentable}{271}{section.23.2}%
+\contentsline {subsection}{\numberline {23.2.1}From scratch: why \emph {multiple} gates are non-negotiable}{271}{subsection.23.2.1}%
+\contentsline {subsection}{\numberline {23.2.2}The scripts are part of the contract (not just convenience)}{272}{subsection.23.2.2}%
+\contentsline {subsection}{\numberline {23.2.3}Common typecheck failures (and how to debug)}{273}{subsection.23.2.3}%
+\contentsline {subsection}{\numberline {23.2.4}Why there are multiple \texttt {tsconfig} files}{273}{subsection.23.2.4}%
+\contentsline {section}{\numberline {23.3}Lint: keep the surface area consistent}{273}{section.23.3}%
+\contentsline {subsection}{\numberline {23.3.1}What lint catches that typecheck doesn't}{274}{subsection.23.3.1}%
+\contentsline {subsection}{\numberline {23.3.2}The lint configuration is intentionally minimal}{274}{subsection.23.3.2}%
+\contentsline {section}{\numberline {23.4}Tests: executable specs with jsdom}{274}{section.23.4}%
+\contentsline {subsection}{\numberline {23.4.1}The test suite structure}{275}{subsection.23.4.1}%
+\contentsline {subsection}{\numberline {23.4.2}Tests-as-spec example: TSX wiring}{275}{subsection.23.4.2}%
+\contentsline {subsection}{\numberline {23.4.3}Debugging failing tests (a workflow)}{275}{subsection.23.4.3}%
+\contentsline {subsection}{\numberline {23.4.4}The Vitest configuration is part of the runtime contract}{276}{subsection.23.4.4}%
+\contentsline {subsection}{\numberline {23.4.5}What to do when a test failure seems ``impossible''}{276}{subsection.23.4.5}%
+\contentsline {section}{\numberline {23.5}Builds: ESM, CJS, and types}{277}{section.23.5}%
+\contentsline {subsection}{\numberline {23.5.1}Why builds are a quality gate}{277}{subsection.23.5.1}%
+\contentsline {subsection}{\numberline {23.5.2}Build discipline: match \texttt {exports} to outputs}{277}{subsection.23.5.2}%
+\contentsline {section}{\numberline {23.6}Release checklist (practical)}{278}{section.23.6}%
+\contentsline {section}{\numberline {23.7}From scratch: package \texttt {exports} is the public API surface}{278}{section.23.7}%
+\contentsline {section}{\numberline {23.8}Rollup builds: what gets emitted and why}{279}{section.23.8}%
+\contentsline {subsection}{\numberline {23.8.1}ESM build (from \texttt {rollup.config.mjs})}{279}{subsection.23.8.1}%
+\contentsline {subsection}{\numberline {23.8.2}CJS build (from \texttt {rollup.config.cjs.mjs})}{279}{subsection.23.8.2}%
+\contentsline {subsection}{\numberline {23.8.3}A practical debugging playbook for build failures}{279}{subsection.23.8.3}%
+\contentsline {section}{\numberline {23.9}Evidence from this repo}{280}{section.23.9}%
+\contentsline {section}{\numberline {23.10}Online resources}{280}{section.23.10}%
+\contentsline {chapter}{Appendix A: Glossary}{282}{chapter*.70}%
+\contentsline {section}{\numberline {23.11}VNode / VDOM}{282}{section.23.11}%
+\contentsline {section}{\numberline {23.12}Mount}{282}{section.23.12}%
+\contentsline {section}{\numberline {23.13}Patch}{282}{section.23.13}%
+\contentsline {section}{\numberline {23.14}Unmount / Destroy}{282}{section.23.14}%
+\contentsline {section}{\numberline {23.15}Keyed children}{282}{section.23.15}%
+\contentsline {section}{\numberline {23.16}Scheduler}{282}{section.23.16}%
+\contentsline {section}{\numberline {23.17}Signals / Effects}{283}{section.23.17}%
+\contentsline {section}{\numberline {23.18}HRBR}{283}{section.23.18}%
+\contentsline {chapter}{Appendix B: Running, Testing, and Hacking}{284}{chapter*.71}%
+\contentsline {section}{\numberline {23.19}Where the code lives}{284}{section.23.19}%
+\contentsline {section}{\numberline {23.20}The contract: scripts are interfaces}{284}{section.23.20}%
+\contentsline {section}{\numberline {23.21}Suggested local workflow}{284}{section.23.21}%
+\contentsline {subsection}{\numberline {23.21.1}A minimal command cheat sheet}{285}{subsection.23.21.1}%
+\contentsline {section}{\numberline {23.22}Debugging strategy: shrink the mystery}{285}{section.23.22}%
+\contentsline {section}{\numberline {23.23}Common failure modes}{285}{section.23.23}%
+\contentsline {subsection}{\numberline {23.23.1}DOM tests behave differently than browser demos}{285}{subsection.23.23.1}%
+\contentsline {subsection}{\numberline {23.23.2}Performance claims feel inconsistent}{285}{subsection.23.23.2}%
+\contentsline {subsection}{\numberline {23.23.3}Packaging and exports feel confusing}{285}{subsection.23.23.3}%
+\contentsline {chapter}{Appendix C: Architecture Checklists}{286}{chapter*.72}%
+\contentsline {section}{\numberline {23.24}Renderer checklist}{286}{section.23.24}%
+\contentsline {section}{\numberline {23.25}Scheduler checklist}{286}{section.23.25}%
+\contentsline {section}{\numberline {23.26}Reactivity checklist}{286}{section.23.26}%
+\contentsline {section}{\numberline {23.27}Compiler checklist}{286}{section.23.27}%
+\contentsline {section}{\numberline {23.28}Release checklist}{287}{section.23.28}%
+\contentsline {chapter}{Appendix D: Developer Notes (Extended)}{288}{chapter*.73}%
+\contentsline {section}{\numberline {23.29}From \textit {reading} to \textit {building}}{288}{section.23.29}%
+\contentsline {subsection}{\numberline {23.29.1}How to use the inspiration book alongside this repository}{288}{subsection.23.29.1}%
+\contentsline {section}{\numberline {23.30}What \texttt {\_\_tests\_\_} taught me}{288}{section.23.30}%
+\contentsline {paragraph}{Tests as specs, not as afterthoughts}{289}{paragraph*.74}%
+\contentsline {section}{\numberline {23.31}A short author bio (and why performance shows up so often)}{289}{section.23.31}%
+\contentsline {section}{\numberline {23.32}Why algorithms appear in UI code}{289}{section.23.32}%
+\contentsline {section}{\numberline {23.33}Why compiler assistance is worth it}{289}{section.23.33}%
+\contentsline {section}{\numberline {23.34}Engineering principle: make your fast path debuggable}{290}{section.23.34}%
+\contentsline {section}{\numberline {23.35}Where to go next}{290}{section.23.35}%
+\contentsline {chapter}{References}{291}{chapter*.75}%

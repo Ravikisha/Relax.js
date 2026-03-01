@@ -178,28 +178,15 @@
 \end{minipage}
 \end{titlepage}
 
-% --- Copyright + printing notes (production-friendly) ---
+% --- Frontmatter pages ---
 \cleardoublepage
-	\thispagestyle{empty}
+\input{book/chapters/copyright-page}
 
-\begingroup
-\small
-\noindent\textbf{Relax.js: A Deep Build Guide}\\
-\noindent\textcopyright\ \the\year\ Ravi Kishan and contributors.\\
-\noindent Licensed under the MIT License (see \texttt{LICENSE} in the repository).\\
+\cleardoublepage
+\input{book/chapters/preface}
 
-\vspace{0.7em}
-\noindent\textbf{Disclaimer.} This book reverse-engineers and explains the Relax.js codebase.
-APIs and internals may change.
-Performance discussions are environment-dependent; use the benchmark methodology chapter for fair comparisons.
-
-\vspace{0.7em}
-\noindent\textbf{Developer Portfolio} \url{https://ravikishan.me} \\
-\noindent\textbf{GitHub.} \url{https://github.com/Ravikisha} \\
-\noindent\textbf{Source.} \url{https://github.com/Ravikisha/Relax.js} \\
-\noindent\textbf{NPM.} \url{https://www.npmjs.com/package/relaxcore}
-\par
-\endgroup
+\cleardoublepage
+\input{book/chapters/developer-notes}
 
 % Table of Contents (explicitly included)
 \cleardoublepage
@@ -239,9 +226,10 @@ Performance discussions are environment-dependent; use the benchmark methodology
 
 \backmatter
 
-\chapter{Appendix: notation}
-This book uses \texttt{file/path.ts} to reference source files.
-Symbol names are written like \texttt{h()} or \texttt{mountDOM()}.
+\input{book/chapters/appendix-a-glossary}
+\input{book/chapters/appendix-b-running-and-hacking}
+\input{book/chapters/appendix-c-architecture-checklists}
+\input{book/chapters/appendix-d-developer-notes-extended}
 
 \cleardoublepage
 \chapter{References}

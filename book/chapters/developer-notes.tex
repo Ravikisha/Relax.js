@@ -1,0 +1,87 @@
+\chapter*{Developer Notes}
+\addcontentsline{toc}{chapter}{Developer Notes}
+
+\section*{Author}
+\addcontentsline{toc}{section}{Author}
+
+This project and this book were written by \textbf{Ravi Kishan} (Bihar, India).
+My background is backend and systems engineering, so I tend to be picky about semantics, performance, and regression prevention.
+
+You can find me here:
+\begin{itemize}
+  \item Email: \href{mailto:ravikishan63392@gmail.com}{ravikishan63392@gmail.com}
+  \item Website: \href{https://ravikishan.me}{https://ravikishan.me}
+  \item GitHub: \href{https://github.com/ravikisha}{https://github.com/ravikisha}
+  \item LinkedIn: \href{https://www.linkedin.com/in/ravikisha}{https://www.linkedin.com/in/ravikisha}
+\end{itemize}
+
+\section*{Project links}
+\addcontentsline{toc}{section}{Project links}
+
+\begin{itemize}
+  \item Repository: \href{https://github.com/ravikisha/relax.js}{https://github.com/ravikisha/relax.js}
+  \item NPM package (\texttt{relaxcore}): \href{https://www.npmjs.com/package/relaxcore}{https://www.npmjs.com/package/relaxcore}
+\end{itemize}
+
+\section*{Why I built this}
+\addcontentsline{toc}{section}{Why I built this}
+
+Relax.js started as a learning project and became a serious engineering exercise.
+The seed inspiration was the book:
+
+\begin{quote}
+\textit{Build a Frontend Web Framework (From Scratch)}\\
+\textsc{\mbox{\hspace{0.2em}ÁNGEL SOLA ORBAICETA}}
+\end{quote}
+
+That book gave me the push to stop treating framework internals as a black box.
+I used it as a foundation to build a basic framework, then I carried the project further.
+
+If you have that book, I recommend reading it as the baseline build-along, then using this repository as a \emph{second pass}:
+
+\begin{itemize}
+  \item Translate conceptual chapters into \textbf{tests} (executable specs).
+  \item Add \textbf{observability} (instrumentation/devtools hooks) so performance claims are measurable.
+  \item Add \textbf{packaging discipline} (ESM/CJS builds and exports maps) so the project ships like a real library.
+  \item Explore \textbf{compiler assistance} (HRBR) with a conservative fast path and a tested fallback.
+\end{itemize}
+
+\section*{How this repository goes beyond the starting point}
+\addcontentsline{toc}{section}{How this repository goes beyond the starting point}
+
+After the initial baseline, I enhanced the project to the level you see in this repository.
+The goal wasn\textquotesingle t to clone any existing framework.
+The goal was to explore the design space and write down what I learned.
+
+Concretely, Relax.js includes (and this book explains):
+
+\begin{itemize}
+  \item \textbf{More features.} A richer component model, slots/content projection, event handling, and controlled DOM mutation.
+  \item \textbf{More algorithms.} A practical keyed-children diff, sequence/LIS-style reasoning for reorders, and careful normalization rules.
+  \item \textbf{A scheduler with explicit semantics.} Async work isn\textquotesingle t hand-waved; it\textquotesingle s modeled and tested.
+  \item \textbf{A reactivity subsystem.} Signals and effects that force correctness about dependency tracking.
+  \item \textbf{Compiler-assisted rendering (HRBR).} When templates are stable, we generate a faster path; when they are not, we fall back safely.
+  \item \textbf{Instrumentation and devtools hooks.} Observability is part of the developer experience, not an afterthought.
+  \item \textbf{A release-quality discipline.} Linting, typechecking, packaging, exports maps, and build outputs are treated as contracts.
+  \item \textbf{A real test suite.} The tests are not decoration. They are executable specifications.
+\end{itemize}
+
+\section*{How to use this book as a build log}
+\addcontentsline{toc}{section}{How to use this book as a build log}
+
+If you want to build your own framework, you can treat each chapter as a milestone.
+At each milestone, try to reproduce the behavior from scratch, then compare your design to Relax.js.
+
+A strong suggestion: keep the same discipline you see here.
+Write tests as soon as you decide what \emph{should} happen.
+When you feel tempted to \textit{just make it work}, add one more test.
+
+\section*{Attribution note}
+\addcontentsline{toc}{section}{Attribution note}
+
+The implementation in this repository is my own.
+The above book is acknowledged as inspiration for the initial learning direction.
+If you enjoy this style of learning, I recommend checking it out.
+
+For convenience, here is a public search link:
+\href{https://www.amazon.com/s?k=Build+a+Frontend+Web+Framework+(From+Scratch)}{https://www.amazon.com/s?k=Build+a+Frontend+Web+Framework+(From+Scratch)}.

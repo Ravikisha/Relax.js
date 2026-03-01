@@ -99,6 +99,27 @@ This is \emph{not} intended to make Node-based benchmarking ``accurate''. It's t
 
 The core harness is \texttt{benchmarks/harness.ts}.
 
+\subsection{From scratch: the minimal mental model}
+
+Before looking at the code, anchor the harness in two ideas:
+
+\begin{enumerate}
+\item \textbf{We measure per-frame work, not total throughput.} UI jank happens when you miss frame budgets. So the harness is intentionally frame-paced via \texttt{requestAnimationFrame}.
+\item \textbf{We only stop the timer when the framework has committed.} Some frameworks batch work asynchronously; if you time only the synchronous part, you can accidentally benchmark \emph{how quickly a framework defers work}, not how quickly it completes it.
+\end{enumerate}
+
+You can treat the whole harness as a loop that runs for \(N\) frames:
+
+\begin{itemize}
+\item wait for a frame boundary
+\item start a timer
+\item do ``one tick'' of application work
+\item optionally wait for a commit barrier
+\item stop the timer and record the sample
+\end{itemize}
+
+Everything else in this chapter (profiles, seeds, smoke gates) exists to make that loop repeatable and interpretable.
+
 \subsection{Benchmark case shape}
 
 A benchmark case is a \texttt{BenchmarkCase}:
@@ -112,6 +133,51 @@ A benchmark case is a \texttt{BenchmarkCase}:
 \end{itemize}
 
 The \texttt{commit()} hook is how the harness stays fair across frameworks that batch work differently (e.g. React flush/paint boundaries).
+
+\subsection{The actual types (spec-level)}
+
+The best way to avoid misunderstandings is to show the exact shape of the harness types.
+This is a faithful JavaScript-shaped transcription of \texttt{benchmarks/harness.ts} (the real source is TypeScript, but the runtime behavior is the same):
+
+\begin{lstlisting}[language=JavaScript, caption={Harness types: what a benchmark must provide (from \texttt{benchmarks/harness.ts}).}]
+// A case is what you plug into the harness.
+// setup(host) returns a controller that can do one tick and then clean up.
+
+// BenchmarkCase
+const caseShape = {
+	name: 'list-10k-1pct:relax-hrbr',
+	setup(host) {
+		return {
+			tick() {
+				// do one unit of work (may be sync or async)
+			},
+			teardown() {
+				// remove timers/subscriptions if needed
+			},
+		}
+	},
+
+	// Optional: resolve only when the framework has committed this tick.
+	// If a framework updates in a microtask, commit() should await that.
+	commit() {
+		// optional
+	},
+}
+
+// runBenchmark options
+const optionsShape = {
+	warmupFrames: 30,
+	measureFrames: 120,
+	frameBudgetMs: 16.7,
+}
+\end{lstlisting}
+
+Two practical notes:
+
+\begin{itemize}
+\item \textbf{\texttt{commit()} is a correctness hook, not a performance hack.} Its purpose is to ensure that when we say ``the tick cost is X ms'', we mean ``X ms until the UI is committed'', not ``X ms until the framework scheduled some work''.
+\item \textbf{\texttt{teardown()} is part of fairness.} If a case leaks timers or subscriptions, later cases become noisy or slower for reasons unrelated to their own design.
+\end{itemize}
 
 \subsection{What counts as ``one tick''? (and why that matters)}
 
@@ -205,6 +271,78 @@ The harness computes p95 with:\\
 	texttt{idx = floor(p * (n - 1))} (clamped).
 This is a simple deterministic estimator, which is a feature here: the same sample list always produces the same percentile.
 
+\subsection{The core measurement loop (the code that matters)}
+
+The harness logic is intentionally small.
+Reading it carefully is worth more than reading a dozen benchmark blog posts.
+Here is the core loop as it exists in \texttt{benchmarks/harness.ts}, rewritten as JavaScript for the book:
+
+\begin{lstlisting}[language=JavaScript, caption={Core harness loop: warmup then measure (from \texttt{benchmarks/harness.ts}).}]
+function now() {
+	return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function nextFrame() {
+	if (typeof requestAnimationFrame !== 'undefined') {
+		return new Promise((r) => requestAnimationFrame(() => r()))
+	}
+	// Node/jsdom fallback: approximate and not "benchmark-accurate".
+	return new Promise((r) => setTimeout(() => r(), 16))
+}
+
+function percentile(sorted, p) {
+	if (sorted.length === 0) return 0
+	const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))
+	return sorted[idx]
+}
+
+export async function runBenchmark(b, host, options = {}) {
+	const warmupFrames = options.warmupFrames ?? 30
+	const measureFrames = options.measureFrames ?? 120
+	const frameBudgetMs = options.frameBudgetMs ?? 16.7
+
+	const ctrl = b.setup(host)
+
+	// Warmup
+	for (let i = 0; i < warmupFrames; i++) {
+		await nextFrame()
+		await ctrl.tick()
+		if (b.commit) await b.commit()
+	}
+
+	const samples = []
+	let drops = 0
+
+	// Measure
+	for (let i = 0; i < measureFrames; i++) {
+		await nextFrame()
+		const t0 = now()
+		await ctrl.tick()
+		if (b.commit) await b.commit()
+		const dt = now() - t0
+		samples.push(dt)
+		if (dt > frameBudgetMs) drops++
+	}
+
+	ctrl.teardown()
+
+	const avg = samples.reduce((a, x) => a + x, 0) / (samples.length || 1)
+	const sorted = samples.slice().sort((a, b2) => a - b2)
+	const p95 = percentile(sorted, 0.95)
+
+	return {
+		name: b.name,
+		samplesMs: samples,
+		avgMs: avg,
+		p95Ms: p95,
+		frames: samples.length,
+		frameDrops: drops,
+	}
+}
+\end{lstlisting}
+
+If you only internalize one thing from this chapter, make it this: \textbf{the harness measures how long it takes to do one tick of work \emph{per frame}, including the framework's commit boundary}. That is the closest you can get to the user's experience without building a full product.
+
 \section{Profiles and seeded runs}
 
 Repeatability relies on standard profiles and seeded randomness.
@@ -212,6 +350,23 @@ Repeatability relies on standard profiles and seeded randomness.
 \subsection{Profiles via URL parameters}
 
 The profile parser lives in \texttt{benchmarks/profile.ts}.
+
+\subsection{From scratch: why profiles exist at all}
+
+Without profiles, people do this:
+
+\begin{itemize}
+\item one person runs 30 frames
+\item another runs 600 frames
+\item someone changes warmup from 0 to 60
+\item everyone argues about results
+\end{itemize}
+
+Profiles solve that socially and technically.
+Socially, you can say: ``I ran the \texttt{default} profile with seed=42.''
+Technically, the profile defines warmup + measure windows and the frame budget in one place.
+
+In this repo, profiles are intentionally simple: \texttt{quick}, \texttt{default}, \texttt{stress}.
 
 It reads query params from \texttt{benchmarks/index.html}:
 
@@ -237,6 +392,74 @@ When you publish results, list them, because changing any of them can change the
 \end{itemize}
 
 This harness keeps the first five variables explicit and reproducible.
+
+\subsection{Profile parsing (and the important clamps)}
+
+The profile code is short, but it encodes several methodology decisions:
+
+\begin{itemize}
+\item Use named presets (quick/default/stress).
+\item Allow overrides via URL query, but \emph{clamp} them to avoid runaway configs.
+\item Force \texttt{seed} into uint32 range so the RNG behaves identically.
+\end{itemize}
+
+Here is a JavaScript version of \texttt{getBenchmarkProfile()} from \texttt{benchmarks/profile.ts}:
+
+\begin{lstlisting}[language=JavaScript, caption={Profiles from URL params (from \texttt{benchmarks/profile.ts}).}]
+function clampInt(n, min, max) {
+	return Math.min(max, Math.max(min, n | 0))
+}
+
+function readInt(params, key, fallback) {
+	const v = params.get(key)
+	if (v == null) return fallback
+	const n = Number(v)
+	return Number.isFinite(n) ? (n | 0) : fallback
+}
+
+export function getBenchmarkProfile() {
+	const url = typeof location !== 'undefined' ? new URL(location.href) : null
+	const params = url?.searchParams ?? new URLSearchParams()
+
+	const name = params.get('profile') ?? 'default'
+
+	let warmupFrames = 30
+	let measureFrames = 120
+	let frameBudgetMs = 16.7
+	let seed = 12345
+
+	switch (name) {
+		case 'quick':
+			warmupFrames = 5
+			measureFrames = 30
+			break
+		case 'stress':
+			warmupFrames = 60
+			measureFrames = 300
+			break
+		case 'default':
+		default:
+			break
+	}
+
+	warmupFrames = clampInt(readInt(params, 'warmup', warmupFrames), 0, 10_000)
+	measureFrames = clampInt(readInt(params, 'frames', measureFrames), 1, 100_000)
+
+	const budgetParam = params.get('budget')
+	if (budgetParam != null) {
+		const b = Number(budgetParam)
+		if (Number.isFinite(b) && b > 0) frameBudgetMs = b
+	}
+
+	// Keep seed stable across JS engines: force into uint32.
+	seed = (readInt(params, 'seed', seed) >>> 0)
+
+	return { name, warmupFrames, measureFrames, frameBudgetMs, seed }
+}
+\end{lstlisting}
+
+The clamps are boring, but they matter.
+They prevent a simple copy/paste typo like \texttt{frames=100000000} from freezing your browser and producing meaningless results.
 
 \subsection{Examples: URL parameters in practice}
 
@@ -295,6 +518,42 @@ Benchmark code uses a seeded RNG in \texttt{benchmarks/rng.ts}.
 A key methodology rule: the seed must be part of the report output so results can be reproduced.
 
 The benchmark RNG implementation is \texttt{Mulberry32} (\texttt{benchmarks/rng.ts}). It is simple, fast, and deterministic---perfect for selecting indices or toggling boolean flags in a way that remains repeatable across runs.
+
+\subsection{The PRNG implementation (and why it is ``good enough'')}
+
+For benchmarks, you do not need cryptographic randomness.
+You need:
+
+\begin{itemize}
+\item fast number generation
+\item stable determinism given the same seed
+\item repeatable distributions (so the same indices flip each run)
+\end{itemize}
+
+That is why the repo uses Mulberry32 in \texttt{benchmarks/rng.ts}.
+Here is the implementation in JavaScript form:
+
+\begin{lstlisting}[language=JavaScript, caption={Mulberry32 PRNG used by benchmark cases (from \texttt{benchmarks/rng.ts}).}]
+export function createRng(seed) {
+	let a = seed >>> 0
+	return {
+		float() {
+			a = (a + 0x6d2b79f5) >>> 0
+			let t = a
+			t = Math.imul(t ^ (t >>> 15), t | 1)
+			t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+			return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+		},
+		int(maxExclusive) {
+			if (maxExclusive <= 0) return 0
+			return (this.float() * maxExclusive) | 0
+		},
+	}
+}
+\end{lstlisting}
+
+This RNG is primarily used to answer questions like ``which 1\% of rows change this tick?'' in a deterministic way.
+That makes results comparable across refactors: you can be confident you're still measuring the same update pattern.
 
 \section{The benchmark runner UI}
 
@@ -476,6 +735,20 @@ You can read \texttt{benchmarks/perf-smoke.ts} as an executable specification of
 
 Even though this isn't a Vitest file, it plays the same role as tests in earlier chapters: it defines what "performance sanity" means for this repository.
 
+\subsection{Perf smoke is a test, but for a different failure mode}
+
+Correctness tests catch functional regressions.
+Perf smoke catches a different kind of regression:
+
+\begin{itemize}
+\item accidental \(\mathcal{O}(n^2)\) behavior in a hot path
+\item accidental "update everything" bug
+\item infinite loops or runaway scheduling
+\end{itemize}
+
+It is not designed to validate small wins.
+It is designed to catch ``something is badly broken'' early.
+
 \subsection{Why the thresholds are wide}
 
 \texttt{perf-smoke.ts} prints a JSON report to \texttt{console.log} and then checks very wide thresholds:
@@ -494,6 +767,61 @@ This is also why the gate uses two different lenses:
 \end{itemize}
 
 Tail latency matters because user experience is dominated by occasional slow frames.
+
+\subsection{Reading the perf-smoke source as a spec}
+
+	exttt{benchmarks/perf-smoke.ts} is worth reading because it shows how the repo uses \textbf{the same harness} in a CI-friendly way.
+Here are the key pieces, again in JavaScript form:
+
+\begin{lstlisting}[language=JavaScript, caption={CI perf smoke: run a small fixed suite and enforce wide thresholds (from \texttt{benchmarks/perf-smoke.ts}).}]
+import { runBenchmark } from './harness'
+import { getBenchmarkProfile } from './profile'
+import { text1mHRBR } from './cases/text-1m'
+import { list10k1pctHRBR } from './cases/list-10k-1pct'
+
+async function main() {
+	const profile = getBenchmarkProfile()
+	const host = document.getElementById('host') ?? document.body.appendChild(document.createElement('div'))
+
+	// Force quick-ish runs unless explicitly overridden.
+	const smokeProfile = {
+		...profile,
+		name: profile.name === 'default' ? 'quick' : profile.name,
+		warmupFrames: profile.warmupFrames ?? 10,
+		measureFrames: profile.measureFrames ?? 30,
+		frameBudgetMs: profile.frameBudgetMs ?? 50,
+	}
+
+	const rows = []
+
+	host.innerHTML = ''
+	rows.push(await runBenchmark(text1mHRBR(smokeProfile), host, smokeProfile))
+
+	host.innerHTML = ''
+	rows.push(await runBenchmark(list10k1pctHRBR(smokeProfile), host, smokeProfile))
+
+	// Very wide gate: fail only on catastrophic regressions.
+	const MAX_AVG_MS = 250
+	const MAX_P95_MS = 500
+	for (const row of rows) {
+		if (row.avgMs > MAX_AVG_MS || row.p95Ms > MAX_P95_MS) {
+			throw new Error(`perf-smoke threshold exceeded for ${row.name}`)
+		}
+	}
+}
+\end{lstlisting}
+
+Notice what this spec is saying:
+
+\begin{itemize}
+\item The smoke suite is intentionally small.
+\item It uses the same harness and the same case shapes.
+\item It prints a machine-readable JSON report (helpful for CI artifacts).
+\item It gates only on extremely large time values to avoid flakiness.
+\end{itemize}
+
+If you ever want a stricter gate, add it in a separate workflow/job.
+Don't tighten this one until you have enough historical CI data to understand the noise floor.
 
 \section{Instrumentation and benchmarks: keep them separate}
 

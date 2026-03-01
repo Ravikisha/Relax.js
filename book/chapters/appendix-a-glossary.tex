@@ -1,0 +1,38 @@
+\chapter{Appendix A: Glossary}
+
+This glossary is intentionally pragmatic.
+It captures the terms used throughout the book in the sense they are used in this repository.
+
+\section{VNode / VDOM}
+A \textbf{VNode} (virtual node) is an in-memory object that describes what the UI should be.
+A \textbf{VDOM tree} is a nested structure of VNodes.
+
+Why it matters: a VDOM lets you describe UI declaratively, then reconcile the description with the real DOM.
+
+\section{Mount}
+\textbf{Mounting} is turning a VNode into real DOM nodes and inserting them into the document.
+
+\section{Patch}
+\textbf{Patching} is updating an existing DOM subtree to match a new VNode tree.
+It\textquotesingle s the \emph{heart} of a framework: correctness first, then performance.
+
+\section{Unmount / Destroy}
+\textbf{Unmounting} (or destroying) removes DOM nodes and cleans up resources (event listeners, subscriptions, effects).
+
+\section{Keyed children}
+When a list of children has \textbf{keys}, the renderer can preserve identity across reorders.
+Keys are about stable meaning, not indexes.
+
+\section{Scheduler}
+A \textbf{scheduler} decides \emph{when} work runs.
+It is the boundary between synchronous user code and asynchronous rendering.
+
+\section{Signals / Effects}
+\textbf{Signals} represent reactive state.
+\textbf{Effects} are computations that re-run when signals they read change.
+
+\section{HRBR}
+In this book, \textbf{HRBR} refers to the compiler-assisted rendering approach used by Relax.js.
+The compiler tries to extract a stable HTML template and a set of dynamic \textbf{slots}.
+At runtime, a mounted block updates only the slots.
+When the compiler can\textquotesingle t statically guarantee structure, it emits a safe fallback.

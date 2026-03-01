@@ -59,6 +59,23 @@ It helps to think about the pipeline as a function that takes a working tree and
 
 \section{Typecheck: make illegal states unrepresentable}
 
+\subsection{From scratch: why \emph{multiple} gates are non-negotiable}
+
+When teams skip quality gates, it is rarely because they love bugs.
+It is because they are implicitly betting that one tool (usually tests) will catch everything.
+That bet fails because different tools observe different failure modes:
+
+\begin{itemize}
+\item \textbf{Typecheck fails when your \emph{model} is incoherent.} Example: you forgot that an index access can be missing.
+\item \textbf{Lint fails when your \emph{diff} is misleading.} Example: you introduced an unused variable or shadowed a name.
+\item \textbf{Tests fail when the \emph{observable behavior} regresses.} Example: DOM patching no longer preserves node identity.
+\item \textbf{Build fails when the \emph{published artifact} is wrong.} Example: exports map points at a file that Rollup no longer emits.
+\end{itemize}
+
+If you're building a framework (even a teaching one), the "artifact correctness" part becomes crucial.
+Your consumers don't import your source tree.
+They import what your package \texttt{exports} resolves to.
+
 The repo's primary TypeScript config is \texttt{tsconfig.json}.
 A few settings worth noticing:
 
@@ -83,6 +100,48 @@ The \texttt{typecheck} script (in \texttt{package.json}) runs:
 \begin{quote}
 \texttt{tsc -p tsconfig.json --noEmit}
 \end{quote}
+
+\subsection{The scripts are part of the contract (not just convenience)}
+
+In a shippable repository, scripts are the stable interface between:
+
+\begin{itemize}
+\item humans (local development)
+\item CI (repeatable automation)
+\item prepublish hooks (guardrails before shipping)
+\end{itemize}
+
+Here is the relevant portion of this repo's \texttt{package.json} scripts block (transcribed as JavaScript for readability):
+
+\begin{lstlisting}[language=JavaScript, caption={Release-quality scripts (from \texttt{package.json}).}]
+const scripts = {
+	build: 'rollup -c && rollup -c rollup.config.cjs.mjs',
+	'build:types': 'tsc -p tsconfig.build-types.json',
+
+	// Benchmarks (Chapter 22)
+	'build:bench': 'rollup -c rollup.benchmarks.config.mjs',
+	'build:bench:dev': 'NODE_ENV=development rollup -c rollup.benchmarks.config.mjs',
+	'build:bench:prod': 'NODE_ENV=production rollup -c rollup.benchmarks.config.mjs',
+	'build:bench:smoke': 'NODE_ENV=production rollup -c rollup.benchmarks.smoke.config.mjs',
+
+	typecheck: 'tsc -p tsconfig.json --noEmit',
+	lint: 'eslint src',
+	'lint:fix': 'eslint src --fix',
+	test: 'vitest run',
+	'test:watch': 'vitest watch',
+	'test:coverage': 'vitest run --coverage',
+
+	// Publish guard.
+	prepack: 'npm run build && npm run build:types',
+}
+\end{lstlisting}
+
+Two methodology notes you should adopt in your own projects:
+
+\begin{itemize}
+\item \textbf{Keep scripts boring and composable.} People should be able to guess that \texttt{prepack} implies \texttt{build} + \texttt{build:types}.
+\item \textbf{Name the intent, not the tool.} \texttt{typecheck} is more stable than \texttt{tsc} as a script name.
+\end{itemize}
 
 \section*{Diagram: why multiple tsconfig files exist}
 \begin{center}
@@ -149,6 +208,38 @@ TypeScript proves things about types, but lint is often better at catching:
 
 Even with a mostly-recommended ESLint config, getting a clean lint run is part of keeping diffs small and reviewable.
 
+\subsection{The lint configuration is intentionally minimal}
+
+This repo currently uses ESLint's flat config with a small amount of wiring:
+
+\begin{lstlisting}[language=JavaScript, caption={ESLint flat config (from \texttt{eslint.config.mjs}).}]
+import js from '@eslint/js'
+import globals from 'globals'
+
+export default [
+	js.configs.recommended,
+	{
+		languageOptions: {
+			ecmaVersion: 'latest',
+			sourceType: 'module',
+			globals: {
+				...globals.browser,
+			},
+		},
+		rules: {},
+	},
+]
+\end{lstlisting}
+
+This is a deliberate release-quality stance:
+
+\begin{itemize}
+\item The rule set is small enough that developers will actually keep it green.
+\item The team can add rules tactically when a recurring class of mistakes appears.
+\end{itemize}
+
+If you ever expand lint scope beyond \texttt{src/}, do it intentionally and expect to fix a first-time wave of legacy issues.
+
 \section{Tests: executable specs with jsdom}
 
 All tests use Vitest (see \texttt{vitest.config.js}).
@@ -207,6 +298,42 @@ A practical workflow:
 \end{enumerate}
 
 When failures are timing-related (scheduler, signals), prefer deterministic schedulers and explicit ticking (the repo already uses this pattern).
+
+\subsection{The Vitest configuration is part of the runtime contract}
+
+The test runner isn't just a tool; it's the environment your specs run inside.
+This repo's \texttt{vitest.config.js} makes two key decisions:
+
+\begin{itemize}
+\item \textbf{Alias}: TSX code can import \texttt{relax-jsx} as a specifier (mirrors TS config).
+\item \textbf{Environment}: \texttt{jsdom} provides DOM APIs for unit and integration tests.
+\end{itemize}
+
+Here is the config itself:
+
+\begin{lstlisting}[language=JavaScript, caption={Vitest config (from \texttt{vitest.config.js}).}]
+import { defineConfig } from 'vitest/config'
+import { fileURLToPath } from 'node:url'
+
+const rootDir = fileURLToPath(new URL('.', import.meta.url))
+
+export default defineConfig({
+	resolve: {
+		alias: {
+			'relax-jsx': `${rootDir}/relax-jsx`,
+		},
+	},
+	test: {
+		include: ['**/__tests__/**/*.test.ts', '**/__tests__/**/*.test.tsx'],
+		reporters: 'verbose',
+		environment: 'jsdom',
+		coverage: { provider: 'v8' },
+	},
+})
+\end{lstlisting}
+
+If tests suddenly fail in ways that look like \texttt{document is not defined}, this config is the first place to check.
+If TSX imports fail in tests, the alias is the first place to check.
 
 \subsection{What to do when a test failure seems ``impossible''}
 
@@ -291,6 +418,111 @@ That is why \texttt{prepack} builds both JS bundles and types before publish.
 \end{center}
 
 \section{Release checklist (practical)}
+
+\section{From scratch: package \texttt{exports} is the public API surface}
+
+Frontend library releases often break for reasons that aren't "bugs" in the runtime.
+They break because the published entry points moved.
+In Node's modern resolution model, the \texttt{exports} field is the source of truth.
+
+This repo has three entry points:
+
+\begin{itemize}
+\item \texttt{"."} for the main VDOM library
+\item \texttt{"./hrbr"} for the HRBR runtime
+\item \texttt{"./compiler"} for the compiler/babel transform
+\end{itemize}
+
+Here is the relevant section of \texttt{package.json}:
+
+\begin{lstlisting}[language=JavaScript, caption={\texttt{exports} map (from \texttt{package.json}).}]
+const exportsMap = {
+	'.': {
+		types: './dist-types/src/index.d.ts',
+		import: './dist/esm/index.js',
+		require: './dist/cjs/index.cjs',
+	},
+	'./hrbr': {
+		types: './dist-types/runtime/index.d.ts',
+		import: './dist/esm/hrbr.js',
+		require: './dist/cjs/hrbr.cjs',
+	},
+	'./compiler': {
+		types: './dist-types/compiler/index.d.ts',
+		import: './dist/esm/compiler.js',
+		require: './dist/cjs/compiler.cjs',
+	},
+}
+\end{lstlisting}
+
+Release discipline means you treat this mapping like a testable spec.
+If you rename an entry file without updating this map, consumers break even though \texttt{vitest} is green.
+
+\section{Rollup builds: what gets emitted and why}
+
+Rollup is used here as the bundling quality gate.
+The configs show a multi-entry build that produces three entry files.
+
+\subsection{ESM build (from \texttt{rollup.config.mjs})}
+
+\begin{lstlisting}[language=JavaScript, caption={Rollup ESM config (from \texttt{rollup.config.mjs}).}]
+export default {
+	input: {
+		index: 'src/index.ts',
+		hrbr: 'runtime/index.ts',
+		compiler: 'compiler/index.ts',
+	},
+	// plugins: commonjs, resolve, typescript(tsconfig.rollup.json), cleanup...
+	output: {
+		dir: 'dist/esm',
+		format: 'esm',
+		entryFileNames: '[name].js',
+		sourcemap: true,
+	},
+}
+\end{lstlisting}
+
+\subsection{CJS build (from \texttt{rollup.config.cjs.mjs})}
+
+\begin{lstlisting}[language=JavaScript, caption={Rollup CJS config (from \texttt{rollup.config.cjs.mjs}).}]
+export default {
+	input: {
+		index: 'src/index.ts',
+		hrbr: 'runtime/index.ts',
+		compiler: 'compiler/index.ts',
+	},
+	// plugins: commonjs, resolve, typescript(tsconfig.rollup.cjs.json), cleanup...
+	output: {
+		dir: 'dist/cjs',
+		format: 'cjs',
+		exports: 'named',
+		entryFileNames: '[name].cjs',
+		sourcemap: true,
+	},
+}
+\end{lstlisting}
+
+These two builds are why you can support both:
+	exttt{import 'relaxcore'} (ESM) and \texttt{require('relaxcore')} (CJS) without the consumer having to care.
+
+\subsection{A practical debugging playbook for build failures}
+
+When \texttt{build} fails, don't guess.
+Classify the failure:
+
+\begin{itemize}
+\item \textbf{TS in Rollup}: usually caused by tsconfig mismatch (rollup-specific config differs from base).
+\item \textbf{Resolution errors}: missing file, wrong extension, wrong entry path.
+\item \textbf{Export mismatch}: build succeeds but consumers can't import (exports map points to the wrong output).
+\end{itemize}
+
+Then verify the contract:
+
+\begin{enumerate}
+\item Does Rollup emit the expected files under \texttt{dist/esm} and \texttt{dist/cjs}?
+\item Do the file names match the \texttt{exports} map exactly?
+\item Does \texttt{build:types} emit the referenced \texttt{.d.ts} files under \texttt{dist-types}?
+\end{enumerate}
 
 A minimal release checklist aligned with this repo:
 

@@ -1,0 +1,70 @@
+\chapter*{Preface}
+\addcontentsline{toc}{chapter}{Preface}
+
+This book exists for a simple reason: modern front-end frameworks feel like magic until you build one.
+A virtual DOM, a renderer, a scheduler, a diff algorithm, a component model, a compiler-assisted fast path---these are not mystical.
+They are engineering trade-offs.
+
+Relax.js is the vehicle for this tour.
+It is intentionally small enough to read, but ambitious enough to teach real-world concepts:
+
+\begin{itemize}
+  \item A \textbf{virtual node model} you can reason about.
+  \item A \textbf{mount/patch/unmount pipeline} with crisp boundaries.
+  \item A \textbf{keyed diff} (including sequence/LIS thinking) good enough to be educational and pragmatic.
+  \item A \textbf{scheduler} that makes asynchrony explicit.
+  \item A \textbf{reactivity layer} (signals) that forces correctness about invalidation.
+  \item A \textbf{compiler-assisted rendering path} (HRBR) that turns stable templates into faster DOM work.
+  \item A serious commitment to \textbf{tests as specification}.
+\end{itemize}
+
+\section*{Project links}
+\addcontentsline{toc}{section}{Project links}
+
+If you want to follow along in code:
+
+\begin{itemize}
+  \item GitHub: \href{https://github.com/ravikisha/relax.js}{https://github.com/ravikisha/relax.js}
+  \item NPM (package name \texttt{relaxcore}): \href{https://www.npmjs.com/package/relaxcore}{https://www.npmjs.com/package/relaxcore}
+\end{itemize}
+
+\section*{Who this book is for}
+\addcontentsline{toc}{section}{Who this book is for}
+
+You should read this if you have written front-end applications and you want to understand what your framework is doing under the hood.
+If you have never built a renderer before, the first chapters will start from the DOM and work upward.
+If you have built one before, you will still get value from the test-driven approach and the compiler section.
+
+\section*{How to read it}
+\addcontentsline{toc}{section}{How to read it}
+
+This is not a reference manual.
+It is a guided build.
+Each part is grounded in the repository and in the unit tests under \texttt{src/\_\_tests\_\_/}.
+Whenever you see a behavioral claim, you should be able to trace it to code and to an expectation.
+
+A practical way to use the book:
+
+\begin{enumerate}
+  \item Read a chapter.
+  \item Open the referenced file in the repository.
+  \item Run the tests for that chapter.
+  \item Make one small change and watch what breaks.
+\end{enumerate}
+
+\section*{A note on links and citations}
+\addcontentsline{toc}{section}{A note on links and citations}
+
+External URLs are included in-line for convenience.
+When you need background on browser APIs, MDN is the fastest path to shared vocabulary.
+For example: \href{https://developer.mozilla.org/}{https://developer.mozilla.org/}.
+
+Relax.js began as a build-along inspired by \textit{Build a Frontend Web Framework (From Scratch)} by \textsc{\mbox{\hspace{0.2em}ÁNGEL SOLA ORBAICETA}}.
+This book extends that baseline with a strong emphasis on tests, packaging discipline, and performance instrumentation.
+
+\section*{Versioning}
+\addcontentsline{toc}{section}{Versioning}
+
+Relax.js is a living project.
+The intent of this book is to explain principles and the architecture of \emph{this} codebase.
+If the repository evolves, treat this book as a snapshot of a particular design.

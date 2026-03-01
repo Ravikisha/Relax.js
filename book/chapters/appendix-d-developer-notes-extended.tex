@@ -1,0 +1,104 @@
+\chapter{Appendix D: Developer Notes (Extended)}
+
+This appendix expands on the short Developer Notes section at the front of the book.
+It\textquotesingle s written as an engineering log: what I built, why, and what I learned.
+
+\section{From \textit{reading} to \textit{building}}
+A surprising part of framework engineering is that you can understand the concepts intellectually and still struggle to implement them.
+A renderer forces precision.
+A scheduler forces you to choose semantics.
+A compiler forces you to state what is safe.
+
+The starting point for my learning journey was the book:
+
+\begin{quote}
+\textit{Build a Frontend Web Framework (From Scratch)}\\
+\textsc{ÁNGEL SOLA ORBAICETA}
+\end{quote}
+
+It is a solid introduction to the core loop of building a small framework.
+I used it to bootstrap the baseline mental model, then I iterated.
+
+\subsection{How to use the inspiration book alongside this repository}
+An approach that works well:
+
+\begin{enumerate}
+  \item Implement the baseline renderer and component model from \textit{Build a Frontend Web Framework (From Scratch)}.
+  \item Then open this repository and locate the matching unit tests under \texttt{src/\_\_tests\_\_/}.
+  \item Port those tests to your own project.
+  \item Only then start optimizing (diffing, scheduling, HRBR), keeping the tests unchanged.
+\end{enumerate}
+
+This forces a clean separation between \emph{behavior} (what must stay true) and \emph{implementation} (what you are allowed to change).
+
+\section{What \texttt{\_\_tests\_\_} taught me}
+The test suite is the highest-leverage part of this project.
+Tests do three jobs simultaneously:
+
+\begin{itemize}
+  \item They define the contract (what behavior counts as \emph{correct}).
+  \item They prevent accidental regressions.
+  \item They document edge cases that are easy to forget.
+\end{itemize}
+
+For example, lifecycle timing is not obvious when you have async scheduling.
+It only becomes obvious when a test waits for \texttt{nextTick()} and asserts an effect has run exactly once.
+
+\paragraph{Tests as specs, not as afterthoughts}
+When this book says \textquotedblleft tests are executable specifications\textquotedblright, it means:
+
+\begin{itemize}
+  \item every important claim should be traceable to an expectation
+  \item every bug fix should ship with a regression test
+\end{itemize}
+
+It\textquotesingle s slower on day one, but dramatically faster by the time your framework has a scheduler, a diff algorithm, and a compiler.
+
+\section{A short author bio (and why performance shows up so often)}
+I\textquotesingle m primarily a backend and systems engineer.
+I\textquotesingle ve worked on performance-sensitive systems (including quantitative infrastructure), so I\textquotesingle m naturally drawn to:
+
+\begin{itemize}
+  \item deterministic semantics (especially around scheduling),
+  \item careful measurement (benchmarks before and after),
+  \item and packaging contracts (exports maps that match reality).
+\end{itemize}
+
+That bias is part of why Relax.js tries to be a \emph{real library} and not only a demo.
+
+\section{Why algorithms appear in UI code}
+A framework looks like \textquotedblleft DOM glue\textquotedblright until you hit lists.
+Then you need algorithms:
+
+\begin{itemize}
+  \item matching old children to new children
+  \item detecting moves vs inserts vs deletes
+  \item minimizing expensive DOM operations
+\end{itemize}
+
+That\textquotesingle s why this repository contains diff/sequence logic and tests to keep it honest.
+Algorithmic thinking is not optional if you care about correctness and scalability.
+
+\section{Why compiler assistance is worth it}
+The HRBR path exists because many UI trees are structurally stable.
+If structure is stable, you can treat DOM updates as \textquotedblleft update slots\textquotedblright rather than \textquotedblleft diff a tree\textquotedblright.
+
+But the key word is \emph{safe}.
+The compiler must be conservative.
+When it cannot prove stability (conditionals that change structure, dynamic tag names, etc.) it emits a fallback.
+That fallback has to be a first-class, tested path.
+
+\section{Engineering principle: make your fast path debuggable}
+Fast paths become liabilities when they are invisible.
+That\textquotesingle s why devtools/instrumentation exists.
+If a performance win cannot be measured and explained, it will eventually be removed (or, worse, it will hide bugs).
+
+\section{Where to go next}
+If you want to evolve Relax.js further (or build your own):
+
+\begin{itemize}
+  \item Add a small router and prove it doesn\textquotesingle t leak listeners.
+  \item Add async data fetching primitives with cancellation.
+  \item Explore hydration and partial hydration trade-offs.
+  \item Add profiling hooks around patch phases (per component / per block).
+\end{itemize}

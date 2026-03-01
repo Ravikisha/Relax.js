@@ -1,0 +1,75 @@
+\chapter{Appendix B: Running, Testing, and Hacking}
+
+This appendix is a practical companion.
+It explains how to work with the repository as you read.
+
+\section{Where the code lives}
+The canonical repository is:
+\href{https://github.com/ravikisha/relax.js}{https://github.com/ravikisha/relax.js}.
+
+The published NPM package is named \texttt{relaxcore}:
+\href{https://www.npmjs.com/package/relaxcore}{https://www.npmjs.com/package/relaxcore}.
+
+If you are reading the book to learn, I recommend working from source.
+If you are integrating Relax.js into another project, use the NPM package.
+
+\section{The contract: scripts are interfaces}
+In this repo, scripts in \texttt{package.json} are not convenience shortcuts.
+They are stable interfaces for humans and for automation.
+
+Typical tasks you\textquotesingle ll do while reading:
+
+\begin{itemize}
+  \item Run unit tests for a chapter and then break one behavior on purpose.
+  \item Run lint/typecheck to keep refactors honest.
+  \item Build ESM/CJS outputs and verify the exports map.
+\end{itemize}
+
+\section{Suggested local workflow}
+Treat the following loop as your default while experimenting:
+
+\begin{enumerate}
+  \item Run the full test suite.
+  \item Run only the relevant test file for the chapter you\textquotesingle re reading.
+  \item Make one small change.
+  \item Re-run the focused test first, then the full suite.
+\end{enumerate}
+
+\subsection{A minimal command cheat sheet}
+These commands are intentionally boring.
+They keep you honest.
+
+\begin{itemize}
+  \item Install: \texttt{npm install}
+  \item Run all tests: \texttt{npm test}
+  \item Run tests in watch mode (if configured): \texttt{npm run test:watch}
+  \item Lint: \texttt{npm run lint}
+  \item Build: \texttt{npm run build}
+\end{itemize}
+
+If a command name differs in your local setup, use \texttt{package.json} as the source of truth.
+
+\section{Debugging strategy: shrink the mystery}
+When something fails, don\textquotesingle t guess.
+Reduce the problem:
+
+\begin{enumerate}
+  \item Find the smallest test that demonstrates the failure.
+  \item Add logging or instrumentation (then remove it).
+  \item Make the smallest change that fixes the bug.
+  \item Add a regression test.
+\end{enumerate}
+
+\section{Common failure modes}
+\subsection{DOM tests behave differently than browser demos}
+A jsdom environment is not a full browser.
+When a behavior is browser-specific, keep the boundary explicit.
+
+\subsection{Performance claims feel inconsistent}
+Performance depends on machine, browser version, and workload.
+Use the benchmark methodology chapter and prefer relative comparisons within the same environment.
+
+\subsection{Packaging and exports feel confusing}
+Modern Node resolution uses \texttt{exports} maps.
+If an import fails, verify the entry point exists in the built output and that it is mapped correctly.
+See: \href{https://nodejs.org/api/packages.html\#exports}{https://nodejs.org/api/packages.html\#exports}.

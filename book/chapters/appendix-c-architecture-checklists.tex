@@ -1,0 +1,44 @@
+\chapter{Appendix C: Architecture Checklists}
+
+This appendix is a set of checklists you can reuse when designing your own framework.
+They are based on the lessons encoded in Relax.js.
+
+\section{Renderer checklist}
+\begin{itemize}
+  \item Can I explain the VNode model in one page?
+  \item Are mount/patch/unmount separate functions with clear inputs/outputs?
+  \item Do I have a stable way to normalize children (text, arrays, nulls)?
+  \item What is my story for keyed lists?
+  \item Can I prove (via tests) that event listeners don\textquotesingle t leak?
+\end{itemize}
+
+\section{Scheduler checklist}
+\begin{itemize}
+  \item What makes work synchronous vs deferred?
+  \item Do I have a deterministic test harness for time?
+  \item What is my starvation story (does low priority ever run)?
+  \item What do I expose as public APIs (\texttt{nextTick}, batching, lanes)?
+\end{itemize}
+
+\section{Reactivity checklist}
+\begin{itemize}
+  \item Can I explain dependency tracking without hand-waving?
+  \item How do I prevent re-entrancy explosions?
+  \item What is the lifecycle of an effect (create, run, dispose)?
+\end{itemize}
+
+\section{Compiler checklist}
+\begin{itemize}
+  \item What is the safe subset I can compile?
+  \item What forces a fallback?
+  \item Is the fallback behavior a first-class, tested path?
+  \item Do I have a way to debug codegen shape changes (snapshot-style tests)?
+\end{itemize}
+
+\section{Release checklist}
+\begin{itemize}
+  \item Do scripts cover: typecheck, lint, unit tests, build, and publish guards?
+  \item Do my builds produce both ESM and CJS outputs (when needed)?
+  \item Does my \texttt{exports} map match the on-disk artifacts?
+  \item Are my public APIs documented and tested?
+\end{itemize}
