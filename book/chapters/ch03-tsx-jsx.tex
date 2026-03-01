@@ -35,6 +35,30 @@ This combination means:
 So the contract becomes very clean:
 ``TSX syntax must compile into objects that Relax can mount/patch/destroy.''
 
+\subsection*{Diagram: TSX syntax to VNodes (what TypeScript actually emits)}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 12mm,
+  box/.style={draw, rounded corners, align=center, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (tsx) {\textbf{TSX source}\\\texttt{<Button onClick=... />}\\\texttt{<>...</>}};
+\node[box, right=of tsx] (ts) {TypeScript\\\texttt{jsx: react-jsx}\\\texttt{jsxImportSource}};
+\node[box, right=of ts] (runtime) {JSX runtime call\\\texttt{jsx(type, props, key)}};
+\node[box, below=of runtime] (relaxjsx) {\texttt{relax-jsx/jsx-runtime.ts}\\normalizes props + children};
+\node[box, below=of ts, xshift=-10mm] (vnode) {Relax VNodes\\\texttt{h()} / \texttt{hFragment()}};
+\node[box, below=of vnode] (mount) {Renderer\\\texttt{mountDOM/patchDOM}};
+
+\draw[arrow] (tsx) -- (ts);
+\draw[arrow] (ts) -- (runtime);
+\draw[arrow] (runtime) -- (relaxjsx);
+\draw[arrow] (relaxjsx) -- (vnode);
+\draw[arrow] (vnode) -- (mount);
+\end{tikzpicture}
+\end{center}
+
+When TSX ``works'' in this repo, it means the right-hand side of this diagram produces the same VNode shapes as writing \texttt{h()} manually.
+
 \section{Two JSX styles you'll see}
 
 \subsection{Direct VDOM authoring}
@@ -81,8 +105,8 @@ At a high level it does four jobs:
       \item \texttt{onClick/onInput/... -> on: \{ click/input/... \}}
     \end{itemize}
   \item Threads the optional \texttt{key} through into Relax props.
-  \item Delegates to Relax's real VDOM constructors:\
-    	exttt{h(type, props, children)} or \texttt{hFragment(children)}.
+  \item Delegates to Relax's real VDOM constructors:
+  	exttt{h(type, props, children)} or \texttt{hFragment(children)}.
 \end{enumerate}
 
 \subsection{Fragments: why \texttt{Fragment} is exported}
@@ -111,7 +135,7 @@ The definitive spec for supported TSX/JSX features lives in:
 \end{itemize}
 
 \subsection{Test 1: TSX can mount via the Relax JSX runtime}
-	exttt{src/\_\_tests\_\_/jsx-tsx.test.ts} is the smallest end-to-end proof:
+\texttt{src/\_\_tests\_\_/jsx-tsx.test.ts} is the smallest end-to-end proof:
 
 \begin{itemize}
   \item It imports and runs \texttt{examples/jsx/hello.tsx}.

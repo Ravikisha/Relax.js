@@ -2,15 +2,38 @@
 \label{ch:benchmarks}
 
 Benchmarks are where performance stories can go wrong fast.
-This chapter documents Relax's benchmark harness under \texttt{benchmarks/} and the methodology guidelines captured in \texttt{docs/benchmarks.md}.
+It's easy to produce a chart that looks convincing while accidentally measuring something else (layout thrash, dev-mode checks, GC noise, or even the benchmark harness itself).
+
+This chapter is the “source of truth” for the Relax.js benchmark harness:
+
+\begin{itemize}
+\item harness code: \texttt{benchmarks/harness.ts}
+\item runner UI: \texttt{benchmarks/index.html} + \texttt{benchmarks/main.ts}
+\item methodology notes: \texttt{docs/benchmarks.md}
+\end{itemize}
 
 The core goals are:
 
 \begin{itemize}
 \item \textbf{Repeatability}: seeded randomness, stable profiles, and a clear warmup/measure separation.
-\item \textbf{Fairness}: compare like-for-like work (same DOM outcomes, similar update patterns), and control build modes (dev vs prod).
-\item \textbf{Interpretability}: report metrics that explain tail latency (p95) and not just averages.
+\item \textbf{Fairness}: compare like-for-like work (same DOM outcomes, comparable commit boundaries), and control build modes (dev vs prod).
+\item \textbf{Interpretability}: report metrics that catch jank (p95 and frame drops), not just averages.
 \end{itemize}
+
+\section{A tiny contract for what we are measuring}
+
+It helps to make the benchmark harness explicit as a small contract:
+
+\begin{itemize}
+\item \textbf{Input:} a benchmark case that can mount into a host element and perform one unit of work per tick.
+\item \textbf{Output:} per-tick timings and a few summary statistics (avg, p95, drops).
+\item \textbf{Success criterion:} when framework \emph{A} is faster than framework \emph{B}, they are doing comparable work and reaching a comparable ``committed'' state before the timer stops.
+\item \textbf{Error mode:} if one framework returns early (async batching) while another blocks until DOM is updated, the comparison is not fair.
+\end{itemize}
+
+Most of this chapter explains how Relax's harness tries to stay on the right side of that contract.
+
+\section{Benchmarks run in a real browser}
 
 \section{Benchmarks run in a real browser}
 
@@ -23,6 +46,43 @@ The harness is designed to run in a browser environment:
 \end{itemize}
 
 See \texttt{benchmarks/index.html} and the entry script \texttt{benchmarks/main.ts}.
+
+\subsection{Why ``real browser'' matters}
+
+Most UI framework performance costs are dominated by:
+
+\begin{itemize}
+\item DOM mutation costs (properties, attributes, insertion/reordering)
+\item layout and style recalculation
+\item paint/compositing
+\item batching policies (microtasks, macrotasks, rAF)
+\end{itemize}
+
+These are browser behaviors.
+Node + jsdom is useful for correctness tests, but it doesn't model layout/paint and it changes timing behavior.
+That's why the canonical benchmark environment is a browser.
+
+\section*{Diagram: how a benchmark tick is measured}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=9mm and 12mm,
+	box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (frame) {Await next frame\\\texttt{await nextFrame()}};
+\node[box, below=of frame] (t0) {Start timer\\\texttt{t0 = now()}};
+\node[box, below=of t0] (tick) {Do one unit of work\\\texttt{controller.tick()}};
+\node[box, below=of tick] (commit) {Optional commit barrier\\\texttt{await commit?.()}};
+\node[box, below=of commit] (dt) {Stop timer + record sample\\\texttt{dt = now() - t0}};
+
+\draw[arrow] (frame) -- (t0);
+\draw[arrow] (t0) -- (tick);
+\draw[arrow] (tick) -- (commit);
+\draw[arrow] (commit) -- (dt);
+\end{tikzpicture}
+\end{center}
+
+This is the heart of ``fairness'' in the harness: every framework is asked to do one \texttt{tick()}, and the measured duration only finishes once the case reports that it has committed.
 
 \subsection{A small but important detail: Node/jsdom fallback exists}
 
@@ -53,6 +113,22 @@ A benchmark case is a \texttt{BenchmarkCase}:
 
 The \texttt{commit()} hook is how the harness stays fair across frameworks that batch work differently (e.g. React flush/paint boundaries).
 
+\subsection{What counts as ``one tick''? (and why that matters)}
+
+The harness intentionally measures a \emph{steady-state update loop}.
+The goal is not to measure initial mount (which can be relevant, but is often a different set of costs), and not to measure bundling or download size.
+
+Each tick should represent something plausible in UI work:
+
+\begin{itemize}
+\item update 1\% of a large list
+\item shuffle keyed rows
+\item update styles in a grid
+\item toggle a boolean prop on many nodes
+\end{itemize}
+
+If a case is too synthetic (e.g. ``just mutate one text node a million times''), it can still be useful --- but only if we interpret it correctly as a microbenchmark.
+
 \subsection{Tiny contract for a fair \texttt{BenchmarkCase}}
 
 To keep comparisons honest, the benchmark cases should follow a simple contract:
@@ -72,6 +148,23 @@ To keep comparisons honest, the benchmark cases should follow a simple contract:
 \item \textbf{Measure frames} (default 120): record per-tick durations.
 \end{itemize}
 
+\section*{Diagram: warmup vs measure windows (and what gets recorded)}
+\begin{center}
+\begin{tikzpicture}[
+	box/.style={draw, rounded corners, align=center, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box, minimum width=36mm] (warm) {Warmup\\(no samples)};
+\node[box, right=8mm of warm, minimum width=54mm] (measure) {Measure\\(record dt samples)};
+\node[box, right=8mm of measure, minimum width=30mm] (report) {Report\\avg, p95, drops};
+
+\draw[arrow] (warm) -- (measure);
+\draw[arrow] (measure) -- (report);
+\end{tikzpicture}
+\end{center}
+
+Warmup frames intentionally do the same work as measured frames; the only difference is whether the duration samples are kept.
+
 Implementation details in \texttt{runBenchmark()}:
 
 \begin{itemize}
@@ -88,6 +181,22 @@ The harness reports:
 \item \texttt{p95Ms} , 95th percentile tick time (tail latency)
 \item \texttt{frameDrops} , number of frames over budget
 \end{itemize}
+
+\subsection{How to read results (avg vs p95 vs drops)}
+
+In UI work, \textbf{drops are the user experience}.
+Averages can look great while still producing jank if there are occasional slow frames.
+
+\begin{itemize}
+\item \textbf{avgMs} answers: ``How much work do we typically do per frame?''
+\item \textbf{p95Ms} answers: ``How bad are the spikes?''
+\item \textbf{frameDrops} answers: ``How often do we miss our frame budget?''
+\end{itemize}
+
+At 60Hz, the typical budget is about \textbf{16.7ms}.
+If a case shows \texttt{drops: 120} for \texttt{frames: 120}, it means \emph{every} measured tick exceeded the budget.
+
+This is why the harness reports drops alongside avg/p95: it is the easiest way to distinguish ``fast enough to feel smooth'' from ``fast on average but still janky''.
 
 Percentiles are computed on sorted samples with a simple index selection.
 This is good enough for stable comparisons at the harness scale.
@@ -112,7 +221,62 @@ It reads query params from \texttt{benchmarks/index.html}:
 \item \texttt{warmup}, \texttt{frames}, \texttt{budget}: overrides for fine-grained control
 \end{itemize}
 
+\subsection{Benchmark variables (every knob you can turn)}
+
+These are the key variables that affect results.
+When you publish results, list them, because changing any of them can change the numbers:
+
+\begin{itemize}
+\item \textbf{\texttt{profile}}: selects baseline \texttt{warmup} + \texttt{frames} window sizes.
+\item \textbf{\texttt{seed}}: makes randomized update patterns repeatable.
+\item \textbf{\texttt{warmup}}: number of warmup frames (no samples recorded).
+\item \textbf{\texttt{frames}}: number of measured frames (samples recorded).
+\item \textbf{\texttt{budget}}: frame budget in milliseconds (drives ``drops'').
+\item \textbf{build mode}: dev vs production bundles (especially affects React).
+\item \textbf{browser + OS + CPU governor}: real-world environment noise.
+\end{itemize}
+
+This harness keeps the first five variables explicit and reproducible.
+
+\subsection{Examples: URL parameters in practice}
+
+The runner prints the profile and seed at the top of the output.
+Example:
+
+\begin{quote}
+	exttt{Running...\newline profile: default\newline seed: 12345}
+\end{quote}
+
+Typical URLs:
+
+\begin{itemize}
+\item Quick sanity pass:\\
+	exttt{benchmarks/index.html?profile=quick\&seed=1}
+\item Longer run that makes tail latency clearer:\\
+	exttt{benchmarks/index.html?profile=stress\&seed=42\&budget=16.7}
+\item Debugging a suspicious regression by increasing sample size:\\
+	exttt{benchmarks/index.html?profile=default\&frames=600\&seed=12345}
+\end{itemize}
+
 Defaults are intentionally ``reasonable and stable'' for local runs.
+
+\section*{Diagram: profile parameters flow}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=9mm and 12mm,
+	box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (url) {\texttt{index.html?profile=default\&seed=123\&frames=120}};
+\node[box, below=of url] (parse) {\texttt{getBenchmarkProfile()} parses + clamps\\returns \texttt{\{ warmup, frames, budgetMs, seed \}}};
+\node[box, below=of parse] (rng) {\texttt{rng = mulberry32(seed)}\\drives repeatable update patterns};
+\node[box, below=of rng] (run) {\texttt{runBenchmark(profile, case)}};
+
+\draw[arrow] (url) -- (parse);
+\draw[arrow] (parse) -- (rng);
+\draw[arrow] (rng) -- (run);
+\end{tikzpicture}
+\end{center}
 
 Implementation note: the profile parser clamps overrides to avoid accidental runaway configurations:
 
@@ -183,6 +347,20 @@ In \texttt{benchmarks/cases/text-1m.ts}, the HRBR variant builds the smallest po
 
 This isn't a ``real app'' workload, but it is an excellent microbenchmark for measuring pure slot-write throughput.
 
+\subsection{What should you expect from \texttt{text-1m}?}
+
+	exttt{text-1m} is a microbenchmark.
+It largely measures:
+
+\begin{itemize}
+\item how quickly a runtime can update a text node
+\item how much overhead there is in the reactive/scheduling layer
+\item whether the work produces long-tail spikes (p95) under repeated updates
+\end{itemize}
+
+Because it does not exercise reconciliation, keyed diffing, or lots of element updates, it should \emph{not} be used to claim ``framework X is faster for apps''.
+It should be used to claim something narrower: ``The slot update path is efficient.''
+
 \subsection{Case study: \texttt{list-10k-1pct}}
 
 In \texttt{benchmarks/cases/list-10k-1pct.ts}, the cases delegate to example mount helpers:
@@ -194,6 +372,51 @@ In \texttt{benchmarks/cases/list-10k-1pct.ts}, the cases delegate to example mou
 
 The contract is the same for both: return a controller with \texttt{update1pct()} and \texttt{dispose()}.
 Methodologically, that matters: both implementations are being asked to do the same "one tick" of work.
+
+\subsection{What \texttt{list-10k-1pct} tries to model}
+
+This is closer to ``real UI pain'':
+
+\begin{itemize}
+\item 10,000 rows is a large but plausible virtualized/table workload.
+\item Updating 1\% per tick models ``small changes in a large list'' (sorting indicators, status updates, counters).
+\item The workload stresses reconciliation overhead and DOM patch strategy.
+\end{itemize}
+
+This is where HRBR often wins: it can apply targeted DOM mutations without re-diffing a full VDOM tree.
+
+\subsection{Case study: \texttt{widgets-200}}
+
+	exttt{widgets-200} is a component-shape workload:
+
+\begin{itemize}
+\item many small independent widgets
+\item small updates in many places
+\end{itemize}
+
+This case helps distinguish:
+
+\begin{itemize}
+\item runtimes that do well when work is split across many small islands
+\item runtimes that pay a fixed overhead per component update
+\end{itemize}
+
+Implementation: \texttt{benchmarks/cases/widgets-200.ts}.
+
+\subsection{Extra cases in \texttt{cases/more.ts} (and what each means)}
+
+The runner also includes additional comparisons in \texttt{benchmarks/cases/more.ts}:
+
+\begin{itemize}
+\item \texttt{props-toggle-5k}: toggles a boolean property (\texttt{disabled}) on 5,000 buttons.
+\item \texttt{style-grid-1k}: updates inline styles on 1,000 elements.
+\item \texttt{table-2k-shuffle}: reorders rows each tick (keyed diff/reorder stress).
+\item \texttt{svg-1k}: updates attributes on 1,000 SVG circles.
+\item \texttt{input-typing-1k}: updates 1,000 input values (a classic ``controlled input'' stress).
+\end{itemize}
+
+These give you a more complete story than a single macro statistic.
+For example, a runtime can be great at list reconciliation but weaker at style updates, or vice versa.
 
 \section{Build modes matter (dev vs prod)}
 
@@ -279,6 +502,21 @@ Optional runtime instrumentation exists in \texttt{runtime/devtools.ts} (Chapter
 Methodology rule: keep instrumentation disabled during benchmarks unless you are explicitly measuring it.
 Otherwise, the measurement includes the measurement.
 
+\section{Online resources}
+
+These links are useful if you want to validate (or improve) the methodology beyond this repo:
+
+\begin{itemize}
+\item High Resolution Time API (\texttt{performance.now()}):
+\href{https://developer.mozilla.org/en-US/docs/Web/API/Performance/now}{https://developer.mozilla.org/en-US/docs/Web/API/Performance/now}
+\item \texttt{requestAnimationFrame} timing model:
+\href{https://developer.mozilla.org/en-US/docs/Web/API/Window/requestAnimationFrame}{https://developer.mozilla.org/en-US/docs/Web/API/Window/requestAnimationFrame}
+\item User Timing API (marks/measures; helpful for deeper profiling):
+\href{https://developer.mozilla.org/en-US/docs/Web/API/User\_Timing\_API}{https://developer.mozilla.org/en-US/docs/Web/API/User\_Timing\_API}
+\item ``The mental model'' for why p95 matters (latency vs averages):
+\href{https://www.brendangregg.com/Latency.html}{https://www.brendangregg.com/Latency.html}
+\end{itemize}
+
 In practice, if you want to correlate benchmark results with DOM op counts:
 
 \begin{itemize}
@@ -299,6 +537,56 @@ A practical checklist grounded in this repo's structure:
 \item Run multiple times and compare distributions (p95 and drops), not just averages.
 \item If a result looks surprising, isolate the case and profile it (browser performance tools).
 \end{enumerate}
+
+\section{Interpreting a real output (example walkthrough)}
+
+The runner output is designed to be copied into issue reports.
+It includes enough context to be reproducible (profile + seed + case names).
+
+Here is a condensed example pattern (taken from a typical run):
+
+\begin{quote}
+	exttt{\# list-10k-1pct:relax-hrbr\newline frames: 120\newline avg: 1.333 ms\newline p95: 4.000 ms\newline drops: 0}
+\end{quote}
+
+How to read it:
+
+\begin{itemize}
+\item \textbf{0 drops} means it stayed under budget on every measured tick. It should feel smooth.
+\item \textbf{avg 1.333ms} means the typical tick is cheap.
+\item \textbf{p95 4ms} means spikes exist but are still far below 16.7ms.
+\end{itemize}
+
+And compare to the same case in VDOM mode:
+
+\begin{quote}
+	exttt{\# list-10k-1pct:relax-vdom\newline frames: 120\newline avg: 62.558 ms\newline p95: 94.000 ms\newline drops: 120}
+\end{quote}
+
+This is a very different story:
+
+\begin{itemize}
+\item \textbf{drops 120/120} means every tick exceeded the frame budget. It will look janky.
+\item The avg and p95 values suggest the runtime is doing work closer to the ``tens of milliseconds'' per tick.
+\end{itemize}
+
+This sort of comparison is where HRBR tends to win: it avoids large VDOM diff/patch overhead by pre-compiling stable DOM addressing.
+
+\section{Why this benchmark approach is better than ``single number'' benchmarks}
+
+This harness is intentionally simple, but it has a few properties that make it more trustworthy than many ``microbenchmark charts'':
+
+\begin{itemize}
+\item \textbf{Per-frame pacing:} \texttt{requestAnimationFrame} forces you to respect frame boundaries.
+\item \textbf{Tail metrics:} p95 and frame drops capture user-visible jank.
+\item \textbf{Warmup window:} avoids measuring purely JIT/startup effects.
+\item \textbf{Commit barrier:} optional \texttt{commit()} avoids lying about async batching.
+\item \textbf{Seeded randomness:} makes results reproducible without removing realism.
+\item \textbf{Isolation:} host DOM is cleared between runs, and each case has a teardown contract.
+\end{itemize}
+
+No benchmark is perfect.
+But if you follow the checklist above and publish the variables (profile/seed/budget/mode), this harness gives you results that are much harder to accidentally misinterpret.
 
 \section{Online resources}
 

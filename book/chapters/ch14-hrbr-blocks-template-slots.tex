@@ -11,6 +11,32 @@ Blocks are the third half: they decide \emph{how} to touch the DOM.
 
 A \textbf{block} is the "fast DOM" path: it describes a stable DOM template and a set of precise write locations (slots). Updates become \emph{O(k)} slot writes instead of building a VDOM tree and diffing children.
 
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (tpl) {\textbf{TemplateHTML}\\string HTML, single root};
+\node[box, right=18mm of tpl] (mount) {\textbf{mountBlock}\\clone template\\resolve slot paths};
+\node[box, right=18mm of mount] (inst) {\textbf{Instance DOM}\\stable structure};
+\node[box, below=10mm of mount] (slots) {\textbf{Slots}\\(key, kind, path)};
+\node[box, below=10mm of inst] (update) {\textbf{update(values)}\\O(k) slot writes\\skip redundant};
+
+\draw[arrow] (tpl) -- (mount);
+\draw[arrow] (mount) -- (inst);
+\draw[arrow] (slots) -- (mount);
+\draw[arrow] (slots) -| (update);
+\draw[arrow] (inst) -- (update);
+\end{tikzpicture}
+\end{center}
+
+If you remember only one thing about blocks, make it this:
+
+\begin{quote}
+	extbf{Blocks replace diffing with addressing.} The template fixes structure. Slots give exact addresses. Updates become a handful of targeted DOM writes.
+\end{quote}
+
 This chapter is grounded in:
 
 \begin{itemize}
@@ -90,6 +116,25 @@ Paths are the “compiled fast path” address:
   \item they enable prefix caching across multiple slots
 \end{itemize}
 
+\begin{center}
+\begin{tikzpicture}[
+  node distance=6mm,
+  box/.style={draw, rounded corners, align=left, inner sep=4pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (root) {root element};
+\node[box, below=of root] (c1) {childNodes[1]};
+\node[box, below=of c1] (c0) {childNodes[0]};
+\node[box, below=of c0] (c2) {childNodes[2]};
+
+\draw[arrow] (root) -- (c1) node[midway, right] {path[0] = 1};
+\draw[arrow] (c1) -- (c0) node[midway, right] {path[1] = 0};
+\draw[arrow] (c0) -- (c2) node[midway, right] {path[2] = 2};
+\end{tikzpicture}
+\end{center}
+
+One subtle point the tests implicitly enforce: \texttt{childNodes} includes text nodes (including whitespace). That means a compiler must be in control of template serialization and whitespace if it wants stable paths.
+
 \section{The public API (surface area)}
 
 The core exports in \texttt{runtime/block.ts} are:
@@ -143,6 +188,32 @@ const block = defineBlock({ templateHTML: ..., slots: ... })
 
 The key optimization is “resolve once, write many”: paths are resolved at mount time and stored in \texttt{slotNodes}. Updates never traverse the DOM tree; they dereference and write.
 
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (parse) {parseTemplate\\(assert single root)};
+\node[box, below=of parse] (clone) {cloneNode(true)\\instance root};
+\node[box, below=of clone] (append) {append to host};
+\node[box, left=25mm of clone] (paths) {for each slot\\resolvePathCached\\store Node};
+\node[box, below=of append] (init) {initialValues?\\update(initialValues)};
+
+\draw[arrow] (parse) -- (clone);
+\draw[arrow] (clone) -- (append);
+\draw[arrow] (paths) -- (clone);
+\draw[arrow] (append) -- (init);
+\end{tikzpicture}
+\end{center}
+
+This diagram is also a good mental model for the difference between \texttt{mountBlock} and \texttt{mountCompiledBlock}:
+
+\begin{itemize}
+  \item \texttt{mountBlock} stops after returning \texttt{update()}.
+  \item \texttt{mountCompiledBlock} adds the reactive wiring on top (effects + scheduler lanes) and then calls \texttt{update()} as signals change.
+\end{itemize}
+
 The returned \texttt{MountedBlock} includes:
 
 \begin{itemize}
@@ -162,6 +233,25 @@ Prefixes are stored as dot-joined strings like \texttt{"1.0"}.
 
 The caching algorithm is incremental: as it walks the path, it caches each prefix result (\texttt{"1"}, then \texttt{"1.0"}, etc.). Multiple slots that share a prefix benefit immediately.
 
+\begin{center}
+\begin{tikzpicture}[
+  node distance=6mm,
+  box/.style={draw, rounded corners, align=left, inner sep=4pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (m) {instanceRoot.\_\_hrbrPathCache\\Map<string, Node>};
+\node[box, below=of m] (p1) {"1" \textrightarrow Node at childNodes[1]};
+\node[box, below=of p1] (p10) {"1.0" \textrightarrow Node at [1][0]};
+\node[box, below=of p10] (p102) {"1.0.2" \textrightarrow Node at [1][0][2]};
+
+\draw[arrow] (m) -- (p1);
+\draw[arrow] (p1) -- (p10);
+\draw[arrow] (p10) -- (p102);
+\end{tikzpicture}
+\end{center}
+
+This cache is not about speeding up a single slot; it pays off when there are many nearby slots (a common outcome of compilation).
+
 Spec: \texttt{mountBlock caches repeated path prefixes across slots}.
 
 \subsection{Dev diagnostics}
@@ -171,6 +261,23 @@ When \texttt{options.dev === true}, the assertions include the slot key in the e
 Spec: \texttt{dev diagnostics: mountBlock includes slot key in invalid path errors (dev mode)}.
 
 \section{update(values): slot patching rules}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (keys) {iterate only provided\\value keys};
+\node[box, right=18mm of keys] (slot) {lookup \texttt{def.slots[key]}\\missing \textrightarrow ignore};
+\node[box, right=18mm of slot] (is) {skip if \\ \texttt{Object.is(prev,next)}};
+\node[box, right=18mm of is] (write) {dispatch by kind\\write DOM\\emit devtools};
+
+\draw[arrow] (keys) -- (slot);
+\draw[arrow] (slot) -- (is);
+\draw[arrow] (is) -- (write);
+\end{tikzpicture}
+\end{center}
 
 The update loop iterates over provided keys only. If a key doesn’t exist in \texttt{def.slots}, it is ignored.
 
@@ -183,7 +290,33 @@ Two important performance rules:
 
 The use of \texttt{Object.is} is deliberate: it treats \texttt{NaN} as equal to itself and provides a cheap “same reference” check for objects (like style objects or class arrays).
 
+It also affects correctness in subtle-but-useful ways:
+
+\begin{itemize}
+  \item \textbf{Stable function identity:} if a compiled block passes the same handler function reference repeatedly, the event slot can skip work.
+  \item \textbf{Object slots:} if style/class are represented as objects/arrays, reusing the same value prevents unnecessary DOM churn.
+\end{itemize}
+
 Spec: \texttt{skips redundant writes for unchanged values (text + attr)}.
+
+\subsection{Slot kind dispatch at a glance}
+
+The update routine is small because each slot kind is a focused patcher. It’s useful to keep the matrix in your head:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (kind) {slot.kind};
+\node[box, right=18mm of kind] (cases) {\texttt{text | attr | prop | class | style | event}};
+\node[box, right=18mm of cases] (dom) {targeted DOM write\\(no tree diff)};
+
+\draw[arrow] (kind) -- (cases);
+\draw[arrow] (cases) -- (dom);
+\end{tikzpicture}
+\end{center}
 
 \subsection{text slots}
 
@@ -312,6 +445,23 @@ Specs:
 
 \section{mountCompiledBlock(): wiring signals to slot writes}
 
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (read) {per compiled slot:\\effect runs \texttt{read()}\\tracks signal deps};
+\node[box, right=18mm of read] (pend) {store in \texttt{pending[key]}\\set \texttt{pending=true}};
+\node[box, right=18mm of pend] (sched) {schedule once\\lane scheduler};
+\node[box, right=18mm of sched] (flush) {flushPending:\\\texttt{batch(() => update(pending))}};
+
+\draw[arrow] (read) -- (pend);
+\draw[arrow] (pend) -- (sched);
+\draw[arrow] (sched) -- (flush);
+\end{tikzpicture}
+\end{center}
+
 \texttt{mountCompiledBlock} is the bridge between the reactive graph and the block DOM writer.
 
 Input: \texttt{CompiledSlot[]} where each entry is:
@@ -401,6 +551,25 @@ Compiled stable subtrees use blocks; dynamic subtrees route to fallback reconcil
 
 Implementation detail: composition is tracked with a small internal child registry.
 	exttt{mountBlock} exposes an internal \texttt{\_\_hrbrTrackChild} function, and the composition helpers use it to register child destroyers so teardown order is correct.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (parent) {parent block\\owns root + slots};
+\node[box, right=18mm of parent] (hostel) {element slot host\\(cleared)};
+\node[box, right=18mm of hostel] (child) {child mount\\nested block OR fallback};
+\node[box, below=of child] (track) {register child destroyer\\via \texttt{\_\_hrbrTrackChild}};
+\node[box, below=of parent] (destroy) {parent destroy():\\runs child destroyers\\then removes root};
+
+\draw[arrow] (parent) -- (hostel);
+\draw[arrow] (hostel) -- (child);
+\draw[arrow] (child) -- (track);
+\draw[arrow] (track) -| (destroy);
+\end{tikzpicture}
+\end{center}
 
 \section{Walking the tests (the executable spec)}
 

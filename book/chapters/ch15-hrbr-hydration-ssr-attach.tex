@@ -10,6 +10,25 @@ A block runtime has a natural relationship with server rendering:
 
 In Relax HRBR v1, hydration is deliberately conservative. If anything looks wrong, it bails out and remounts client-side.
 
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (start) {\textbf{hydrateBlock(def, host)}\\try attach to server DOM};
+\node[box, below=of start] (hasroot) {\textbf{host.firstElementChild?}\\no \textrightarrow mount fresh};
+\node[box, below=of hasroot] (rootok) {\textbf{root tag matches?}\\no \textrightarrow clear + mount};
+\node[box, below=of rootok] (slots) {\textbf{resolve + validate slots}\\(paths, node kinds, tagNames)};
+\node[box, below=of slots] (ok) {\textbf{success}\\return hydrated block\\(identity preserved)};
+
+\draw[arrow] (start) -- (hasroot);
+\draw[arrow] (hasroot) -- (rootok);
+\draw[arrow] (rootok) -- (slots);
+\draw[arrow] (slots) -- (ok);
+\end{tikzpicture}
+\end{center}
+
 This chapter is grounded in:
 
 \begin{itemize}
@@ -96,6 +115,29 @@ Two details in \texttt{runtime/hydration.ts} make this efficient:
 
 Spec: \texttt{hydrates without rewriting DOM when markup matches}.
 
+What the spec is really asserting is \textbf{node identity preservation}. You can think of hydration as creating a \emph{mapping} from (slot key \(\rightarrow\) DOM node reference) without changing the structure:
+
+\begin{itemize}
+  \item before hydration: DOM nodes already exist (from server HTML)
+  \item after hydration: we have slot node references pointing at those exact nodes
+  \item on update: we mutate those nodes in place
+\end{itemize}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (server) {\textbf{Server DOM}\\existing nodes in host};
+\node[box, right=18mm of server] (refs) {\textbf{Hydration}\\resolvePath(slot.path)\\slotNodes map};
+\node[box, right=18mm of refs] (update) {\textbf{update(values)}\\mutate in place\\no replace};
+
+\draw[arrow] (server) -- node[midway, above] {no rewrite} (refs);
+\draw[arrow] (refs) -- (update);
+\end{tikzpicture}
+\end{center}
+
 That test captures node identities before hydration and asserts identity stability after calling \texttt{hydrateBlock}:
 
 \begin{itemize}
@@ -123,6 +165,14 @@ return mountBlock(def, host, initialValues)
 \end{verbatim}
 
 This is the first key safety property: mismatched DOM never becomes a "half-hydrated" zombie tree. We either attach cleanly or we tear down and replace.
+
+This strict policy gives you an important debugging invariant:
+
+\begin{quote}
+If hydration succeeds, later slot writes will never throw because of a missing node or wrong element type (for the validated paths).
+\end{quote}
+
+It’s also why HRBR v1 hydration doesn’t try to be clever about whitespace or comment-node drift: the moment your markup generation stops matching the compiler’s structural expectations, hydration deliberately stops and remounts.
 
 Spec: \texttt{mismatch triggers remount for subtree}.
 
@@ -221,6 +271,25 @@ You can see this directly in \texttt{runtime/hydration.ts}:
 \end{itemize}
 
 This is not as optimal as the bind-once approach in \texttt{mountBlock}, but it is still correct and easy to reason about.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (mb) {\textbf{mountBlock event slot}\\bind once\\swap \texttt{rec.current}};
+\node[box, below=of mb] (hb) {\textbf{hydrateBlock event slot}\\remove old listener\\add new wrapper};
+\node[box, right=18mm of mb] (pro) {\textbf{pro}\\simple to reason about\\low state};
+\node[box, right=18mm of hb] (con) {\textbf{con}\\more listener churn\\(still correct)};
+
+\draw[arrow] (mb) -- (hb);
+\draw[arrow] (mb) -- (pro);
+\draw[arrow] (hb) -- (con);
+\end{tikzpicture}
+\end{center}
+
+The key safety property is lifecycle cleanup: \texttt{destroy()} removes any listeners hydration attached, so even in the “remove + re-add” strategy you don’t leak handlers across updates.
 
 It still avoids leaks because \texttt{destroy()} removes any listeners it attached.
 

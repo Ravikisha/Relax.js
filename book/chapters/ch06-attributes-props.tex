@@ -14,6 +14,31 @@ Browsers expose multiple mechanisms that look similar but behave differently:
   \item \textbf{Special cased fields}: \texttt{className} and \texttt{style} have their own APIs and behavior.
 \end{enumerate}
 
+\subsection*{Diagram: the attribute write decision (attribute vs property)}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 16mm,
+  box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+  decision/.style={draw, diamond, aspect=2, align=center, inner sep=2pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (input) {Input\\\texttt{name, value}};
+\node[decision, right=of input] (isnull) {\texttt{value == null}?};
+\node[box, above right=of isnull] (remove) {\texttt{removeAttribute(el, name)}\\(also tries property\,=\,null)};
+\node[decision, below right=of isnull] (isdata) {\texttt{name.startsWith('data-')}?};
+\node[box, right=of isdata] (attr) {Write attribute\\\texttt{el.setAttribute(name, String(value))}};
+\node[box, below=of attr] (prop) {Write property\\\texttt{(el as any)[name] = value}};
+
+\draw[arrow] (input) -- (isnull);
+\draw[arrow] (isnull) -- node[midway, above] {yes} (remove);
+\draw[arrow] (isnull) -- node[midway, left] {no} (isdata);
+\draw[arrow] (isdata) -- node[midway, above] {yes} (attr);
+\draw[arrow] (isdata) -- node[midway, right] {no} (prop);
+\end{tikzpicture}
+\end{center}
+
+This is the core policy tested by the big matrix in \texttt{src/\_\_tests\_\_/attributes.test.ts}: most names are treated as properties, while \texttt{data-*} is always an attribute.
+
 If you set the wrong one, you can get subtle bugs. For instance, setting \texttt{value} as an attribute on \texttt{<input>} won't behave like setting the property in many scenarios.
 
 Relax's pragmatic rule is:
@@ -47,6 +72,26 @@ This function is used during mount (Chapter~5) and also during patches when prop
   \item delete \texttt{key} (VDOM identity only)
   \item for each remaining entry: \texttt{setAttribute(el, name, value)}
 \end{enumerate}
+
+\subsection*{Diagram: \texttt{setAttributes()} pipeline (split, normalize, apply)}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 12mm,
+  box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (attrs) {Incoming props\\\texttt{\{ class, style, key, ...rest \}}};
+\node[box, right=of attrs] (split) {Split\\\texttt{class/style}\\+ \texttt{rest}};
+\node[box, right=of split] (sanitize) {Sanitize\\delete \texttt{key}};
+\node[box, right=of sanitize] (apply) {Apply\\\texttt{setClass}\,\&\,\texttt{setStyle}\\then \texttt{setAttribute} for each rest};
+
+\draw[arrow] (attrs) -- (split);
+\draw[arrow] (split) -- (sanitize);
+\draw[arrow] (sanitize) -- (apply);
+\end{tikzpicture}
+\end{center}
+
+The important invariant here is that \texttt{key} never reaches the DOM, even if user code passes it.
 
 \subsection{Important invariant: \texttt{key} is not a DOM attribute}
 Relax uses \texttt{key} for diffing lists and stabilizing identity. It should never appear on the real DOM.
@@ -101,6 +146,28 @@ For each \texttt{[name, value]} pair, \texttt{setAttributes()} calls \texttt{set
 \end{quote}
 
 Removal goes through \texttt{removeStyle()} which sets the field to \texttt{null}.
+
+\subsection*{Diagram: class/style are special-cased, everything else is generic}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 12mm,
+  box/.style={draw, rounded corners, align=center, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (props) {\texttt{ElementVNodeProps}};
+\node[box, below left=of props] (class) {\texttt{class}\\\texttt{setClass()}};
+\node[box, below=of props] (style) {\texttt{style}\\\texttt{setStyle()/removeStyle()}};
+\node[box, below right=of props] (rest) {\texttt{other props}\\\texttt{setAttribute()/removeAttribute()}};
+\node[box, below=of style, yshift=-2mm] (dom) {Real DOM element};
+
+\draw[arrow] (props) -- (class);
+\draw[arrow] (props) -- (style);
+\draw[arrow] (props) -- (rest);
+\draw[arrow] (class) -- (dom);
+\draw[arrow] (style) -- (dom);
+\draw[arrow] (rest) -- (dom);
+\end{tikzpicture}
+\end{center}
 
 One subtle consequence: \texttt{setAttributes()} does not diff old vs new style objects. If you call it twice, the second call only assigns the fields present in the second object. it does \emph{not} remove fields that were present previously unless you explicitly remove them.
 

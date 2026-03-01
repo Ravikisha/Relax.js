@@ -61,6 +61,29 @@ The plugin emits three conceptual things:
 
 This shape matches the interop contract in \texttt{src/h.ts}: an HRBR vnode is just a mount function that returns an instance.
 
+\subsection*{Diagram: one JSX expression becomes a hoisted block + mount factory}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 14mm,
+  box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (input) {Input code\\\texttt{const App = () => <div>Hi \{name()\}</div>}};
+\node[box, right=of input] (visit) {Babel visitor\\\texttt{JSXElement(path)}};
+\node[box, right=of visit] (emit) {Emit artifacts\\1) hoisted \texttt{defineBlock(...)}\\2) mount factory replaces JSX};
+
+\node[box, below=of emit] (hoist) {Module scope\\\texttt{const \_\_hrbr\_block\_0 = defineBlock(...)};};
+\node[box, below=of visit] (replace) {Expression position\\\texttt{(host) => \_\_hrbrBlock(host, \_\_hrbr\_block\_0, [\{key, read\}, ...])}};
+
+\draw[arrow] (input) -- (visit);
+\draw[arrow] (visit) -- (emit);
+\draw[arrow] (emit) -- (hoist);
+\draw[arrow] (emit) -- (replace);
+\end{tikzpicture}
+\end{center}
+
+The key optimization is hoisting: the template is parsed once per module, while the mount factory runs per render/mount.
+
 \section{Program-level state and synthesis (imports + wrappers)}
 
 The plugin keeps per-file state variables:
@@ -81,6 +104,24 @@ These are reset in the \texttt{Program.enter} visitor and materialized in \textt
 \end{itemize}
 
 Implementation note: this scaffold avoids depending on Babel "types" helpers by emitting raw AST node objects.
+
+\subsection*{Diagram: per-file state at \texttt{Program.enter/exit}}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm and 12mm,
+  box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (enter) {\texttt{Program.enter}\\reset file state:\\\texttt{needsRuntimeImport=false}\\\texttt{needsFallbackImport=false}\\\texttt{needsWrapper=false}\\\texttt{nextBlockId=0}};
+\node[box, right=of enter] (walk) {Walk AST\\each \texttt{JSXElement}:\\\texttt{built = buildTemplateFromJsxElement(...)}\\toggle flags};
+\node[box, right=of walk] (exit) {\texttt{Program.exit}\\materialize emissions:\\imports, wrapper helper,\\and \texttt{\_\_hrbr\_block\_N} constants};
+
+\draw[arrow] (enter) -- (walk);
+\draw[arrow] (walk) -- (exit);
+\end{tikzpicture}
+\end{center}
+
+This structure prevents unused imports/helpers: nothing is emitted unless some subtree required it.
 
 \subsection{Why inject at \texttt{Program.exit}?}
 
@@ -138,6 +179,27 @@ When \texttt{built} is null, the plugin attempts a \emph{minimal fallback transf
 \paragraph{Why fallback exists}
 
 Block mode requires a stable template. Expressions that can produce different node shapes at runtime (conditionals, JSX inside expressions, etc.) must be executed by the fallback runtime, which uses the reconciler.
+
+\subsection*{Diagram: fallback routing when template extraction fails}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 14mm,
+  box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick},
+  decision/.style={draw, diamond, aspect=2, inner sep=2.5pt, align=center, fill=RelaxLight}
+]
+\node[box] (jsx) {JSX subtree\\\texttt{<div>...}};
+\node[decision, right=of jsx] (ok) {Can build\\stable template?};
+\node[box, above right=of ok] (block) {Block transform\\emit \texttt{defineBlock + compiledSlots}};
+\node[box, below right=of ok] (fb) {Fallback transform\\emit \texttt{host => mountFallback(...)}\\\texttt{renderFn} returns specs};
+
+\draw[arrow] (jsx) -- (ok);
+\draw[arrow] (ok) -- node[midway, above] {yes} (block);
+\draw[arrow] (ok) -- node[midway, below] {no} (fb);
+\end{tikzpicture}
+\end{center}
+
+In other words: block mode is an optimization; fallback mode is the semantic firewall.
 
 \paragraph{Current fallback subset}
 

@@ -12,6 +12,28 @@ Relax’s slot model is intentionally minimal:
 
 That constraint keeps the renderer small and makes the behavior easy to specify with tests.
 
+\section{Diagram: component render \textrightarrow slot rewrite \textrightarrow normal VDOM}
+Slots are easiest to understand as a short rewrite pass that happens \emph{between} component render and mounting/patching:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=center},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (render) {component \texttt{render()}\\returns VNode tree\\(may contain SLOT markers)};
+  \node[box, right=14mm of render] (flag) {\texttt{didCreateSlot()}?\\(module flag)};
+  \node[box, right=14mm of flag] (fill) {\texttt{fillSlots(vdom, externalChildren)}\\mutates tree in-place};
+  \node[box, below=of fill] (out) {output tree contains\\no SLOT markers\\(slots rewritten to FRAGMENT)};
+
+  \draw[arrow] (render) -- (flag);
+  \draw[arrow] (flag) -- node[above]{yes} (fill);
+  \draw[arrow] (fill) -- (out);
+\end{tikzpicture}
+\end{center}
+
+After this rewrite, slots disappear as a concept: mount/patch just see fragments and children arrays.
+
 Slots in the VDOM layer are intentionally small and test-driven:
 
 \begin{itemize}
@@ -103,6 +125,25 @@ At a high level:
   \item Output: it mutates the tree in-place.
   \item Post-condition: every SLOT marker encountered is rewritten into a FRAGMENT node.
 \end{itemize}
+
+\subsection*{Diagram: the traversal + rewrite policy}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=left},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (walk) {Walk the VNode tree\\(pre-order traversal)};
+  \node[box, below=of walk] (slot) {If node is SLOT:\\choose content\\external vs default};
+  \node[box, below=of slot] (rewrite) {Rewrite SLOT \textrightarrow FRAGMENT\\\texttt{children = chosenContent}};
+  \node[box, below=of rewrite] (drop) {During parent's child-walk:\\drop empty fragments\\that came from empty slots};
+
+  \draw[arrow] (walk) -- (slot);
+  \draw[arrow] (slot) -- (rewrite);
+  \draw[arrow] (rewrite) -- (drop);
+\end{tikzpicture}
+\end{center}
 
 \paragraph{Why FRAGMENT?}
 
@@ -200,6 +241,8 @@ This is important. Consider:
 
 Relax wants \textbf{each component to fill its own slots} using its own external content.
 If the parent traversal reached into component children, it could fill the wrong slots with the wrong content.
+
+Another way to say this: \texttt{fillSlots} treats \texttt{COMPONENT} vnodes as \emph{opaque}. That matches the rest of the renderer: components are patched/mounted as black boxes, and only the component instance is responsible for producing/maintaining its internal subtree.
 
 This is a major boundary rule:
 

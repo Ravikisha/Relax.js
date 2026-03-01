@@ -23,6 +23,34 @@ Before we talk about parsing and visitors, it's worth making the compiler/runtim
 The compiler's job is to emit \emph{data and closures} that satisfy a small runtime API.
 Everything in the implementation is organized around making that boundary stable.
 
+\subsection*{Diagram: the compiler-to-runtime boundary (block vs fallback)}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=10mm and 14mm,
+	box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (jsx) {Input TSX/JSX\\\texttt{<div>...}};
+\node[box, right=of jsx] (compiler) {Compiler\\(TS prototype or Babel plugin)};
+\node[box, right=of compiler] (decision) {Route decision\\stable structure?};
+
+\node[box, above right=of decision] (block) {Block mode\\\texttt{defineBlock(\{templateHTML, slots\})}\\\texttt{compiledSlots: \{key, read\}[]}\;};
+\node[box, below right=of decision] (fallback) {Fallback mode\\emit mount factory\\\texttt{mountFallback(host, renderFn)}};
+
+\node[box, right=of block] (runtimeB) {HRBR runtime\\\texttt{mountCompiledBlock(def, host, compiledSlots)}};
+\node[box, right=of fallback] (runtimeF) {Fallback reconciler\\(runtime)};
+
+\draw[arrow] (jsx) -- (compiler);
+\draw[arrow] (compiler) -- (decision);
+\draw[arrow] (decision) -- node[midway, above] {yes} (block);
+\draw[arrow] (decision) -- node[midway, below] {no} (fallback);
+\draw[arrow] (block) -- (runtimeB);
+\draw[arrow] (fallback) -- (runtimeF);
+\end{tikzpicture}
+\end{center}
+
+This is the architectural backbone: the compiler emits either a \emph{BlockDef + read closures} (fast) or a \emph{fallback mount factory} (safe).
+
 \subsection{Tiny contract (2 bullets)}
 
 Given a JSX expression, the compiler must be able to produce one of:
@@ -81,6 +109,27 @@ Examples:
 
 Compiled blocks are designed for \emph{stable structure} with dynamic \emph{values}.
 When structure is dynamic, we let the fallback runtime reconcile children.
+
+\subsection*{Diagram: what counts as “dynamic structure” (conservative)}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=8mm and 12mm,
+	box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick},
+	decision/.style={draw, diamond, aspect=2, inner sep=2.5pt, align=center, fill=RelaxLight}
+]
+\node[box] (expr) {JSX expression\\\texttt{<div>...</div>}};
+\node[decision, right=of expr] (dyn) {Any child\\expression can\\change node shape?};
+\node[box, above right=of dyn] (fallback) {Route to fallback\\(reconcile structure)};
+\node[box, below right=of dyn] (block) {Allow block mode\\(write values only)};
+
+\draw[arrow] (expr) -- (dyn);
+\draw[arrow] (dyn) -- node[midway, above] {yes} (fallback);
+\draw[arrow] (dyn) -- node[midway, below] {no} (block);
+\end{tikzpicture}
+\end{center}
+
+Relax’s current compilers deliberately err on the safe side: anything that could introduce or remove DOM nodes is treated as “dynamic structure”.
 
 \subsection{How ``block vs fallback'' relates to Chapter~\ref{ch:vdom-hrbr-interop}}
 
@@ -143,6 +192,26 @@ The block runtime later parses \texttt{templateHTML} into a DOM tree and walks \
 The critical detail is that the compiler counts \emph{every child node} (elements \emph{and} text nodes), because \texttt{childNodes} includes text nodes. In \texttt{compiler/index.ts} this is represented by \texttt{PathState\{ childIndex \}}.
 
 This is also why the compiler uses explicit sentinels for some dynamic expressions: it needs to ensure a real, countable node exists at the path.
+
+\subsection*{Diagram: how slot paths are interpreted via \texttt{childNodes}}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=10mm and 14mm,
+	box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (template) {\textbf{Compiler emits}\\\texttt{path = [3,1]}\\meaning: under template root,\\go to \texttt{childNodes[3]} then \texttt{childNodes[1]}};
+\node[box, right=of template] (parse) {Runtime parses\\\texttt{templateHTML}\\into DOM tree};
+\node[box, right=of parse] (walk) {Runtime resolves path\\\texttt{node = root}\\\texttt{for i in path: node = node.childNodes[i]}};
+\node[box, below=of walk] (write) {Apply slot write\\(setText / setAttribute / etc.)};
+
+\draw[arrow] (template) -- (parse);
+\draw[arrow] (parse) -- (walk);
+\draw[arrow] (walk) -- (write);
+\end{tikzpicture}
+\end{center}
+
+This is why both compilers count \emph{text nodes} as children: the runtime uses \texttt{childNodes}, not \texttt{children}.
 
 \subsection{Text expression handling: sentinel + slot path}
 

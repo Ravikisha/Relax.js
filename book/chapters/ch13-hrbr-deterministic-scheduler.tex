@@ -74,6 +74,29 @@ But the scheduler's actual selection order is hard-coded as an array:
 
 Spec: \texttt{runs tasks by lane priority (sync > input > default > transition > idle)}.
 
+\subsection*{Diagram: lane priority at a glance}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=7mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=center},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (sync) {sync\\(run now)};
+  \node[box, below=of sync] (input) {input\\(user interaction)};
+  \node[box, below=of input] (def) {default\\(normal updates)};
+  \node[box, below=of def] (trans) {transition\\(deferred UI)};
+  \node[box, below=of trans] (idle) {idle\\(background)};
+
+  \draw[arrow] (sync) -- (input);
+  \draw[arrow] (input) -- (def);
+  \draw[arrow] (def) -- (trans);
+  \draw[arrow] (trans) -- (idle);
+\end{tikzpicture}
+\end{center}
+
+This ordering applies unless aging/deadline promotion temporarily pushes work upward.
+
 \subsection{What is a lane in practice?}
 
 Lanes are not preemption.
@@ -202,6 +225,29 @@ Specs:
   \item \texttt{setFrameBudget caps the budget used by scheduled flushes}
 \end{itemize}
 
+\subsection*{Diagram: the flush loop (budgeted work)}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=left},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (start) {flush(\{budgetMs\}) starts};
+  \node[box, below=of start] (pick) {pick next task\\(lane priority + promotion)};
+  \node[box, below=of pick] (run) {run task};
+  \node[box, below=of run] (check) {elapsed > budget?};
+  \node[box, below left=of check, xshift=14mm] (cont) {yes:\\schedule continuation flush\\work remains};
+  \node[box, below right=of check, xshift=-14mm] (done) {no:\\continue until empty};
+
+  \draw[arrow] (start) -- (pick);
+  \draw[arrow] (pick) -- (run);
+  \draw[arrow] (run) -- (check);
+  \draw[arrow] (check) -- (cont);
+  \draw[arrow] (check) -- (done);
+\end{tikzpicture}
+\end{center}
+
 \subsection{setFrameBudget(ms)}
 
 Even if tasks provide their own budgets, scheduled flushes are capped by \texttt{frameBudgetMs}.
@@ -234,6 +280,26 @@ In the implementation:
 \end{itemize}
 
 Promotion runs \emph{before} picking the next task, and it only considers the \textbf{queue head} in each lane.
+
+\subsection*{Diagram: promotion ladder}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=7mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=center},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (idle) {idle};
+  \node[box, right=of idle] (trans) {transition};
+  \node[box, right=of trans] (def) {default};
+  \node[box, right=of def] (input) {input};
+  \draw[arrow] (idle) -- (trans);
+  \draw[arrow] (trans) -- (def);
+  \draw[arrow] (def) -- (input);
+\end{tikzpicture}
+\end{center}
+
+The scheduler promotes a task when it's overdue (deadline reached) or old (aging threshold). This is the mechanism behind the starvation-prevention specs.
 
 A task is promoted if:
 

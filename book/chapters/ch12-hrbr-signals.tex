@@ -55,6 +55,28 @@ There’s a third, more pragmatic constraint you’ll see in the code:
 
 This is not a ``fully-featured'' reactive system; it’s a compact kernel meant to be embedded into compiled blocks.
 
+\section{Diagram: signals graph (sources \textrightarrow computations \textrightarrow derived values)}
+The runtime is easiest to visualize as a graph where reads register edges and writes schedule computations:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=center},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (s) {Signal\\\texttt{s}};
+  \node[box, right=22mm of s] (m) {Memo\\\texttt{m = f(s)}};
+  \node[box, below=of m] (e) {Effect\\\texttt{e() reads m}};
+
+  \draw[arrow] (s) -- node[above]{read registers observer} (m);
+  \draw[arrow] (m) -- node[right]{read registers observer} (e);
+  \draw[arrow] (s) to[bend right=24] node[left]{write schedules} (m);
+  \draw[arrow] (m) to[bend right=24] node[right]{write schedules} (e);
+\end{tikzpicture}
+\end{center}
+
+The rest of this chapter explains how Relax keeps this graph deterministic and leak-safe with intrusive linked lists.
+
 \section{Core data structures: intrusive lists for stable order}
 
 In \texttt{runtime/signals.ts} you will see a set of internal types:
@@ -154,6 +176,30 @@ cur = next
 \end{verbatim}
 
 This ensures we traverse the original linked list in deterministic order.
+
+\subsection*{Diagram: observer notification preserves creation order}
+Observer lists are kept in stable creation order (by computation id). A write walks that list and schedules computations without losing determinism:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=7mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=center},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (sig) {Signal\\observer list};
+  \node[box, below=of sig] (c1) {comp \#1};
+  \node[box, below=of c1] (c2) {comp \#2};
+  \node[box, below=of c2] (c3) {comp \#3};
+  \node[box, right=18mm of c2] (pend) {\texttt{pending}\\(re-entrancy / batch)};
+
+  \draw[arrow] (sig) -- (c1);
+  \draw[arrow] (c1) -- (c2);
+  \draw[arrow] (c2) -- (c3);
+  \draw[arrow] (c2) -- (pend);
+\end{tikzpicture}
+\end{center}
+
+The key implementation trick is the one shown in the code snippet above: capture \texttt{next} before scheduling so list mutation during computation runs doesn't break traversal.
 
 \paragraph{What gets scheduled?}
 

@@ -37,6 +37,29 @@ it has to solve two problems:
 
 Relax's answer is to always register a wrapper listener and return it to the caller.
 
+\subsection*{Diagram: why wrapper identity matters for removal}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 14mm,
+  box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (user) {User handler\\\texttt{handler(event)}};
+\node[box, right=of user] (wrap) {Relax wrapper\\\texttt{listener = (e) => handler.call(host?, e)}};
+\node[box, right=of wrap] (dom) {DOM element\\\texttt{el.addEventListener(name, listener)}};
+
+\node[box, below=of dom] (remove) {Cleanup\\\texttt{el.removeEventListener(name, listener)}};
+
+\draw[arrow] (user) -- node[midway, above] {not registered} (wrap);
+\draw[arrow] (wrap) -- node[midway, above] {registered by identity} (dom);
+\draw[arrow] (dom) -- (remove);
+
+\draw[arrow] (user) to[bend right=25] node[midway, below] {can\textbf{not} remove} (remove);
+\end{tikzpicture}
+\end{center}
+
+The DOM can only remove listeners by the exact function object identity that was registered. That's why \texttt{events.ts} returns the wrapper.
+
 \section{DOM event listener wiring (\texttt{src/events.ts})}
 The central helper is:
 
@@ -83,6 +106,28 @@ This immediately gives Relax three desirable properties:
   \item \textbf{No mutation of user handlers:} the original function object is untouched.
   \item \textbf{Reliable cleanup:} the wrapper function object can be stored and later removed.
 \end{itemize}
+
+\subsection*{Diagram: event wiring lifecycle across mount, patch, destroy}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 12mm,
+  box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (props) {VNode props\\\texttt{props.on = \{ click: fn, ... \}}};
+\node[box, right=of props] (mount) {Mount\\\texttt{addEventListeners(...)}\\returns wrappers map};
+\node[box, right=of mount] (store) {Store on vnode\\\texttt{vdom.listeners = wrappers}};
+\node[box, below=of store] (patch) {Patch\\compare old/new\\update listeners (swap wrappers)};
+\node[box, left=of patch] (destroy) {Destroy\\\texttt{removeEventListeners(vdom.listeners, el)}};
+
+\draw[arrow] (props) -- (mount);
+\draw[arrow] (mount) -- (store);
+\draw[arrow] (store) -- (patch);
+\draw[arrow] (store) -- (destroy);
+\end{tikzpicture}
+\end{center}
+
+Even if patch-time logic changes, notice the invariant: destroy always removes \emph{whatever wrappers are currently stored on the vnode}.
 
 \subsection{Multiple listeners: \texttt{addEventListeners(events, el, hostComponent?)}}
 Mounting and patching usually deal with an event map (a record of event name to handler). Relax provides a convenience:
@@ -151,6 +196,26 @@ If you remember only one idea from this part of the codebase, make it this: \tex
 
 \section{The command dispatcher (\texttt{src/dispatcher.ts})}
 Where \texttt{events.ts} is about DOM integration, \texttt{Dispatcher} is a tiny in-process pub/sub.
+
+\subsection*{Diagram: dispatcher data structures and dispatch flow}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 12mm,
+  box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (subs) {\texttt{\#subs: Map<string, Handler[]>}};
+\node[box, right=of subs] (after) {\texttt{\#afterHandlers: (() => void)[]}};
+\node[box, below=of subs] (dispatch) {\texttt{dispatch(name, payload)}};
+\node[box, below=of dispatch] (handlers) {Run handlers for \texttt{name}\\or warn if none};
+\node[box, right=of handlers] (afterRun) {Always run\\after-handlers};
+
+\draw[arrow] (subs) -- (dispatch);
+\draw[arrow] (dispatch) -- (handlers);
+\draw[arrow] (handlers) -- (afterRun);
+\draw[arrow] (after) -- (afterRun);
+\end{tikzpicture}
+\end{center}
 
 \subsection{A minimal contract}
 	exttt{Dispatcher} has three public methods:

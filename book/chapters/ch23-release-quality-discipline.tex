@@ -20,6 +20,30 @@ A ``release-quality'' change in this repo is expected to be green on:
 \item \textbf{Build}: Rollup bundles for ESM + CJS, plus type bundle generation on publish
 \end{itemize}
 
+\section*{Diagram: quality gates as a pipeline}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=8mm and 10mm,
+	box/.style={draw, rounded corners, align=center, inner sep=7pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (change) {Change\\(code + docs)};
+\node[box, right=of change] (type) {Typecheck\\\texttt{tsc --noEmit}};
+\node[box, right=of type] (lint) {Lint\\\texttt{eslint}};
+\node[box, right=of lint] (test) {Tests\\\texttt{vitest}};
+\node[box, right=of test] (build) {Build\\Rollup + types};
+\node[box, right=of build] (ship) {Publish\\(prepack)};
+
+\draw[arrow] (change) -- (type);
+\draw[arrow] (type) -- (lint);
+\draw[arrow] (lint) -- (test);
+\draw[arrow] (test) -- (build);
+\draw[arrow] (build) -- (ship);
+\end{tikzpicture}
+\end{center}
+
+This diagram is intentionally linear. In practice you often run these in parallel locally, but conceptually each step answers a different question: ``Do the types hold?'', ``Is the diff readable?'', ``Is the behavior correct?'', and ``Is the published artifact correct?''
+
 These are not redundant; they fail on different classes of bugs.
 
 \subsection{A tiny contract (inputs, outputs, failure modes)}
@@ -59,6 +83,22 @@ The \texttt{typecheck} script (in \texttt{package.json}) runs:
 \begin{quote}
 \texttt{tsc -p tsconfig.json --noEmit}
 \end{quote}
+
+\section*{Diagram: why multiple tsconfig files exist}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=9mm and 12mm,
+	box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (base) {\texttt{tsconfig.json}\\Developer truth\\strictness + DOM libs};
+\node[box, below left=of base] (types) {\texttt{tsconfig.build-types.json}\\Emit \texttt{.d.ts} only\\to \texttt{dist-types/}};
+\node[box, below right=of base] (rollup) {\texttt{tsconfig.rollup*.json}\\No declarations\\build JS for bundling};
+
+\draw[arrow] (base) -- (types);
+\draw[arrow] (base) -- (rollup);
+\end{tikzpicture}
+\end{center}
 
 \subsection{Common typecheck failures (and how to debug)}
 
@@ -230,6 +270,25 @@ Release discipline means each export must be correct in three dimensions:
 
 It's easy to accidentally break this mapping when renaming files, changing entry points, or restructuring module boundaries.
 That is why \texttt{prepack} builds both JS bundles and types before publish.
+
+\section*{Diagram: package exports must match ESM, CJS, and types}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=9mm and 14mm,
+	box/.style={draw, rounded corners, align=center, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (exports) {\texttt{package.json exports}\\\texttt{"."} / \texttt{"./hrbr"} / \texttt{"./compiler"}};
+
+\node[box, below left=of exports] (esm) {ESM\\\texttt{dist/esm/}};
+\node[box, below=of exports] (cjs) {CJS\\\texttt{dist/cjs/}};
+\node[box, below right=of exports] (types) {Types\\\texttt{dist-types/}};
+
+\draw[arrow] (exports) -- (esm);
+\draw[arrow] (exports) -- (cjs);
+\draw[arrow] (exports) -- (types);
+\end{tikzpicture}
+\end{center}
 
 \section{Release checklist (practical)}
 

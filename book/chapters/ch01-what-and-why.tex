@@ -35,6 +35,54 @@ At a high level, Relax.js promises:
   \item Components have lifecycle hooks and can emit/handle events.
 \end{itemize}
 
+\subsection*{Diagram: the end-to-end VDOM update loop (mount \textrightarrow patch \textrightarrow destroy)}
+Even if you later adopt the HRBR compiled fast path, the VDOM loop is the baseline contract. Most tests in \texttt{src/\_\_tests\_\_/*} are describing one of these arrows.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 14mm,
+  box/.style={draw, rounded corners, align=center, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+  \node[box] (vnode) {VNode tree\\(plain objects)};
+  \node[box, right=of vnode] (mount) {\texttt{mountDOM(vdom, host)}};
+  \node[box, right=of mount] (dom) {Real DOM\\\texttt{vdom.el} refs};
+  \node[box, below=of mount] (patch) {\texttt{patchDOM(old, next)}};
+  \node[box, below=of dom] (destroy) {\texttt{destroyDOM(vdom)}};
+
+  \draw[arrow] (vnode) -- (mount);
+  \draw[arrow] (mount) -- (dom);
+  \draw[arrow] (dom) -- node[right]{updates} (patch);
+  \draw[arrow] (patch) -- node[left]{reuses identity when possible} (dom);
+  \draw[arrow] (dom) -- (destroy);
+\end{tikzpicture}
+\end{center}
+
+This is the book's core promise: if two VNodes represent the "same" thing, Relax tries to keep the same DOM node and just update its values.
+
+\subsection*{Diagram: the two execution paths (VDOM vs HRBR)}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=12mm and 12mm,
+  box/.style={draw, rounded corners, align=center, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (author) {Authoring\\(TSX/JSX or \texttt{h()})};
+\node[box, below left=of author] (vdom) {VDOM runtime\\\texttt{src/*}\\mount/patch/destroy};
+\node[box, below right=of author] (compiler) {Compiler\\\texttt{compiler/*}\\(optional)};
+\node[box, below=of compiler] (hrbr) {HRBR runtime\\\texttt{runtime/*}\\template + slots};
+\node[box, below=of vdom, xshift=18mm] (dom) {Real DOM\\(browser/jsdom)};
+
+\draw[arrow] (author) -- node[midway, left] {general case} (vdom);
+\draw[arrow] (author) -- node[midway, right] {optimized path} (compiler);
+\draw[arrow] (compiler) -- (hrbr);
+\draw[arrow] (vdom) -- (dom);
+\draw[arrow] (hrbr) -- (dom);
+\end{tikzpicture}
+\end{center}
+
+This diagram is the mental model for the rest of the book: Relax always ends at \emph{real DOM updates}, but it can reach them either by interpreting a VNode tree (VDOM) or by executing precomputed slot writes (HRBR).
+
 Those promises are verified by tests under \texttt{src/\_\_tests\_\_/} and (for the HRBR runtime) under \texttt{runtime/\_\_tests\_\_/}.
 
 \subsection{A quick terminology primer}
@@ -102,6 +150,30 @@ HRBR moves some of that cost earlier (``compile time''):
 That doesn't make VDOM obsolete.
 It creates a spectrum:
 VDOM is the flexible general case; HRBR is an optimized fast path when the structure is known.
+
+\subsection*{Diagram: when HRBR is a good fit (static structure, dynamic data)}
+This isn't a binary choice; think of HRBR as a selective optimization for subtrees that are structurally stable.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm and 12mm,
+  box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick},
+  decision/.style={diamond, draw, aspect=2.2, align=center, inner sep=2pt, fill=RelaxLight}
+]
+  \node[box] (jsx) {Author TSX/JSX\\("what" UI looks like)};
+  \node[decision, right=18mm of jsx] (stable) {Is structure\\stable?\\(same tags/shape)};
+  \node[box, above right=10mm and 14mm of stable] (vdom) {Use VDOM\\diff + patch\\general case};
+  \node[box, below right=10mm and 14mm of stable] (hrbr) {Use HRBR\\template + slots\\fast path};
+  \node[box, right=22mm of stable] (dom2) {DOM updates\\(same result)};
+
+  \draw[arrow] (jsx) -- (stable);
+  \draw[arrow] (stable) -- node[above]{no / dynamic lists} (vdom);
+  \draw[arrow] (stable) -- node[below]{yes / mostly values} (hrbr);
+  \draw[arrow] (vdom) -- (dom2);
+  \draw[arrow] (hrbr) -- (dom2);
+\end{tikzpicture}
+\end{center}
 
 \section{How we'll prove correctness throughout this book}
 This repository uses \textbf{Vitest} and \textbf{jsdom}.
@@ -179,6 +251,18 @@ It reads like a story:
 
 Notice the discipline here: the tests make DOM updates predictable by explicitly awaiting \texttt{nextTick()}.
 That foreshadows Chapter~10, where we explain why scheduling exists and how it interacts with DOM patching.
+
+\section{Online resources}
+These sources are helpful for orienting yourself before diving into implementation details:
+
+\begin{itemize}
+  \item Virtual DOM as a concept (implementation details differ, but the mental model is useful):
+    \href{https://react.dev/learn/render-and-commit}{React docs: Render and Commit}.
+  \item DOM node basics (text nodes vs element nodes):
+    \href{https://developer.mozilla.org/en-US/docs/Web/API/Node/nodeType}{MDN: Node.nodeType}.
+  \item Microtasks vs macrotasks (relevant for \texttt{nextTick()} / \texttt{queueMicrotask}):
+    \href{https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask}{MDN: queueMicrotask}.
+\end{itemize}
 
 \section{Walkthrough: patching is ``same element, new values''}
 Relax's VDOM runtime is built around a simple principle:

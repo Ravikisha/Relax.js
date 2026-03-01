@@ -15,9 +15,10 @@
 \usepackage{titling}
 \usepackage{fancyhdr}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric}
 % hyperref should be loaded after most packages
 \usepackage{xurl}
+\usepackage{tcolorbox}
 \usepackage[breaklinks=true]{hyperref}
 
 \geometry{margin=1in}
@@ -34,24 +35,28 @@
   linkcolor=RelaxBlue,
   urlcolor=RelaxBlue,
   citecolor=RelaxBlue,
-  pdfauthor={Ravikisha (project) \& Contributors},
-  pdftitle={Relax.js: A Deep Build Guide}
+  pdfauthor={Ravi Kishan},
+  pdftitle={Relax.js: A Deep Build Guide},
+  pdfsubject={Relax.js internals, VDOM rendering, compiler-assisted rendering (HRBR)},
+  pdfkeywords={Relax.js, virtual DOM, VDOM, compiler, HRBR, signals, scheduler, TypeScript, JSX}
 }
 
-% --- Chapter/section styling ---
-\titleformat{\chapter}
-  {\normalfont\huge\bfseries\color{RelaxGray}}
-  {\thechapter.}{0.6em}{}
-\titlespacing*{\chapter}{0pt}{-8pt}{18pt}
 
 % --- Headers/footers ---
+
 \pagestyle{fancy}
+
 \fancyhf{}
+
 \fancyhead[L]{\nouppercase{\leftmark}}
-\fancyhead[R]{\nouppercase{\rightmark}}
+
+
 \fancyfoot[C]{\thepage}
+
 \renewcommand{\headrulewidth}{0.4pt}
+
 \renewcommand{\footrulewidth}{0pt}
+
 
 % --- Listings configuration for code blocks ---
 \lstdefinelanguage{JavaScript}{
@@ -88,7 +93,7 @@
 }
 
 \title{Relax.js: A Deep Build Guide}
-\author{Ravikisha (project) \& Contributors}
+\author{Ravi Kishan}
 \date{\today}
 
 % --- Lightweight custom title page ---
@@ -99,24 +104,102 @@
 \predate{\begin{center}\small\color{RelaxGray}}
 \postdate{\par\end{center}\vspace{1.2em}}
 
+
+\usepackage[pages=some]{background} % 'pages=some' lets you control which pages get the background
+
+% --- Title-page background (image only) ---
+% Keep it per-page so it doesn’t bleed into TOC/body pages.
+\newcommand{\FrontPageBackground}{%
+  \backgroundsetup{%
+    scale=1,
+    color=black,
+    opacity=1,
+    angle=0,
+  contents={\includegraphics[width=\paperwidth,height=\paperheight,keepaspectratio=false]{docs/bg.jpeg}}%
+  }%
+  \BgThispage
+}
+
 \begin{document}
 
 \frontmatter
 \begin{titlepage}
 \thispagestyle{empty}
+\FrontPageBackground
 \centering
-\vspace*{2.2cm}
-{\Huge\bfseries\color{RelaxGray} Relax.js\par}
-\vspace{0.25cm}
-{\Large\color{RelaxGray} A Deep Build Guide\par}
-\vspace{1.0cm}
-{\large\color{RelaxGray} Ravikisha (project) \& Contributors\par}
-\vspace{0.6cm}
-{\small\color{RelaxGray} \today\par}
-\vfill
-\includegraphics[width=0.22\textwidth]{docs/relaxjslogo.png}\par
-\vspace*{1.0cm}
+\vspace*{1.6cm}
+
+% Center everything on the page as a single unit.
+\begin{minipage}{0.92\textwidth}
+  \centering
+  % Title block with a subtle translucent backing for readability on the image.
+  \setlength{\fboxsep}{10pt}
+  \begin{tcolorbox}[
+    colback=RelaxLight!85,      % Background color
+    colframe=RelaxLight!85,     % Set frame same as background for no visible border
+    arc=15pt,                   % This is your border-radius
+    outer arc=15pt,
+    boxsep=10pt,                % Internal padding
+    center,                     % Centers the box horizontally
+    width=0.95\textwidth        % Matches your minipage width
+]
+    \begin{center}
+        \IfFileExists{docs/relaxjslogo.png}{%
+            \includegraphics[width=0.30\textwidth]{docs/relaxjslogo.png}\par
+        }{%
+            % Fallback placeholder when the logo file is missing (avoids compile error)
+            \fbox{\parbox{0.30\textwidth}{\centering Relax.js}}\par
+        }
+    \end{center}
+    
+    \vspace{0.1cm}
+    \begin{center}
+      
+      {\Huge\bfseries\color{RelaxGray} Relax.js\par}
+      
+      \vspace{0.2cm}
+      {\Large\fontfamily{lmss}\selectfont\color{RelaxGray} A Deep Build Guide\par}
+      
+      \vspace{0.55cm}
+      {\normalsize\color{RelaxGray!90} Ravi Kishan\par}
+      \vspace{0.45cm}
+      {\small\color{RelaxGray!95}
+          \begin{minipage}{0.92\textwidth}
+              \centering
+              A practical, test-driven walk through Relax.js internals---VDOM rendering,
+              diffing/patching, scheduling, and compiler-assisted rendering (HRBR).
+          \end{minipage}\par
+      }
+    \end{center}
+
+    
+\end{tcolorbox}
+
+\end{minipage}
 \end{titlepage}
+
+% --- Copyright + printing notes (production-friendly) ---
+\cleardoublepage
+	\thispagestyle{empty}
+
+\begingroup
+\small
+\noindent\textbf{Relax.js: A Deep Build Guide}\\
+\noindent\textcopyright\ \the\year\ Ravi Kishan and contributors.\\
+\noindent Licensed under the MIT License (see \texttt{LICENSE} in the repository).\\
+
+\vspace{0.7em}
+\noindent\textbf{Disclaimer.} This book reverse-engineers and explains the Relax.js codebase.
+APIs and internals may change.
+Performance discussions are environment-dependent; use the benchmark methodology chapter for fair comparisons.
+
+\vspace{0.7em}
+\noindent\textbf{Developer Portfolio} \url{https://ravikishan.me} \\
+\noindent\textbf{GitHub.} \url{https://github.com/Ravikisha} \\
+\noindent\textbf{Source.} \url{https://github.com/Ravikisha/Relax.js} \\
+\noindent\textbf{NPM.} \url{https://www.npmjs.com/package/relaxcore}
+\par
+\endgroup
 
 % Table of Contents (explicitly included)
 \cleardoublepage
@@ -159,5 +242,53 @@
 \chapter{Appendix: notation}
 This book uses \texttt{file/path.ts} to reference source files.
 Symbol names are written like \texttt{h()} or \texttt{mountDOM()}.
+
+\cleardoublepage
+\chapter{References}
+\begin{thebibliography}{99}
+
+\bibitem{mdn_eventtarget_addeventlistener}
+MDN Web Docs.
+\emph{EventTarget: addEventListener() method}.
+\url{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener}.
+Accessed 2026-03-01.
+
+\bibitem{mdn_node_insertbefore}
+MDN Web Docs.
+\emph{Node: insertBefore() method}.
+\url{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}.
+Accessed 2026-03-01.
+
+\bibitem{react_keys}
+React Documentation.
+\emph{Rendering Lists and Keys}.
+\url{https://react.dev/learn/rendering-lists}.
+Accessed 2026-03-01.
+
+\bibitem{wikipedia_lis}
+Wikipedia contributors.
+\emph{Longest increasing subsequence}.
+\url{https://en.wikipedia.org/wiki/Longest_increasing_subsequence}.
+Accessed 2026-03-01.
+
+\bibitem{typescript_tsconfig}
+TypeScript Documentation.
+\emph{TSConfig Reference}.
+\url{https://www.typescriptlang.org/tsconfig}.
+Accessed 2026-03-01.
+
+\bibitem{nodejs_package_exports}
+Node.js Documentation.
+\emph{Packages: package.json exports}.
+\url{https://nodejs.org/api/packages.html#exports}.
+Accessed 2026-03-01.
+
+\bibitem{babel_handbook_plugins}
+Babel.
+\emph{Babel Plugin Handbook}.
+\url{https://github.com/jamiebuilds/babel-handbook/blob/master/translations/en/plugin-handbook.md}.
+Accessed 2026-03-01.
+
+\end{thebibliography}
 
 \end{document}

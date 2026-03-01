@@ -34,6 +34,26 @@ And the helper emission functions used across the runtime:
 
 The reactivity and scheduling layers re-export these through \texttt{runtime/index.ts} so ``public HRBR'' users can import them.
 
+\subsection*{Diagram: devtools module as a hub (hooks + counters)}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=10mm and 14mm,
+	box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (runtime) {Runtime sites\\block writes\\scheduler flush\\signals scheduling};
+\node[box, right=of runtime] (emit) {\texttt{emitDevtoolsEvent(event)}\\(central router)};
+\node[box, above right=of emit] (hook) {Optional hook\\\texttt{setDevtoolsHook(fn)}};
+\node[box, below right=of emit] (counters) {Counters store\\\texttt{getDevtoolsCounters()}};
+
+\draw[arrow] (runtime) -- (emit);
+\draw[arrow] (emit) -- node[midway, above] {always forward} (hook);
+\draw[arrow] (emit) -- node[midway, below] {update counters (some gated)} (counters);
+\end{tikzpicture}
+\end{center}
+
+This captures the intent: event forwarding is always possible, while some counter updates are optional for performance.
+
 \subsection{Tiny contract (what you can rely on)}
 
 The devtools module is deliberately small, but it still has a stable contract:
@@ -100,6 +120,29 @@ This split is implemented directly in \texttt{runtime/devtools.ts}:
 \item \texttt{emitDevtoolsEvent()} always forwards to \texttt{\_hook?.(event)}.
 \item Only the \texttt{domOp} and \texttt{alloc} branches check \texttt{\_instrumentationEnabled} before touching counters.
 \end{itemize}
+
+\subsection*{Diagram: gating policy (forward always, count sometimes)}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=9mm and 12mm,
+	box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick},
+	decision/.style={draw, diamond, aspect=2, inner sep=2.5pt, align=center, fill=RelaxLight}
+]
+\node[box] (event) {Event created\\\texttt{\{type: 'domOp', op: ...\}}};
+\node[box, right=of event] (forward) {Forward to hook\\\texttt{\_hook?.(event)}};
+\node[decision, right=of forward] (enabled) {Instrumentation\\enabled?};
+\node[box, above right=of enabled] (count) {Increment counters\\\texttt{domOps++}\\\texttt{allocs++}};
+\node[box, below right=of enabled] (skip) {Skip counter update\\(keep overhead low)};
+
+\draw[arrow] (event) -- (forward);
+\draw[arrow] (forward) -- (enabled);
+\draw[arrow] (enabled) -- node[midway, above] {yes} (count);
+\draw[arrow] (enabled) -- node[midway, below] {no} (skip);
+\end{tikzpicture}
+\end{center}
+
+This is the perf contract: you can always observe events, but you only pay for counting when you asked for it.
 
 \section{Emission: increment + forward}
 

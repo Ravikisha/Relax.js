@@ -12,6 +12,23 @@ That escape hatch is the \textbf{fallback reconciler}:
   \item a child-list reconciler: \texttt{runtime/reconciler.ts}
 \end{itemize}
 
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (stable) {\textbf{Blocks}\\stable structure\\slot writes};
+\node[box, right=20mm of stable] (dynamic) {\textbf{Fallback}\\dynamic structure\\reconcile children};
+\node[box, below=of dynamic] (keyed) {\textbf{Keyed mode}\\preserve identity\\moves via LIS};
+\node[box, below=of stable] (unkeyed) {\textbf{Unkeyed mode}\\positional patch\\append/truncate};
+
+\draw[arrow] (stable) -- node[midway, above] {escape hatch} (dynamic);
+\draw[arrow] (dynamic) -- (keyed);
+\draw[arrow] (dynamic) -- (unkeyed);
+\end{tikzpicture}
+\end{center}
+
 This chapter is grounded in:
 
 \begin{itemize}
@@ -126,6 +143,18 @@ The reconciler stores the range length on the first DOM node:
 \end{itemize}
 
 This metadata is the core trick that lets the reconciler treat DOM as a list of \emph{logical items} rather than raw nodes.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (item) {\textbf{logical item}\\key = 'frag1'\\len = 2};
+\node[box, right=18mm of item] (dom) {\textbf{DOM nodes}\\start node has:\\\texttt{\_\_hrbrKey='frag1'}\\\texttt{\_\_hrbrRangeLen=2}\\(+ 1 trailing sibling)};
+\draw[arrow] (item) -- (dom);
+\end{tikzpicture}
+\end{center}
 The helper \texttt{buildCurrentRanges(host)} reads \texttt{childNodes} and groups them into ranges by repeatedly:
 
 \begin{itemize}
@@ -193,6 +222,23 @@ The reconciler uses a standard sequence:
       \item move only the ranges not in the LIS
     \end{itemize}
 \end{enumerate}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (map) {build key \textrightarrow range map};
+\node[box, right=18mm of map] (scan) {two-ended scan\\(prefix + suffix)};
+\node[box, right=18mm of scan] (mid) {middle region:\\oldIndex seq\\compute LIS};
+\node[box, right=18mm of mid] (moves) {move only\\not-in-LIS\\+ create missing};
+
+\draw[arrow] (map) -- (scan);
+\draw[arrow] (scan) -- (mid);
+\draw[arrow] (mid) -- (moves);
+\end{tikzpicture}
+\end{center}
 
 Why LIS?
 
@@ -324,6 +370,21 @@ This split is subtle but intentional:
 \end{itemize}
 
 In other words, \texttt{mountFallback} mirrors the same “coalesce and commit” philosophy used by \texttt{mountCompiledBlock} (Chapter 14): collect changes reactively, then perform one DOM commit.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (effect) {effect: run \texttt{render()}\\track signal deps};
+\node[box, right=18mm of effect] (pending) {set \texttt{pending=true}\\schedule lane flush};
+\node[box, right=18mm of pending] (commit) {commit: \texttt{reconcileChildren(host, next)}};
+
+\draw[arrow] (effect) -- (pending);
+\draw[arrow] (pending) -- (commit);
+\end{tikzpicture}
+\end{center}
 
 Spec: \texttt{reconciles structural changes when signal-driven list changes} (\texttt{fallback.test.ts}).
 

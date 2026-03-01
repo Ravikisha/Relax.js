@@ -4,6 +4,24 @@
 This chapter covers the experimental interop layer that allows compiled HRBR output to live \emph{inside} a Relax VDOM tree.
 The goal is practical: you can adopt HRBR incrementally (or only for hot paths) without rewriting your whole app.
 
+\section*{Diagram: where HRBR sits inside a VDOM tree}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=10mm and 14mm,
+	box/.style={draw, rounded corners, align=center, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (vdom) {VDOM parent element\\\texttt{<div>} (owned by VDOM)};
+\node[box, below=of vdom] (host) {HRBR wrapper host\\\texttt{<span data-hrbr="1">}\\(owned by VDOM)};
+\node[box, below=of host] (inner) {Inner DOM produced by HRBR\\(owned by HRBR runtime)};
+
+\draw[arrow] (vdom) -- node[midway, right] {childNode} (host);
+\draw[arrow] (host) -- node[midway, right] {contains} (inner);
+\end{tikzpicture}
+\end{center}
+
+This “wrapper host” trick is what makes generic VDOM replace/move logic still work: VDOM only needs a single stable child node to own.
+
 \section{The tiny contract: an HRBR vnode is just a mount factory}
 
 In the VDOM layer, HRBR is represented by a new vnode type, \texttt{DOM\_TYPES.HRBR}, implemented in \texttt{src/h.ts}.
@@ -94,6 +112,26 @@ So \texttt{createHrbrNode()} intentionally makes the wrapper the unit of ownersh
 
 Even though the vnode type includes an \texttt{el?: Element} field described as ``first element produced by the block'' in \texttt{src/h.ts}, the mount code currently treats \texttt{el} as the wrapper host. This aligns with ``VDOM owns the wrapper, HRBR owns the inside''.
 
+\subsection*{Diagram: mount path (VDOM creates host, HRBR fills it)}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=10mm and 12mm,
+	box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (mountdom) {\texttt{mountDOM(vdom, parentEl, index)}};
+\node[box, below=of mountdom] (create) {\texttt{createHrbrNode(vdom, parentEl, index)}};
+\node[box, below=of create] (host) {Create \texttt{host = document.createElement('span')}\\set \texttt{data-hrbr="1"}\\insert into parent};
+\node[box, below=of host] (call) {Call mount factory\\\texttt{instance = vdom.mount(host)}};
+\node[box, below=of call] (store) {Store refs\\\texttt{vdom.host = host}\\\texttt{vdom.instance = instance}\\\texttt{vdom.el = host}};
+
+\draw[arrow] (mountdom) -- (create);
+\draw[arrow] (create) -- (host);
+\draw[arrow] (host) -- (call);
+\draw[arrow] (call) -- (store);
+\end{tikzpicture}
+\end{center}
+
 \subsubsection{A small but useful marker: \texttt{data-hrbr="1"}}
 
 The wrapper uses \texttt{host.dataset.hrbr = '1'}. This isn't required for correctness, but it's very handy when inspecting mixed trees in DevTools: you can quickly spot the boundaries between VDOM-managed and HRBR-managed DOM.
@@ -121,6 +159,25 @@ In the actual implementation, the fast path copies internal bookkeeping from the
 \end{itemize}
 
 That copy step is important because the patcher returns the \emph{new} vnode object, and subsequent patches/destroys must be able to reach the original HRBR host and instance.
+
+\subsection*{Diagram: patch decision (reuse vs remount)}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=10mm and 14mm,
+	box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+	decision/.style={draw, diamond, aspect=2, align=center, inner sep=2pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (in) {Inputs\\\texttt{oldHrbrVNode, nextHrbrVNode}};
+\node[decision, below=of in] (same) {\texttt{old.mount === next.mount}?};
+\node[box, below left=of same] (reuse) {Reuse instance\\copy \texttt{host/instance/el}\\no DOM churn};
+\node[box, below right=of same] (remount) {Remount into same host\\\texttt{dispose?()}\\\texttt{destroy()}\\clear host\\\texttt{next.mount(host)}};
+
+\draw[arrow] (in) -- (same);
+\draw[arrow] (same) -- node[midway, left] {yes} (reuse);
+\draw[arrow] (same) -- node[midway, right] {no} (remount);
+\end{tikzpicture}
+\end{center}
 
 \subsection{Slow path: mount changed means dispose+destroy+remount}
 
@@ -174,6 +231,24 @@ The destroy path:
 \end{enumerate}
 
 Because the host wrapper is removed, the HRBR subtree can't leak DOM nodes even if the inner runtime forgets to clean up.
+
+\subsection*{Diagram: destroy ordering (dispose is optional, destroy is required)}
+\begin{center}
+\begin{tikzpicture}[
+	node distance=10mm and 12mm,
+	box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+	arrow/.style={-Latex, thick}
+]
+\node[box] (start) {\texttt{destroyDOM(vdom)} hits HRBR case};
+\node[box, below=of start] (dispose) {If present: \texttt{instance.dispose()}};
+\node[box, below=of dispose] (destroy) {Then: \texttt{instance.destroy()}};
+\node[box, below=of destroy] (remove) {Remove wrapper host\\\texttt{host.remove()}};
+
+\draw[arrow] (start) -- (dispose);
+\draw[arrow] (dispose) -- (destroy);
+\draw[arrow] (destroy) -- (remove);
+\end{tikzpicture}
+\end{center}
 
 \subsection{Why both \texttt{dispose()} and \texttt{destroy()}?}
 

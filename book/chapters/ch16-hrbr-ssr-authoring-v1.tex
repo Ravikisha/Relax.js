@@ -5,6 +5,23 @@ Server-side rendering (SSR) is how you produce initial HTML on the server so the
 In HRBR v1, SSR is intentionally simple and primarily exists to support tests and examples.
 The important property is not performance; it’s \textbf{compatibility} with hydration.
 
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (def) {\textbf{BlockDef}\\templateHTML + slots};
+\node[box, right=18mm of def] (ssr) {\textbf{SSR v1}\\mountBlock in detached host\\serialize \texttt{innerHTML}};
+\node[box, right=18mm of ssr] (html) {\textbf{HTML string}\\server output};
+\node[box, below=of html] (client) {\textbf{Client}\\insert HTML into host\\hydrateBlock attach};
+
+\draw[arrow] (def) -- (ssr);
+\draw[arrow] (ssr) -- (html);
+\draw[arrow] (html) -- (client);
+\end{tikzpicture}
+\end{center}
+
 This chapter is grounded in:
 
 \begin{itemize}
@@ -28,6 +45,8 @@ Put differently:
 \begin{quote}
 SSR v1 is \emph{mountBlock + serialize}. Hydration v1 is \emph{validate + attach, else remount}.
 \end{quote}
+
+That quote is a useful mental checksum: if you ever change block slot semantics (Chapter 14), you should expect SSR and hydration tests to fail until all three layers agree again.
 
 This tight coupling is deliberate. It makes SSR and hydration “round-trip compatible” by construction.
 
@@ -98,6 +117,25 @@ But for v1 HRBR, this has two big advantages:
 \end{itemize}
 
 So correctness comes for free.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw, rounded corners, align=left, inner sep=5pt},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (host) {detached \texttt{div} host};
+\node[box, below=of host] (mount) {\texttt{mountBlock(def, host, initialValues)}};
+\node[box, below=of mount] (serialize) {read \texttt{host.innerHTML}};
+\node[box, below=of serialize] (destroy) {\texttt{mounted.destroy()}};
+\node[box, below=of destroy] (ret) {return string};
+
+\draw[arrow] (host) -- (mount);
+\draw[arrow] (mount) -- (serialize);
+\draw[arrow] (serialize) -- (destroy);
+\draw[arrow] (destroy) -- (ret);
+\end{tikzpicture}
+\end{center}
 
 There’s also a subtle lifecycle advantage: because SSR uses \texttt{mountBlock}, tearing down is just \texttt{mounted.destroy()}.
 That ensures listeners are removed and the temporary root is cleaned up, even in a test environment.

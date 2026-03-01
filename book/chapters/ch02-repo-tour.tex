@@ -12,6 +12,32 @@ At a high level, you should think of Relax.js as three products living in one re
   \item \textbf{Compiler} (experimental transform from TSX/JSX subset to HRBR blocks) under \texttt{compiler/}.
 \end{enumerate}
 
+\subsection*{Diagram: repository architecture at a glance}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 12mm,
+  box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (src) {\textbf{VDOM runtime}\\\texttt{src/*}\\mount/patch/destroy\\components, events};
+\node[box, right=of src] (tests) {\textbf{Tests-as-spec}\\\texttt{src/\_\_tests\_\_/*}\\\texttt{runtime/\_\_tests\_\_/*}\\\texttt{compiler/\_\_tests\_\_/*}};
+\node[box, below=of src] (runtime) {\textbf{HRBR runtime}\\\texttt{runtime/*}\\signals, scheduler\\blocks, hydration};
+\node[box, below=of runtime] (compiler) {\textbf{Compiler}\\\texttt{compiler/*}\\JSX\,$\rightarrow$\,BlockDef};
+\node[box, right=of runtime] (bench) {\textbf{Benchmarks + docs}\\\texttt{benchmarks/*}\\\texttt{docs/*}};
+
+\draw[arrow] (src) -- node[midway, above] {verified by} (tests);
+\draw[arrow] (runtime) -- (tests);
+\draw[arrow] (compiler) -- (tests);
+
+\draw[arrow] (compiler) -- node[midway, left] {emits defs consumed by} (runtime);
+\draw[arrow] (src) -- node[midway, left] {can embed} (runtime);
+\draw[arrow] (bench) -- (runtime);
+\draw[arrow] (bench) -- (src);
+\end{tikzpicture}
+\end{center}
+
+The key idea: tests are the stable external contract, while the implementation is split into a flexible VDOM baseline and an optional compiled runtime.
+
 Everything else exists to support one of these (docs, benchmarks, build tooling).
 
 \subsection{Directory map (first pass)}
@@ -189,7 +215,32 @@ Open these tests and write down what they prove (one sentence each). Then locate
 
 If you can answer these, you're ready for Part II.
 
-\section{Online resources (optional, citation-ready)}
+\section{Diagram: a "follow the tests" reading workflow}
+When you don't know where to start, start from the tests and work backward to the implementation.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm and 12mm,
+  box/.style={draw, rounded corners, align=center, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+  \node[box] (fail) {A behavior question\\("What should happen?")};
+  \node[box, right=of fail] (test) {Find a test\\\texttt{src/\_\_tests\_\_/mount-dom.test.ts}};
+  \node[box, right=of test] (assert) {Read assertions\\(DOM structure/identity)};
+  \node[box, below=of assert] (impl) {Jump to implementation\\\texttt{src/*} / \texttt{runtime/*}};
+  \node[box, left=of impl] (confirm) {Confirm contract\\(invariants, edge cases)};
+
+  \draw[arrow] (fail) -- (test);
+  \draw[arrow] (test) -- (assert);
+  \draw[arrow] (assert) -- (impl);
+  \draw[arrow] (impl) -- (confirm);
+  \draw[arrow] (confirm) -- (test);
+\end{tikzpicture}
+\end{center}
+
+This loop is also how you safely add features: you extend the spec (tests) and then evolve the implementation.
+
+\section{Online resources}
 This chapter is about reading \emph{this repo}, but a few external references help explain why these constraints and structures are common.
 
 \begin{itemize}
@@ -205,4 +256,4 @@ This chapter is about reading \emph{this repo}, but a few external references he
     \href{https://nodejs.org/api/packages.html#packages_exports}{Node.js docs: \texttt{exports}}.
 \end{itemize}
 
-Later, if you want formal citations in PDF output, we can add a bibliography system to \texttt{book/main.tex} and convert these links into \texttt{\textbackslash cite\{...\}} entries.
+For formal citations, you can map key links into the backmatter \texttt{References} list in \texttt{book/main.tex}.
