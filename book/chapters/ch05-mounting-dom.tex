@@ -2,7 +2,7 @@
 
 This chapter is about the first half of the renderer: taking the data structures from \texttt{src/h.ts} and producing real DOM nodes.
 
-In Relax theres a clean separation:
+In Relax there's a clean separation:
 
 \begin{itemize}
   \item \textbf{Creation} builds VNode trees (Chapter~4).
@@ -34,13 +34,13 @@ The entry point is \texttt{mountDOM(vdom, parentEl, index?, hostComponent?)} in 
 \subsection*{Failure modes}
 \begin{itemize}
   \item If \texttt{parentEl == null}, it throws \texttt{[mountDOM] Parent element is null}.
-  \item If \texttt{vdom.type} doesnt match any known tag in \texttt{DOM\_TYPES}, it throws \texttt{Can't mount DOM of type: ...}.
+  \item If \texttt{vdom.type} doesn't match any known tag in \texttt{DOM\_TYPES}, it throws \texttt{Can't mount DOM of type: ...}.
 \end{itemize}
 
-The tests in \texttt{src/__tests__/mount-dom.test.ts} include a couple of ``guardrail'' cases that assert these errors exist.
+The tests in \texttt{src/\_\_tests\_\_/mount-dom.test.ts} include a couple of ``guardrail'' cases that assert these errors exist.
 
 \section{The central pattern: dispatch by \texttt{vdom.type}}
-	exttt{mountDOM()} is a type-dispatcher. In code its a \texttt{switch (vdom.type)} that delegates to one helper per vnode kind:
+	exttt{mountDOM()} is a type-dispatcher. In code it's a \texttt{switch (vdom.type)} that delegates to one helper per vnode kind:
 
 \begin{itemize}
   \item \texttt{createTextNode} for \texttt{DOM\_TYPES.TEXT}
@@ -49,6 +49,36 @@ The tests in \texttt{src/__tests__/mount-dom.test.ts} include a couple of ``guar
   \item \texttt{createComponentNode} for \texttt{DOM\_TYPES.COMPONENT}
   \item \texttt{createHrbrNode} for \texttt{DOM\_TYPES.HRBR}
 \end{itemize}
+
+\subsection*{Diagram: mount dispatcher}
+This is the mental model for the file \texttt{src/mount-dom.ts}:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=left},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (in) {\textbf{input:} \texttt{vdom} + \texttt{parentEl} + \texttt{index?} + \texttt{hostComponent?}};
+  \node[box, below=of in] (sw) {\textbf{switch} (\texttt{vdom.type})};
+
+  \node[box, below left=of sw, xshift=12mm] (text) {TEXT\\\texttt{createTextNode}};
+  \node[box, below=of sw] (elem) {ELEMENT\\\texttt{createElementNode}};
+  \node[box, below right=of sw, xshift=-12mm] (frag) {FRAGMENT\\\texttt{createFragmentNodes}};
+  \node[box, below=of elem, yshift=-2mm] (comp) {COMPONENT\\\texttt{createComponentNode}};
+  \node[box, below=of frag, yshift=-2mm] (hrbr) {HRBR\\\texttt{createHrbrNode}};
+
+  \node[box, below=18mm of comp] (out) {\textbf{effects:} inserts DOM + sets \texttt{vdom.el} + stores listeners/components};
+
+  \draw[arrow] (in) -- (sw);
+  \draw[arrow] (sw) -- (text);
+  \draw[arrow] (sw) -- (elem);
+  \draw[arrow] (sw) -- (frag);
+  \draw[arrow] (elem) -- (comp);
+  \draw[arrow] (frag) -- (hrbr);
+  \draw[arrow] (comp) -- (out);
+\end{tikzpicture}
+\end{center}
 
 This is not just an organizational trick: it is what makes patching symmetric later. Chapter~8 will mirror this shape with a patch dispatcher.
 
@@ -62,7 +92,7 @@ For \texttt{TextVNode}, mounting is:
 \end{enumerate}
 
 \subsection*{What the tests prove}
-	exttt{src/__tests__/mount-dom.test.ts} contains two small tests that act like a contract:
+	exttt{src/\_\_tests\_\_/mount-dom.test.ts} contains two small tests that act like a contract:
 
 \begin{itemize}
   \item \texttt{mount a text element in a host element}: asserts the DOM contains \texttt{hello}.
@@ -102,7 +132,7 @@ Then mounting wires two subsystems:
 That \texttt{vdom.listeners} back-reference is critical later in Chapter~9: destroying uses it to remove listeners even if the vnode is no longer in the DOM.
 
 \subsection*{What the tests prove}
-The tests in \texttt{src/__tests__/mount-dom.test.ts} cover a small but meaningful matrix:
+The tests in \texttt{src/\_\_tests\_\_/mount-dom.test.ts} cover a small but meaningful matrix:
 
 \begin{itemize}
   \item \textbf{attributes:} id, class, list-of-classes
@@ -110,10 +140,31 @@ The tests in \texttt{src/__tests__/mount-dom.test.ts} cover a small but meaningf
   \item \textbf{events:} clicking the element calls the handler and \texttt{vdom.listeners} is populated
 \end{itemize}
 
-These are not ``just tests''they are a spec for how Relax converts the VNode \texttt{props} object into real DOM behavior.
+These are not ``just tests'', they are a spec for how Relax converts the VNode \texttt{props} object into real DOM behavior.
 
 \section{Event handler binding: the meaning of \texttt{hostComponent}}
 	exttt{mountDOM()} accepts an optional \texttt{hostComponent} argument, which gets threaded into \texttt{createElementNode(...)} and ultimately into \texttt{addEventListeners(...)}.
+
+\subsection*{Diagram: how \texttt{hostComponent} flows into events}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=center},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (mount) {\texttt{mountDOM(vdom, parentEl, index?, hostComponent?)}};
+  \node[box, below=of mount] (elem) {ELEMENT path\\\texttt{createElementNode}};
+  \node[box, below=of elem] (props) {\texttt{addProps(el, vdom, hostComponent)}};
+  \node[box, below=of props] (events) {\texttt{addEventListeners(events, el, hostComponent)}};
+  \node[box, below=of events] (handler) {handlers run as\\\texttt{this === hostComponent}};
+
+  \draw[arrow] (mount) -- (elem);
+  \draw[arrow] (elem) -- (props);
+  \draw[arrow] (props) -- (events);
+  \draw[arrow] (events) -- (handler);
+\end{tikzpicture}
+\end{center}
 
 The intent is: when a component mounts elements, those element event handlers should run with \texttt{this === componentInstance} so handler methods can mutate component state.
 
@@ -125,27 +176,27 @@ The test \texttt{where there is a host component, the event handlers are bound t
   \item binding is not limited to direct children
 \end{itemize}
 
-This is a key piece of ``component semantics'' even though its implemented entirely inside the mounting layer.
+This is a key piece of ``component semantics'' even though it's implemented entirely inside the mounting layer.
 
 \section{Fragments: \texttt{createFragmentNodes} and insertion indices}
 Fragments are the trickiest type to mount because a fragment is ``many nodes''.
 
-Relaxs move is simple:
+Relax's move is simple:
 
 \begin{quote}
   A fragment vnode stores \texttt{vdom.el = parentEl}.
 \end{quote}
 
-That is, a fragment doesnt own a DOM node. Instead, it keeps a reference to the container it was mounted in.
+That is, a fragment doesn't own a DOM node. Instead, it keeps a reference to the container it was mounted in.
 
 \subsection{The index problem}
 When mounting into an explicit \texttt{index}, you want fragment children to appear starting at that position.
-But as soon as you insert the first child, the parents \texttt{childNodes} list changes, and the next childs target index must shift.
+But as soon as you insert the first child, the parent's \texttt{childNodes} list changes, and the next child's target index must shift.
 
 Relax solves this by maintaining a local counter \texttt{idx}:
 
 \begin{itemize}
-  \item If \texttt{idx == null}, it just appends each child and doesnt care.
+  \item If \texttt{idx == null}, it just appends each child and doesn't care.
   \item Otherwise, after mounting each child, it increments \texttt{idx} by the number of DOM nodes that child contributed.
 \end{itemize}
 
@@ -158,10 +209,10 @@ The ``how many DOM nodes did this child contribute?'' logic is where fragments a
 \end{itemize}
 
 This design implies a subtle contract with the component implementation: component instances must maintain an \texttt{elements} array listing the DOM nodes they own.
-Youll revisit that in the component lifecycle chapters.
+You'll revisit that in the component lifecycle chapters.
 
 \subsection*{What the tests prove}
-	exttt{src/__tests__/mount-dom.test.ts} contains several important fragment tests:
+  exttt{src/\_\_tests\_\_/mount-dom.test.ts} contains several important fragment tests:
 
 \begin{itemize}
   \item \texttt{mount a fragment in a host element} and \texttt{mount a fragment inside a fragment...}: show that fragments flatten naturally at mount time.
@@ -188,14 +239,14 @@ The last step is important: a component vnode cannot point to ``the component'' 
 Immediately after creating a component node, \texttt{mountDOM()} enqueues a lifecycle callback:
 
 \begin{quote}
-	exttt{enqueueJob(() => vdom.component.onMounted())}
+  exttt{enqueueJob(() => vdom.component.onMounted())}
 \end{quote}
 
 So \texttt{onMounted()} is intentionally asynchronous relative to ``the DOM nodes now exist''.
 This approach avoids re-entrancy hazards (mount causing mount causing mount) and aligns with how many UI systems schedule lifecycle effects.
 
 \subsection*{What the tests prove}
-	exttt{src/__tests__/mount-dom.test.ts} exercises component creation and parent-child links:
+  exttt{src/\_\_tests\_\_/mount-dom.test.ts} exercises component creation and parent-child links:
 
 \begin{itemize}
   \item \texttt{mount a component with props}: shows that props are passed in and the instance is stored.
@@ -216,10 +267,10 @@ HRBR nodes are mounted by allocating a dedicated host container element:
   \item Store \texttt{vdom.el = host} (and also \texttt{vdom.host = host}).
 \end{itemize}
 
-The comment in \texttt{src/mount-dom.ts} is worth repeating: \textbf{VDOM owns the host container, not the hosts first child.} Patch logic later locates nodes by \texttt{oldVdom.el}; if \texttt{el} pointed inside HRBR output, replacement/removal would get the wrong DOM index.
+The comment in \texttt{src/mount-dom.ts} is worth repeating: \textbf{VDOM owns the host container, not the host's first child.} Patch logic later locates nodes by \texttt{oldVdom.el}; if \texttt{el} pointed inside HRBR output, replacement/removal would get the wrong DOM index.
 
 \subsection*{What the tests prove}
-While the mounting tests live in \texttt{mount-dom.test.ts}, HRBR mounting is exercised via integration tests in \texttt{src/__tests__/hrbr-integration.test.ts}.
+While the mounting tests live in \texttt{mount-dom.test.ts}, HRBR mounting is exercised via integration tests in \texttt{src/\_\_tests\_\_/hrbr-integration.test.ts}.
 Those tests treat HRBR blocks as ``just another vnode type'' and assert:
 
 \begin{itemize}
@@ -242,7 +293,7 @@ The tests include a negative-index case (throws) and several index-sensitive fra
 
 \section{Mini-exercises}
 \begin{enumerate}
-  \item Add a focused test to \texttt{mount-dom.test.ts} proving that mounting with an out-of-range index appends for element vnodes. (Youll be asserting the same rule \texttt{insert()} implements.)
+  \item Add a focused test to \texttt{mount-dom.test.ts} proving that mounting with an out-of-range index appends for element vnodes. (You'll be asserting the same rule \texttt{insert()} implements.)
   \item In \texttt{mount-dom.test.ts}, find the parameterized index tests and explain why nested components contribute \texttt{component.elements.length} to the index offset.
 \end{enumerate}
 
@@ -252,5 +303,5 @@ The tests include a negative-index case (throws) and several index-sensitive fra
   \item DOM basics: \texttt{Node.insertBefore} (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}
   \item DOM basics: \texttt{Node.appendChild} / \texttt{Element.append} (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/Element/append}{https://developer.mozilla.org/en-US/docs/Web/API/Element/append}
   \item Event targets and listener binding (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener}{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener}
-  \item ``Why schedule effects'' background (Reacts mental model is a good reference even if implementation differs): \href{https://react.dev/learn/synchronizing-with-effects}{https://react.dev/learn/synchronizing-with-effects}
+  \item ``Why schedule effects'' background (React's mental model is a good reference even if implementation differs): \href{https://react.dev/learn/synchronizing-with-effects}{https://react.dev/learn/synchronizing-with-effects}
 \end{itemize}

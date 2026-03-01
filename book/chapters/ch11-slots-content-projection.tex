@@ -17,7 +17,7 @@ Slots in the VDOM layer are intentionally small and test-driven:
 \begin{itemize}
   \item VNode marker: \texttt{DOM\_TYPES.SLOT} built by \texttt{hSlot()} in \texttt{src/h.ts}
   \item Slot filling algorithm: \texttt{fillSlots(vdom, children)} in \texttt{src/slots.ts}
-  \item Specs: \texttt{src/__tests__/slots.test.ts} and \texttt{src/__tests__/component-slots.test.ts}
+  \item Specs: \texttt{src/\_\_tests\_\_/slots.test.ts} and \texttt{src/\_\_tests\_\_/component-slots.test.ts}
 \end{itemize}
 
 \section{Slot VNodes: \texttt{hSlot} and the SLOT marker}
@@ -74,7 +74,7 @@ The tests explicitly check this optimization:
   \item \texttt{when the component has no slots, the "fillSlot()" function is not called}
 \end{itemize}
 
-(See \texttt{src/__tests__/component-slots.test.ts}).
+(See \texttt{src/\_\_tests\_\_/component-slots.test.ts}).
 
 \section{fillSlots(): projecting external children into a component}
 
@@ -131,7 +131,7 @@ In code, this is:
 const content = externalContent.length > 0 ? externalContent : defaultContent
 \end{verbatim}
 
-This is exactly what \texttt{src/__tests__/slots.test.ts} asserts:
+This is exactly what \texttt{src/\_\_tests\_\_/slots.test.ts} asserts:
 
 \begin{itemize}
   \item \texttt{set default content if no external content}
@@ -210,7 +210,7 @@ Slot rewriting is done per-component and must not cross component vnode boundari
 It also aligns with how the renderer treats components elsewhere:
 components are patched/mounted as black boxes whose internal VDOM is managed by the component instance.
 
-This behavior is tested in \texttt{src/__tests__/slots.test.ts}:
+This behavior is tested in \texttt{src/\_\_tests\_\_/slots.test.ts}:
 
 \begin{itemize}
   \item \texttt{ignores slots whose parent is a component (they are handled by the component)}
@@ -287,7 +287,7 @@ This shows that slot content can be:
 
 Slots are specified in two layers: a pure tree-rewrite unit suite and a DOM-level integration suite.
 
-\subsection{Unit semantics (\texttt{src/__tests__/slots.test.ts})}
+\subsection{Unit semantics (\texttt{src/\_\_tests\_\_/slots.test.ts})}
 
 \begin{description}
   \item[remove the slot if no content or default content] Proves the empty-slot removal behavior: a slot with no default and no external content is eliminated (via empty-fragment dropping).
@@ -296,7 +296,7 @@ Slots are specified in two layers: a pure tree-rewrite unit suite and a DOM-leve
   \item[ignores slots whose parent is a component] Proves the traversal boundary rule: \texttt{fillSlots} must not rewrite nested component internals.
 \end{description}
 
-\subsection{Integration semantics (\texttt{src/__tests__/component-slots.test.ts})}
+\subsection{Integration semantics (\texttt{src/\_\_tests\_\_/component-slots.test.ts})}
 
 \begin{description}
   \item[can have a slot where external content can be inserted] Proves end-to-end projection into mounted DOM.

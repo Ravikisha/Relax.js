@@ -174,7 +174,7 @@ It reads like a story:
   \item It creates an app via \texttt{createApp(App, \{ todos: [...] \})}.
   \item It mounts to \texttt{document.body}.
   \item It waits for \texttt{nextTick()} to flush async work.
-  \item It asserts a stable HTML snapshot via \texttt{singleHtmlLine\`...\`}.
+  \item It asserts a stable HTML snapshot via \texttt{singleHtmlLine\ldots}.
 \end{itemize}
 
 Notice the discipline here: the tests make DOM updates predictable by explicitly awaiting \texttt{nextTick()}.

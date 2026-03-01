@@ -32,7 +32,7 @@ The options type \texttt{HrbrJsxTransformOptions} (in \texttt{compiler/jsx/trans
 
 \begin{itemize}
 \item \texttt{runtimeImport}: module path for runtime helpers (default \texttt{"relax/hrbr"})
-\item \texttt{mountWrapperName}: helper function name used to call \texttt{mountCompiledBlock} (default \texttt{__hrbrBlock})
+\item \texttt{mountWrapperName}: helper function name used to call \texttt{mountCompiledBlock} (default \texttt{\_\_hrbrBlock})
 \item \texttt{dev}: enables more readable output and debug-oriented metadata
 \item \texttt{stableSlotKeys}: when true, derive slot keys from source locations (defaults to \texttt{dev})
 \end{itemize}
@@ -50,13 +50,13 @@ The plugin emits three conceptual things:
 \begin{enumerate}
 \item An import of runtime functions:\\
 \texttt{import \{ defineBlock, mountCompiledBlock \} from "relax/hrbr"}
-\item A module-scope \texttt{const __hrbr_block_N = defineBlock(...)} containing:
+\item A module-scope \texttt{const \_\_hrbr\_block\_N = defineBlock (\ldots)} containing:
   \begin{itemize}
   \item \texttt{templateHTML: "<div ...>..."}
   \item \texttt{slots: \{ key: \{ kind, path, name?, lane? \}, ... \}}
   \end{itemize}
 \item A replacement of the JSX expression with a mount factory:\\
-\texttt{host => __hrbrBlock(host, __hrbr_block_N, [\{key, read\}, ...])}
+\texttt{host => \_\_hrbrBlock(host, \_\_hrbr\_block\_N, [\{key, read\}, ...])}
 \end{enumerate}
 
 This shape matches the interop contract in \texttt{src/h.ts}: an HRBR vnode is just a mount function that returns an instance.
@@ -68,16 +68,16 @@ The plugin keeps per-file state variables:
 \begin{itemize}
 \item \texttt{needsRuntimeImport}: whether to inject \texttt{defineBlock/mountCompiledBlock}
 \item \texttt{needsFallbackImport}: whether to also import \texttt{mountFallback}
-\item \texttt{needsWrapper}: whether to emit the wrapper function \texttt{__hrbrBlock}
-\item \texttt{nextBlockId}: a counter used to generate \texttt{__hrbr_block_0}, \texttt{__hrbr_block_1}, ...
-\item \texttt{currentFileName/currentFileCode}: used for context-rich error messages
+\item \texttt{needsWrapper}: whether to emit the wrapper function \texttt{\_\_hrbrBlock}
+\item \texttt{nextBlockId}: a counter used to generate \texttt{\_\_hrbr\_block\_0}, \texttt{\_\_hrbr\_block\_1}, ...
+\item \texttt{currentFileName\/currentFileCode}: used for context-rich error messages
 \end{itemize}
 
 These are reset in the \texttt{Program.enter} visitor and materialized in \texttt{Program.exit}:
 
 \begin{itemize}
 \item \texttt{ensureRuntimeImport(programPath)} uses \texttt{unshiftContainer('body', ImportDeclaration)}.
-\item \texttt{ensureWrapper(programPath)} appends \texttt{function __hrbrBlock(host, def, slots) \{ return mountCompiledBlock(def, host, slots) \}}.
+\item \texttt{ensureWrapper(programPath)} appends \texttt{function \_\_hrbrBlock(host, def, slots) \{ return mountCompiledBlock(def, host, slots) \}}.
 \end{itemize}
 
 Implementation note: this scaffold avoids depending on Babel "types" helpers by emitting raw AST node objects.
@@ -109,9 +109,9 @@ When \texttt{built} is non-null:
 
 \begin{enumerate}
 \item Mark \texttt{needsRuntimeImport = true} and \texttt{needsWrapper = true}.
-\item Insert a module-scope \texttt{const __hrbr_block_N = defineBlock(\{ templateHTML, slots \})}.
+\item Insert a module-scope \texttt{const \_\_hrbr\_block\_N = defineBlock(\{ templateHTML, slots \})}.
 \item Replace the JSX expression with:\\
-\texttt{host => __hrbrBlock(host, __hrbr_block_N, built.compiledSlots)}
+\texttt{host => \_\_hrbrBlock(host, \_\_hrbr\_block\_N, built.compiledSlots)}
 \end{enumerate}
 
 The slot objects are turned into AST literals through \texttt{literalizeSlot(slot)}.
@@ -121,14 +121,14 @@ The slot objects are turned into AST literals through \texttt{literalizeSlot(slo
 The plugin uses \texttt{unshiftContainer('body', ...)} on the program node to emit:
 
 \begin{quote}
-	exttt{const __hrbr_block_N = defineBlock({ templateHTML, slots })}
+	exttt{const \_\_hrbr\_block\_N = defineBlock({ templateHTML, slots })}
 \end{quote}
 
 Hoisting matters for two reasons:
 
 \begin{itemize}
 \item \textbf{Performance:} we want template parsing and slot-path validation to happen once per module, not once per render.
-\item \textbf{Identity:} the mount factory will refer to a stable \texttt{__hrbr_block_N} constant.
+\item \textbf{Identity:} the mount factory will refer to a stable \texttt{\_\_hrbr\_block\_N} constant.
 \end{itemize}
 
 \subsection{Failure path: route to fallback}
@@ -159,8 +159,8 @@ In this subset, the plugin synthesizes a \texttt{render()} function (a closure-f
 Each child spec contains:
 
 \begin{itemize}
-\item \texttt{create(): Element}  creates the element and sets attributes/text
-\item \texttt{patch(node)}  updates textContent based on the latest expressions
+\item \texttt{create(): Element} -> creates the element and sets attributes/text
+\item \texttt{patch(node)} -> updates textContent based on the latest expressions
 \item optional \texttt{key} if a \texttt{key=} attribute is present
 \end{itemize}
 
@@ -195,7 +195,7 @@ In block mode, the transformer supports:
 \item nested elements
 \item static string attributes
 \item expression attributes -> slot kinds \texttt{class/style/attr}
-\item dynamic text children  only when the expression is ``text-like''
+\item dynamic text children -> only when the expression is ``text-like''
 \end{itemize}
 
 It explicitly rejects (in block mode):
@@ -227,7 +227,7 @@ Slot keys are allocated in \texttt{allocSlotKey()}.
 
 \begin{itemize}
 \item Default: sequential keys \texttt{s0}, \texttt{s1}, ...
-\item Dev mode (\texttt{stableSlotKeys=true}): keys include source location: \texttt{s_<kind>_<line>:<col>}
+\item Dev mode (\texttt{stableSlotKeys=true}): keys include source location: \texttt{s\_\textless{}kind\textgreater{}\_\textless{}line\textgreater:\textless{}col\textgreater}.
 \end{itemize}
 
 This is validated in \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts}.

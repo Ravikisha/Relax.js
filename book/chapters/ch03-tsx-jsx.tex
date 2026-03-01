@@ -35,27 +35,27 @@ This combination means:
 So the contract becomes very clean:
 ``TSX syntax must compile into objects that Relax can mount/patch/destroy.''
 
-\section{Two JSX styles youll see}
+\section{Two JSX styles you'll see}
 
 \subsection{Direct VDOM authoring}
 You can write VNodes manually:
 
-\begin{lstlisting}[style=relax,language=JavaScript]
+\begin{verbatim}
 import { h, hFragment } from 'relax.js'
 
 const view = hFragment([
   h('h1', {}, ['Hello']),
   h('button', { on: { click: () => console.log('clicked') } }, ['Click'])
 ])
-\end{lstlisting}
+\end{verbatim}
 
 \subsection{React-like TSX authoring}
 TypeScript can compile TSX into calls to a configured JSX runtime.
 This repo uses a React-like authoring style where:
 
 \begin{itemize}
-  \item \texttt{className} maps to Relaxs \texttt{class}.
-  \item \texttt{onClick} maps to Relaxs event prop form (internally becomes \texttt{on: \{ click: fn \}}).
+  \item \texttt{className} maps to Relax's \texttt{class}.
+  \item \texttt{onClick} maps to Relax's event prop form (internally becomes \texttt{on: \{ click: fn \}}).
   \item Fragments (\texttt{<>...</>}) are supported.
 \end{itemize}
 
@@ -106,12 +106,12 @@ This is not a performance hack; it's a compatibility bridge so Vite/Vitest can r
 The definitive spec for supported TSX/JSX features lives in:
 
 \begin{itemize}
-  \item \texttt{src/__tests__/jsx-tsx.test.ts}
-  \item \texttt{src/__tests__/jsx-react-syntax.test.tsx}
+  \item \texttt{src/\_\_tests\_\_/jsx-tsx.test.ts}
+  \item \texttt{src/\_\_tests\_\_/jsx-react-syntax.test.tsx}
 \end{itemize}
 
 \subsection{Test 1: TSX can mount via the Relax JSX runtime}
-	exttt{src/__tests__/jsx-tsx.test.ts} is the smallest end-to-end proof:
+	exttt{src/\_\_tests\_\_/jsx-tsx.test.ts} is the smallest end-to-end proof:
 
 \begin{itemize}
   \item It imports and runs \texttt{examples/jsx/hello.tsx}.
@@ -127,7 +127,7 @@ If this test fails, it usually means one of these broke:
 \end{itemize}
 
 \subsection{Test 2: React-like conveniences are supported}
-	exttt{src/__tests__/jsx-react-syntax.test.tsx} is a feature matrix.
+	exttt{src/\_\_tests\_\_/jsx-react-syntax.test.tsx} is a feature matrix.
 It's intentionally written as ``contracts'' in a comment at the top of the file.
 
 It specifies (and proves) things like:
@@ -143,8 +143,8 @@ It specifies (and proves) things like:
 
 This test file is a great example of how to design compatibility: pick the exact subset you want, and encode it as executable assertions.
 
-\section{Whats not the same as React}
-Even though the syntax is familiar, semantics are Relaxs:
+\section{What's not the same as React}
+Even though the syntax is familiar, semantics are Relax's:
 
 \begin{itemize}
   \item Components are created via \texttt{defineComponent()}.
@@ -167,13 +167,13 @@ The tests are the source of truth for what is supported.
 If you'd like to extend the supported subset, the safest workflow is:
 
 \begin{enumerate}
-  \item Add a failing test first in \texttt{src/__tests__/jsx-react-syntax.test.tsx}.
+  \item Add a failing test first in \texttt{src/\_\_tests\_\_/jsx-react-syntax.test.tsx}.
   \item Update \texttt{relax-jsx/jsx-runtime.ts} to normalize the new case.
   \item Ensure mount/patch/destroy tests still pass.
 \end{enumerate}
 
 \section{Mini-exercise}
-Read \texttt{src/__tests__/jsx-react-syntax.test.tsx} and answer:
+Read \texttt{src/\_\_tests\_\_/jsx-react-syntax.test.tsx} and answer:
 
 \begin{enumerate}
   \item How are fragments compiled?

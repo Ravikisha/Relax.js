@@ -28,8 +28,8 @@ This repository is split into a few major areas:
 Two more folders matter when you're thinking about correctness:
 
 \begin{itemize}
-  \item \texttt{src/__tests__/}: the VDOM runtime spec.
-  \item \texttt{runtime/__tests__/} and \texttt{compiler/__tests__/}: the HRBR + compiler spec.
+  \item \texttt{src/\_\_tests\_\_/}: the VDOM runtime spec.
+  \item \texttt{runtime/\_\_tests\_\_/} and \texttt{compiler/\_\_tests\_\_/}: the HRBR + compiler spec.
 \end{itemize}
 
 \section{The constraint that shapes everything: DOM correctness in jsdom}
@@ -106,7 +106,7 @@ Key behavior:
 See \texttt{src/app.ts}. The central calls are \texttt{mountDOM(...)} and \texttt{destroyDOM(...)}.
 
 \subsection{Test reference (what proves the contract)}
-The high-level application lifecycle is specified by \texttt{src/__tests__/app.test.ts}.
+The high-level application lifecycle is specified by \texttt{src/\_\_tests\_\_/app.test.ts}.
 This test file shows a full mount-to-interaction flow:
 
 \begin{itemize}
@@ -114,7 +114,7 @@ This test file shows a full mount-to-interaction flow:
   \item It waits for async work with \texttt{await nextTick()}.
   \item It simulates user input by setting \texttt{input.value} and dispatching an \texttt{input} event.
   \item It simulates clicks via \texttt{button.click()}.
-  \item It asserts DOM structure with \texttt{singleHtmlLine\`...\`}.
+  \item It asserts DOM structure with \verb|singleHtmlLine`...`|.
 \end{itemize}
 
 That single test is a great ``reading harness'' for learning how Relax wires components + events + patching.
@@ -140,7 +140,7 @@ This repository uses Vitest with a jsdom environment.
 The configuration lives in \texttt{vitest.config.js}:
 
 \begin{itemize}
-  \item test patterns: \texttt{**/__tests__/**/*.test.ts(x)}
+  \item test patterns: \texttt{**/\_\_tests\_\_/**/*.test.ts(x)}
   \item reporters: verbose (good for learning)
   \item environment: jsdom
 \end{itemize}
@@ -149,11 +149,11 @@ The configuration lives in \texttt{vitest.config.js}:
 Many tests assert against HTML strings.
 If you try to compare raw multi-line template literals to \texttt{innerHTML}, whitespace will fight you.
 
-This repo solves that in \texttt{src/__tests__/utils.ts} with \texttt{singleHtmlLine()}:
+This repo solves that in \texttt{src/\_\_tests\_\_/utils.ts} with \texttt{singleHtmlLine()}:
 
 \begin{itemize}
   \item it collapses whitespace
-  \item it removes spaces between tags (\texttt{>\s+< -> ><})
+  \item it removes spaces between tags (for example, \texttt{>\textbackslash s+<} becomes \texttt{><})
   \item it trims
 \end{itemize}
 
@@ -163,15 +163,15 @@ This is a micro-lesson in test design: you want assertions that are strict about
 If you're new to the codebase, these tests teach the contracts in the right order:
 
 \begin{itemize}
-  \item \texttt{src/__tests__/mount-dom.test.ts}:
+  \item \texttt{src/\_\_tests\_\_/mount-dom.test.ts}:
     mount behavior, fragment behavior, saving \texttt{vdom.el} references.
-  \item \texttt{src/__tests__/patch-dom.test.ts}:
+  \item \texttt{src/\_\_tests\_\_/patch-dom.test.ts}:
     identity reuse vs replacement, attribute updates, keyed children, and edge cases.
-  \item \texttt{src/__tests__/destroy-dom.test.ts}:
+  \item \texttt{src/\_\_tests\_\_/destroy-dom.test.ts}:
     cleanup and idempotency, especially ``remove event listeners''.
-  \item \texttt{src/__tests__/component.test.ts}:
+  \item \texttt{src/\_\_tests\_\_/component.test.ts}:
     component lifecycle, props/state updates, and event binding to the host component.
-  \item \texttt{src/__tests__/jsx-react-syntax.test.tsx}:
+  \item \texttt{src/\_\_tests\_\_/jsx-react-syntax.test.tsx}:
     TSX compatibility contract (className/onClick/fragments/components).
 \end{itemize}
 
@@ -181,10 +181,10 @@ Each of these will be revisited later in the book when we dive into the implemen
 Open these tests and write down what they prove (one sentence each). Then locate the implementation file they exercise.
 
 \begin{itemize}
-  \item \texttt{src/__tests__/app.test.ts}
-  \item \texttt{src/__tests__/component.test.ts}
-  \item \texttt{src/__tests__/mount-dom.test.ts}
-  \item \texttt{src/__tests__/destroy-dom.test.ts}
+  \item \texttt{src/\_\_tests\_\_/app.test.ts}
+  \item \texttt{src/\_\_tests\_\_/component.test.ts}
+  \item \texttt{src/\_\_tests\_\_/mount-dom.test.ts}
+  \item \texttt{src/\_\_tests\_\_/destroy-dom.test.ts}
 \end{itemize}
 
 If you can answer these, you're ready for Part II.

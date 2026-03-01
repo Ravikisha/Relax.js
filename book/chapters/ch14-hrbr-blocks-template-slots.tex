@@ -15,10 +15,10 @@ This chapter is grounded in:
 
 \begin{itemize}
   \item Implementation: \texttt{runtime/block.ts}
-  \item Specs: \texttt{runtime/__tests__/block.test.ts}
-  \item Slot matrix: \texttt{runtime/__tests__/block-slot-matrix.test.ts}
-  \item Input controls: \texttt{runtime/__tests__/block-input-controls.test.ts}
-  \item Disposal correctness: \texttt{runtime/__tests__/block-disposal.test.ts}
+  \item Specs: \texttt{runtime/\_\_tests\_\_/block.test.ts}
+  \item Slot matrix: \texttt{runtime/\_\_tests\_\_/block-slot-matrix.test.ts}
+  \item Input controls: \texttt{runtime/\_\_tests\_\_/block-input-controls.test.ts}
+  \item Disposal correctness: \texttt{runtime/\_\_tests\_\_/block-disposal.test.ts}
 \end{itemize}
 
 \section{A tiny contract (what a block guarantees)}
@@ -157,7 +157,7 @@ The returned \texttt{MountedBlock} includes:
 \texttt{resolvePath(root, path)} is the simple implementation.
 But \texttt{mountBlock} uses \texttt{resolvePathCached(instanceRoot, path, slotKey, dev)}.
 
-The cache is a \texttt{Map<string, Node>} stored on the instance root as \texttt{__hrbrPathCache}.
+The cache is a \texttt{Map<string, Node>} stored on the instance root as \texttt{\_\_hrbrPathCache}.
 Prefixes are stored as dot-joined strings like \texttt{"1.0"}.
 
 The caching algorithm is incremental: as it walks the path, it caches each prefix result (\texttt{"1"}, then \texttt{"1.0"}, etc.). Multiple slots that share a prefix benefit immediately.
@@ -386,7 +386,7 @@ Both helpers:
   \item register a child destructor so destroying the parent destroys the child
 \end{itemize}
 
-Specs in \texttt{runtime/__tests__/block.test.ts}:
+Specs in \texttt{runtime/\_\_tests\_\_/block.test.ts}:
 
 \begin{itemize}
   \item \texttt{block composition: can mount a nested block ... and destroys it with parent}
@@ -400,11 +400,11 @@ Compiled stable subtrees use blocks; dynamic subtrees route to fallback reconcil
 \end{quote}
 
 Implementation detail: composition is tracked with a small internal child registry.
-	exttt{mountBlock} exposes an internal \texttt{__hrbrTrackChild} function, and the composition helpers use it to register child destroyers so teardown order is correct.
+	exttt{mountBlock} exposes an internal \texttt{\_\_hrbrTrackChild} function, and the composition helpers use it to register child destroyers so teardown order is correct.
 
 \section{Walking the tests (the executable spec)}
 
-\subsection{\texttt{runtime/__tests__/block.test.ts}}
+\subsection{\texttt{runtime/\_\_tests\_\_/block.test.ts}}
 
 This test file locks down the baseline behavior of each slot type and of the compiled/reactive mount.
 
@@ -416,21 +416,21 @@ This test file locks down the baseline behavior of each slot type and of the com
   \item \textbf{event slots:} click once, swap handler, click again; after \texttt{destroy()} clicks do nothing.
   \item \textbf{boolean attributes:} present/absent behavior is asserted with \texttt{disabled}.
   \item \textbf{SVG xlink:} uses \texttt{getAttributeNS} to validate namespace behavior.
-  \item \textbf{path caching:} asserts \texttt{__hrbrPathCache} contains prefix keys (e.g. \texttt{"0"}, \texttt{"0.0"}).
+  \item \textbf{path caching:} asserts \texttt{\_\_hrbrPathCache} contains prefix keys (e.g. \texttt{"0"}, \texttt{"0.0"}).
   \item \textbf{dev diagnostics:} invalid path errors include the slot key in dev mode.
   \item \textbf{mountCompiledBlock:} changing one signal updates only its text node, and node identity is stable across updates.
 \end{itemize}
 
-\subsection{\texttt{runtime/__tests__/block-slot-matrix.test.ts}}
+\subsection{\texttt{runtime/\_\_tests\_\_/block-slot-matrix.test.ts}}
 
 This is a matrix-style smoke test that mounts one template with \textbf{all slot kinds} and asserts both initial values and updated values, including event swapping.
 
-\subsection{\texttt{runtime/__tests__/block-input-controls.test.ts}}
+\subsection{\texttt{runtime/\_\_tests\_\_/block-input-controls.test.ts}}
 
 This suite documents the intended controlled-input semantics for \texttt{value} and \texttt{checked} when patched as properties.
 It also includes a note about radio group behavior in jsdom.
 
-\subsection{\texttt{runtime/__tests__/block-disposal.test.ts}}
+\subsection{\texttt{runtime/\_\_tests\_\_/block-disposal.test.ts}}
 
 This suite locks down lifecycle safety:
 

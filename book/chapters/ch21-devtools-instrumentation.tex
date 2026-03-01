@@ -18,18 +18,18 @@ All of devtools lives in \texttt{runtime/devtools.ts}.
 The public API is:
 
 \begin{itemize}
-\item \texttt{setDevtoolsHook(hook | null)}  register/unregister a global event sink
-\item \texttt{getDevtoolsCounters()}  get a defensive copy of counters
-\item \texttt{resetDevtoolsCounters()}  zero all counters
-\item \texttt{setInstrumentationEnabled(boolean)}  enable counting for expensive instrumentation
-\item \texttt{isInstrumentationEnabled()}  query the flag
+\item \texttt{setDevtoolsHook(hook | null)} -> register/unregister a global event sink
+\item \texttt{getDevtoolsCounters()} -> get a defensive copy of counters
+\item \texttt{resetDevtoolsCounters()} -> zero all counters
+\item \texttt{setInstrumentationEnabled(boolean)} -> enable counting for expensive instrumentation
+\item \texttt{isInstrumentationEnabled()} -> query the flag
 \end{itemize}
 
 And the helper emission functions used across the runtime:
 
 \begin{itemize}
-\item \texttt{emitDevtoolsEvent(event)}  core increment + forward logic
-\item \texttt{emitDomOp(op)} and \texttt{emitAlloc(kind, count?)}  convenience wrappers
+\item \texttt{emitDevtoolsEvent(event)} -> core increment + forward logic
+\item \texttt{emitDomOp(op)} and \texttt{emitAlloc(kind, count?)} -> convenience wrappers
 \end{itemize}
 
 The reactivity and scheduling layers re-export these through \texttt{runtime/index.ts} so ``public HRBR'' users can import them.
@@ -66,7 +66,7 @@ The idea is that you can build either:
 
 \section{Counters: what is tracked and when}
 
-The internal counters live in a module-local object \texttt{_counters}:
+The internal counters live in a module-local object \texttt{\_counters}:
 
 \begin{itemize}
 \item \texttt{slotWrites}
@@ -79,7 +79,7 @@ The internal counters live in a module-local object \texttt{_counters}:
 
 \subsection{Defensive reads: \texttt{getDevtoolsCounters()}}
 
-\texttt{getDevtoolsCounters()} returns \texttt{\{ ..._counters \}}.
+\texttt{getDevtoolsCounters()} returns \texttt{\{ \ldots\_counters \}}.
 This is important: tests and users can't mutate internal state by holding onto the object.
 
 The corresponding reset function, \texttt{resetDevtoolsCounters()}, mutates the internal object in-place. That choice keeps object identity stable for any internal references while still providing deterministic test setup.
@@ -91,14 +91,14 @@ The devtools system separates \emph{event forwarding} from \emph{counter increme
 
 \begin{itemize}
 \item Events are always forwarded to the hook.
-\item Counter increments for \texttt{domOp} and \texttt{alloc} only happen when \texttt{_instrumentationEnabled} is true.
+\item Counter increments for \texttt{domOp} and \texttt{alloc} only happen when \texttt{\_instrumentationEnabled} is true.
 \end{itemize}
 
 This split is implemented directly in \texttt{runtime/devtools.ts}:
 
 \begin{itemize}
-\item \texttt{emitDevtoolsEvent()} always forwards to \texttt{_hook?.(event)}.
-\item Only the \texttt{domOp} and \texttt{alloc} branches check \texttt{_instrumentationEnabled} before touching counters.
+\item \texttt{emitDevtoolsEvent()} always forwards to \texttt{\_hook?.(event)}.
+\item Only the \texttt{domOp} and \texttt{alloc} branches check \texttt{\_instrumentationEnabled} before touching counters.
 \end{itemize}
 
 \section{Emission: increment + forward}
@@ -107,7 +107,7 @@ This split is implemented directly in \texttt{runtime/devtools.ts}:
 
 \begin{enumerate}
 \item updates counters based on the event type
-\item forwards the event to \texttt{_hook} if present
+\item forwards the event to \texttt{\_hook} if present
 \end{enumerate}
 
 In pseudo-code, the key policy is:

@@ -9,14 +9,14 @@ Relax keeps its attribute system intentionally small: a handful of rules, contin
 Browsers expose multiple mechanisms that look similar but behave differently:
 
 \begin{enumerate}
-  \item \textbf{DOM attributes}: strings stored in the elements attribute map (example: \texttt{el.getAttribute('id')}).
+  \item \textbf{DOM attributes}: strings stored in the element's attribute map (example: \texttt{el.getAttribute('id')}).
   \item \textbf{DOM properties}: live fields on the element object (example: \texttt{(input as any).value}).
   \item \textbf{Special cased fields}: \texttt{className} and \texttt{style} have their own APIs and behavior.
 \end{enumerate}
 
-If you set the wrong one, you can get subtle bugs. For instance, setting \texttt{value} as an attribute on \texttt{<input>} wont behave like setting the property in many scenarios.
+If you set the wrong one, you can get subtle bugs. For instance, setting \texttt{value} as an attribute on \texttt{<input>} won't behave like setting the property in many scenarios.
 
-Relaxs pragmatic rule is:
+Relax's pragmatic rule is:
 
 \begin{quote}
   	extbf{Rule:} if the name starts with \texttt{data-}, set an \emph{attribute}; otherwise set a \emph{property}.
@@ -36,7 +36,7 @@ This function is used during mount (Chapter~5) and also during patches when prop
 \subsection*{Inputs}
 \begin{itemize}
   \item \texttt{el}: a real DOM element.
-  \item \texttt{attrs}: Relaxs element props object (roughly: \texttt{id}, \texttt{class}, \texttt{style}, and anything else).
+  \item \texttt{attrs}: Relax's element props object (roughly: \texttt{id}, \texttt{class}, \texttt{style}, and anything else).
 \end{itemize}
 
 \subsection*{Behavior}
@@ -73,13 +73,13 @@ Implementation detail (\texttt{setClass()} in \texttt{src/attributes.ts}):
 \begin{itemize}
   \item it clears \texttt{el.className = ''}
   \item if \texttt{className} is a string, it assigns \texttt{el.className = className}
-  \item if its an array, it does \texttt{el.classList.add(...className)}
+  \item if it's an array, it does \texttt{el.classList.add(...className)}
 \end{itemize}
 
 This makes class setting \textbf{replacement based}, not incremental diff. That's a conscious simplicity trade-off.
 
 \subsection*{What the tests prove}
-The first three tests in \texttt{src/__tests__/attributes.test.ts} provide the contract:
+The first three tests in \texttt{src/\_\_tests\_\_/attributes.test.ts} provide the contract:
 
 \begin{itemize}
   \item \texttt{setting a class from a string}
@@ -88,7 +88,7 @@ The first three tests in \texttt{src/__tests__/attributes.test.ts} provide the c
 \end{itemize}
 
 \section{Style handling: direct assignment}
-Relaxs \texttt{style} prop is a plain object:
+Relax's \texttt{style} prop is a plain object:
 
 \begin{quote}
 	exttt{\{ style: \{ color: 'red', backgroundColor: 'blue' \} \}}
@@ -102,7 +102,7 @@ For each \texttt{[name, value]} pair, \texttt{setAttributes()} calls \texttt{set
 
 Removal goes through \texttt{removeStyle()} which sets the field to \texttt{null}.
 
-One subtle consequence: \texttt{setAttributes()} does not diff old vs new style objects. If you call it twice, the second call only assigns the fields present in the second objectit does \emph{not} remove fields that were present previously unless you explicitly remove them.
+One subtle consequence: \texttt{setAttributes()} does not diff old vs new style objects. If you call it twice, the second call only assigns the fields present in the second object. it does \emph{not} remove fields that were present previously unless you explicitly remove them.
 
 \subsection*{What the tests prove}
 	exttt{setting styles} and \texttt{updating styles} assert that style fields are applied by assignment and can coexist across multiple calls.
@@ -119,7 +119,7 @@ The function \texttt{setAttribute()} is the heart of the module:
 This is where Relax chooses ``property first'' semantics. The benefit is correctness for form controls and boolean-ish fields.
 
 \subsection*{What the tests prove: the matrix}
-	exttt{src/__tests__/attributes.test.ts} is a deliberately wide matrix of real DOM behavior.
+  exttt{src/\_\_tests\_\_/attributes.test.ts} is a deliberately wide matrix of real DOM behavior.
 
 Highlights:
 
@@ -136,10 +136,10 @@ Highlights:
     properties like \texttt{href}, \texttt{disabled}, and \texttt{textContent} behave like live fields.
 \end{itemize}
 
-This test suite is doing an important job: it prevents ``helpful refactors'' from changing semantics that look equivalent but arent.
+This test suite is doing an important job: it prevents ``helpful refactors'' from changing semantics that look equivalent but aren't.
 
 \section{Removal: \texttt{removeAttribute(el, name)} and jsdom quirks}
-Removing an attribute sounds simple but isnt.
+Removing an attribute sounds simple but isn't.
 
 Relax tries to clear both levels:
 
@@ -155,7 +155,7 @@ When that happens, Relax logs a warning:
 	exttt{Failed to set "<name>" to null on <TAG>}
 \end{quote}
 
-That warning is not a test failure; its a visibility aid for cases where property clearing is not permitted.
+That warning is not a test failure; it's a visibility aid for cases where property clearing is not permitted.
 
 \section{Props vs events: \texttt{extractPropsAndEvents} (\texttt{src/utils/props.ts})}
 Relax stores event handlers under \texttt{props.on}. Before mounting or constructing a component instance, it needs to split the two.
@@ -167,7 +167,7 @@ Relax stores event handlers under \texttt{props.on}. Before mounting or construc
   \item \texttt{props}: everything else (and it deletes \texttt{key})
 \end{itemize}
 
-This split is used in two places youve already seen:
+This split is used in two places you've already seen:
 
 \begin{itemize}
   \item element mounting: \texttt{addEventListeners(events, el, hostComponent)} and \texttt{setAttributes(el, props)}
@@ -175,7 +175,7 @@ This split is used in two places youve already seen:
 \end{itemize}
 
 \subsection*{What the tests prove}
-	exttt{src/__tests__/props.test.ts} is intentionally small and crisp:
+  exttt{src/\_\_tests\_\_/props.test.ts} is intentionally small and crisp:
 
 \begin{itemize}
   \item empty input yields empty outputs
@@ -187,12 +187,12 @@ This split is used in two places youve already seen:
 Treat these as invariants: if you ever change the VNode prop shape, these tests are the first alarm bell.
 
 \section{Design notes (trade-offs)}
-Relaxs attribute model is intentionally simple:
+Relax's attribute model is intentionally simple:
 
 \begin{itemize}
   \item it mostly treats prop names as property names
   \item it special-cases only \texttt{data-*}, \texttt{class}, and \texttt{style}
-  \item it relies on a test matrix to ensure that simplicity doesnt break real DOM behavior
+  \item it relies on a test matrix to ensure that simplicity doesn't break real DOM behavior
 \end{itemize}
 
 If you were extending Relax, likely next steps would be:
@@ -205,7 +205,7 @@ If you were extending Relax, likely next steps would be:
 
 \section{Mini-exercises}
 \begin{enumerate}
-  \item Add a new case to the matrix in \texttt{src/__tests__/attributes.test.ts} for \texttt{<textarea>} value behavior.
+  \item Add a new case to the matrix in \texttt{src/\_\_tests\_\_/attributes.test.ts} for \texttt{<textarea>} value behavior.
   \item Add a test that asserts \texttt{setAttributes(el, \{ key: 'x', id: 'y' \})} does not create a \texttt{key} attribute in the DOM.
 \end{enumerate}
 

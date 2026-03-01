@@ -1,5 +1,5 @@
 % Relax.js Book
-% Build target: compile with pdflatex/xelatex (see README youll add later)
+% Build target: compile with pdflatex/xelatex (see README you'll add later)
 \documentclass[11pt,oneside]{book}
 
 % --- Packages ---
@@ -12,11 +12,16 @@
 \usepackage{xcolor}
 \usepackage{listings}
 \usepackage{titlesec}
-\usepackage{hyperref}
-\usepackage{fancyhdr}
 \usepackage{titling}
+\usepackage{fancyhdr}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+% hyperref should be loaded after most packages
+\usepackage{xurl}
+\usepackage[breaklinks=true]{hyperref}
 
 \geometry{margin=1in}
+\setlength{\headheight}{14pt}
 
 % --- Color palette ---
 \definecolor{RelaxBlue}{HTML}{2563EB}
@@ -34,21 +39,36 @@
 }
 
 % --- Chapter/section styling ---
-  \titleformat{\chapter}
+\titleformat{\chapter}
   {\normalfont\huge\bfseries\color{RelaxGray}}
   {\thechapter.}{0.6em}{}
-  \titlespacing*{\chapter}{0pt}{-8pt}{18pt}
+\titlespacing*{\chapter}{0pt}{-8pt}{18pt}
 
 % --- Headers/footers ---
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[LE,RO]{\nouppercase{\leftmark}}
-\fancyhead[RE,LO]{\nouppercase{\rightmark}}
+\fancyhead[L]{\nouppercase{\leftmark}}
+\fancyhead[R]{\nouppercase{\rightmark}}
 \fancyfoot[C]{\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
 \renewcommand{\footrulewidth}{0pt}
 
 % --- Listings configuration for code blocks ---
+\lstdefinelanguage{JavaScript}{
+  keywords={break,case,catch,class,const,continue,debugger,default,delete,do,else,export,extends,false,finally,for,function,if,import,in,instanceof,let,new,null,return,super,switch,this,throw,true,try,typeof,var,void,while,with,yield,async,await},
+  keywordstyle=\color{RelaxBlue},
+  ndkeywords={className,onClick,onInput,Fragment},
+  ndkeywordstyle=\color{RelaxBlue!70!black},
+  identifierstyle=,
+  sensitive=true,
+  comment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  commentstyle=\color{green!40!black},
+  stringstyle=\color{orange!60!black},
+  morestring=[b]',
+  morestring=[b]"
+}
+
 \lstdefinestyle{relax}{
   basicstyle=\ttfamily\small,
   columns=fullflexible,
@@ -59,6 +79,12 @@
   keywordstyle=\color{RelaxBlue},
   commentstyle=\color{green!40!black},
   stringstyle=\color{orange!60!black}
+}
+
+% Set defaults for listings
+\lstset{
+  language=JavaScript,
+  style=relax
 }
 
 \title{Relax.js: A Deep Build Guide}
@@ -77,6 +103,7 @@
 
 \frontmatter
 \begin{titlepage}
+\thispagestyle{empty}
 \centering
 \vspace*{2.2cm}
 {\Huge\bfseries\color{RelaxGray} Relax.js\par}
@@ -87,41 +114,45 @@
 \vspace{0.6cm}
 {\small\color{RelaxGray} \today\par}
 \vfill
-\includegraphics[width=0.22\textwidth]{../docs/relaxjslogo.png}\par
+\includegraphics[width=0.22\textwidth]{docs/relaxjslogo.png}\par
 \vspace*{1.0cm}
 \end{titlepage}
+
+% Table of Contents (explicitly included)
+\cleardoublepage
 \tableofcontents
+\cleardoublepage
 
 \mainmatter
 
 % --- Part I ---
-\input{chapters/ch01-what-and-why}
-\input{chapters/ch02-repo-tour}
-\input{chapters/ch03-tsx-jsx}
+\input{book/chapters/ch01-what-and-why}
+\input{book/chapters/ch02-repo-tour}
+\input{book/chapters/ch03-tsx-jsx}
 
 % --- Part II (start) ---
-\input{chapters/ch04-vnode-model}
-\input{chapters/ch05-mounting-dom}
-\input{chapters/ch06-attributes-props}
-\input{chapters/ch07-events-dispatcher}
-\input{chapters/ch08-patching-diffing}
-\input{chapters/ch09-destroy-unmount}
-\input{chapters/ch10-scheduling-nexttick}
-\input{chapters/ch11-slots-content-projection}
-\input{chapters/ch12-hrbr-signals}
-\input{chapters/ch13-hrbr-deterministic-scheduler}
-\input{chapters/ch14-hrbr-blocks-template-slots}
-\input{chapters/ch15-hrbr-hydration-ssr-attach}
-\input{chapters/ch16-hrbr-ssr-authoring-v1}
-\input{chapters/ch17-hrbr-fallback-reconciler}
+\input{book/chapters/ch04-vnode-model}
+\input{book/chapters/ch05-mounting-dom}
+\input{book/chapters/ch06-attributes-props}
+\input{book/chapters/ch07-events-dispatcher}
+\input{book/chapters/ch08-patching-diffing}
+\input{book/chapters/ch09-destroy-unmount}
+\input{book/chapters/ch10-scheduling-nexttick}
+\input{book/chapters/ch11-slots-content-projection}
+\input{book/chapters/ch12-hrbr-signals}
+\input{book/chapters/ch13-hrbr-deterministic-scheduler}
+\input{book/chapters/ch14-hrbr-blocks-template-slots}
+\input{book/chapters/ch15-hrbr-hydration-ssr-attach}
+\input{book/chapters/ch16-hrbr-ssr-authoring-v1}
+\input{book/chapters/ch17-hrbr-fallback-reconciler}
 
 % Part IV
-\input{chapters/ch18-vdom-hrbr-interop}
-\input{chapters/ch19-compiler-architecture-overview}
-\input{chapters/ch20-babel-plugin-in-detail}
-\input{chapters/ch21-devtools-instrumentation}
-\input{chapters/ch22-benchmarks-methodology}
-\input{chapters/ch23-release-quality-discipline}
+\input{book/chapters/ch18-vdom-hrbr-interop}
+\input{book/chapters/ch19-compiler-architecture-overview}
+\input{book/chapters/ch20-babel-plugin-in-detail}
+\input{book/chapters/ch21-devtools-instrumentation}
+\input{book/chapters/ch22-benchmarks-methodology}
+\input{book/chapters/ch23-release-quality-discipline}
 
 \backmatter
 

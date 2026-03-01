@@ -15,12 +15,35 @@ But a real UI runtime lives and dies by teardown. If teardown is incomplete or i
   \item \textbf{interop leaks} (third-party instances never disposed)
 \end{itemize}
 
+\section{Diagram: render lifecycle as a loop (mount \textrightarrow patch \textrightarrow destroy)}
+It's useful to stop thinking of rendering as a straight line and instead as a loop that eventually ends in teardown:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=center},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (vdom) {VNode tree\\(created by \texttt{h()})};
+  \node[box, right=of vdom] (mount) {\texttt{mountDOM}\\allocates DOM + listeners};
+  \node[box, below=of mount] (patch) {\texttt{patchDOM}\\updates in place (when safe)};
+  \node[box, left=of patch] (destroy) {\texttt{destroyDOM}\\teardown + delete refs};
+
+  \draw[arrow] (vdom) -- (mount);
+  \draw[arrow] (mount) -- (patch);
+  \draw[arrow] (patch) -- (destroy);
+  \draw[arrow] (destroy) -- (vdom);
+\end{tikzpicture}
+\end{center}
+
+This chapter focuses on the \emph{only irreversible edge} in that loop: once you've destroyed, the old VNode tree should no longer be considered usable.
+
 Relax centralizes teardown in \texttt{destroyDOM(vdom)} in \texttt{src/destroy-dom.ts}. The executable specs are primarily in:
 
 \begin{itemize}
-  \item \texttt{src/__tests__/destroy-dom.test.ts}
-  \item \texttt{src/__tests__/component-lifecycle.test.ts}
-  \item \texttt{src/__tests__/hrbr-integration.test.ts} (interop)
+  \item \texttt{src/\_\_tests\_\_/destroy-dom.test.ts}
+  \item \texttt{src/\_\_tests\_\_/component-lifecycle.test.ts}
+  \item \texttt{src/\_\_tests\_\_/hrbr-integration.test.ts} (interop)
 \end{itemize}
 
 \section{A tiny contract for teardown}
@@ -41,6 +64,36 @@ That last bullet is important: removing DOM nodes is easy---cleaning the runtime
 The public entry point is:\ \texttt{destroyDOM(vdom)}.
 
 The implementation is built as a type-dispatcher over \texttt{vdom.type} (from \texttt{DOM\_TYPES} in \texttt{src/h.ts}).
+
+\subsection*{Diagram: destroy dispatcher}
+The file \texttt{src/destroy-dom.ts} mirrors \texttt{src/mount-dom.ts}: it is also a type-dispatcher.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=left},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (in) {\textbf{input:} mounted \texttt{vdom}};
+  \node[box, below=of in] (sw) {\textbf{switch} (\texttt{vdom.type})};
+
+  \node[box, below left=of sw, xshift=14mm] (text) {TEXT\\remove text node\\\texttt{el.remove()}};
+  \node[box, below=of sw] (elem) {ELEMENT\\remove element\\remove listeners\\recurse children};
+  \node[box, below right=of sw, xshift=-14mm] (frag) {FRAGMENT\\recurse children};
+  \node[box, below=of elem, yshift=-2mm] (comp) {COMPONENT\\\texttt{component.unmount()}\\schedule \texttt{onUnmounted}};
+  \node[box, below=of frag, yshift=-2mm] (hrbr) {HRBR\\dispose/destroy\\remove host};
+
+  \node[box, below=18mm of comp] (out) {\textbf{post-step:} \texttt{delete vdom.el}\\(+ delete other refs)};
+
+  \draw[arrow] (in) -- (sw);
+  \draw[arrow] (sw) -- (text);
+  \draw[arrow] (sw) -- (elem);
+  \draw[arrow] (sw) -- (frag);
+  \draw[arrow] (elem) -- (comp);
+  \draw[arrow] (frag) -- (hrbr);
+  \draw[arrow] (comp) -- (out);
+\end{tikzpicture}
+\end{center}
 
 \subsection{The shared post-step: deleting \texttt{vdom.el}}
 
@@ -137,6 +190,28 @@ This scheduling is why the component lifecycle tests await \texttt{nextTick()} a
   \item \texttt{a component reacts to being unmounted asynchronously}
 \end{itemize}
 
+\subsection*{Diagram: component unmount is two-phase}
+Component teardown is deliberately split into "structural cleanup now" and "user hook later":
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=left},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (destroy) {\texttt{destroyDOM(componentVdom)}};
+  \node[box, below=of destroy] (unmount) {\textbf{sync:} \texttt{component.unmount()}\\- destroys subtree\\- unsubscribes dispatcher\\- clears fields};
+  \node[box, below=of unmount] (enqueue) {\textbf{async:} \texttt{enqueueJob(() => component.onUnmounted())}};
+  \node[box, below=of enqueue] (tick) {\texttt{nextTick()} boundary\\(hooks are \emph{scheduled}, not inline)};
+
+  \draw[arrow] (destroy) -- (unmount);
+  \draw[arrow] (unmount) -- (enqueue);
+  \draw[arrow] (enqueue) -- (tick);
+\end{tikzpicture}
+\end{center}
+
+This pattern matches mount-side semantics too (\texttt{onMounted} is also scheduled). The intent is: the renderer finishes DOM surgery first, then user hooks run without re-entrancy hazards.
+
 \section{Inside Component.unmount() (\texttt{src/component.ts})}
 
 Components in Relax are created with \texttt{defineComponent(...)}. The generated class maintains several private fields that matter for unmount:
@@ -213,7 +288,7 @@ This section treats the tests as a teardown requirements document.
 
 \subsection{\texttt{destroy a text element}}
 
-From \texttt{src/__tests__/destroy-dom.test.ts}:
+From \texttt{src/\_\_tests\_\_/destroy-dom.test.ts}:
 
 \begin{itemize}
   \item Mount a text VNode via \texttt{mountDOM} and assert \texttt{vdom.el} is a \texttt{Text} node.

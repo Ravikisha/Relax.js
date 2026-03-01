@@ -122,8 +122,8 @@ The environment is \texttt{jsdom}, which means:
 Test inclusion patterns:
 
 \begin{itemize}
-\item \texttt{**/__tests__/**/*.test.ts}
-\item \texttt{**/__tests__/**/*.test.tsx}
+\item \texttt{**/\_\_tests\_\_/**/*.test.ts}
+\item \texttt{**/\_\_tests\_\_/**/*.test.tsx}
 \end{itemize}
 
 \subsection{The test suite structure}
@@ -143,7 +143,7 @@ If you change invariants (like reconciliation semantics), expect to update both 
 The TSX layer is a good example of how ``typecheck + tests'' combine into a stronger guarantee.
 The typechecker is configured to understand TSX (\texttt{jsx: react-jsx} and \texttt{jsxImportSource: relax-jsx}), but tests still need to verify the \emph{runtime} behavior.
 
-In \texttt{src/__tests__/jsx-tsx.test.ts}, the test sets up a host element in jsdom, runs an example, and asserts on the resulting HTML:
+In \texttt{src/\_\_tests\_\_/jsx-tsx.test.ts}, the test sets up a host element in jsdom, runs an example, and asserts on the resulting HTML:
 
 \begin{itemize}
 \item it writes \texttt{<div id="app"></div>} into \texttt{document.body}

@@ -25,9 +25,9 @@ The file \texttt{runtime/index.ts} exports these symbols from \texttt{runtime/si
 The executable specification lives in:
 
 \begin{itemize}
-  \item \texttt{runtime/__tests__/signals.test.ts}
-  \item \texttt{runtime/__tests__/signals.determinism.test.ts}
-  \item \texttt{runtime/__tests__/signals.fuzz.test.ts}
+  \item \texttt{runtime/\_\_tests\_\_/signals.test.ts}
+  \item \texttt{runtime/\_\_tests\_\_/signals.determinism.test.ts}
+  \item \texttt{runtime/\_\_tests\_\_/signals.fuzz.test.ts}
 \end{itemize}
 
 \section{Mental model}
@@ -120,7 +120,7 @@ So duplicates can only occur within a single run, and a well-behaved effect/memo
 
 \texttt{untrack(fn)} temporarily sets \texttt{currentComputation = null} while executing \texttt{fn}.
 
-Spec (\texttt{runtime/__tests__/signals.test.ts}):
+Spec (\texttt{runtime/\_\_tests\_\_/signals.test.ts}):
 
 \begin{itemize}
   \item \texttt{untrack prevents dependency registration}
@@ -204,13 +204,13 @@ That’s not required for correctness, but it makes accidental retention less li
 
 \subsection{Dispose}
 
-Disposing an effect sets \texttt{_disposed} and detaches from all sources.
+Disposing an effect sets \texttt{\_disposed} and detaches from all sources.
 
 Specs:
 
 \begin{itemize}
   \item \texttt{disposed effects fully detach: further writes do not schedule work}
-  \item leak-ish checks in \texttt{runtime/__tests__/signals.determinism.test.ts}
+  \item leak-ish checks in \texttt{runtime/\_\_tests\_\_/signals.determinism.test.ts}
 \end{itemize}
 
 \section{Re-entrancy: scheduling while running}
@@ -218,7 +218,7 @@ Specs:
 In \texttt{scheduleComputation(computation)} there is an explicit re-entrancy rule:
 
 \begin{itemize}
-  \item if the computation is \texttt{_running}, do not recursively call \texttt{run()}
+  \item if the computation is \texttt{\_running}, do not recursively call \texttt{run()}
   \item instead, add it to a \texttt{pending} \texttt{Set}
 \end{itemize}
 
@@ -249,7 +249,7 @@ The expected (deterministic) log is:
 \texttt{batch(fn)} increments \texttt{isBatching} and makes writes collect work into \texttt{pending}.
 When the outer-most batch finishes, it flushes the pending set sorted by computation id.
 
-Specs (\texttt{runtime/__tests__/signals.test.ts}):
+Specs (\texttt{runtime/\_\_tests\_\_/signals.test.ts}):
 
 \begin{itemize}
   \item \texttt{batch groups multiple writes into a single effect re-run}
@@ -261,7 +261,7 @@ This is the first place you see HRBR's theme: \emph{deterministic scheduling is 
 
 \paragraph{Implementation detail: deterministic flush}
 
-At batch end, pending computations are flushed by sorting on \texttt{_id}:
+At batch end, pending computations are flushed by sorting on \texttt{\_id}:
 
 \begin{verbatim}
 Array.from(pending).sort((a,b) => a._id - b._id)
@@ -299,7 +299,7 @@ If \texttt{lane !== 'sync'}, \texttt{createEffect} creates a scheduler via \text
 
 \subsection{How non-sync lanes are tested}
 
-In \texttt{runtime/__tests__/signals.test.ts}, the tests override \texttt{globalThis.setTimeout} to capture scheduled flush callbacks into an array.
+In \texttt{runtime/\_\_tests\_\_/signals.test.ts}, the tests override \texttt{globalThis.setTimeout} to capture scheduled flush callbacks into an array.
 This makes scheduler-driven effects deterministic in unit tests:
 
 \begin{itemize}
@@ -332,14 +332,14 @@ These tests are the reason the implementation invests in sorted observer lists a
 
 This chapter is easiest to internalize by reading the tests as executable requirements.
 
-\subsection{Core semantics (\texttt{runtime/__tests__/signals.test.ts})}
+\subsection{Core semantics (\texttt{runtime/\_\_tests\_\_/signals.test.ts})}
 
 \begin{description}
   \item[tracks dependencies and re-runs] Proves that reads register dependencies and writes schedule effects. Also proves the \texttt{Object.is} bail-out on repeated values.
   \item[untrack prevents dependency registration] Proves that \texttt{untrack} temporarily disables dependency capture.
   \item[batch groups writes] Proves that multiple writes inside a batch yield a single re-run.
   \item[nested batch is a flush boundary] Proves \texttt{isBatching} is a counter and only the outermost batch flushes.
-  \item[deterministic effect order] Proves flush order is creation order (based on \texttt{_id}).
+  \item[deterministic effect order] Proves flush order is creation order (based on \texttt{\_id}).
   \item[cleanup runs before re-run and on dispose] Proves cleanup semantics for both re-run and disposal.
   \item[disposed effects fully detach] Proves \texttt{unlinkAllSources} works: disposed computations aren’t scheduled by later writes.
   \item[re-entrancy convergence] Proves the pending-set mechanism prevents infinite recursion and produces a deterministic sequence.

@@ -1,11 +1,11 @@
 \chapter{The VNode model (\texttt{src/h.ts})}
 
-This chapter is the ``data model'' chapter of Relaxs renderer: before we can mount virtual UI into the DOM, we need a shape that can represent ``text'', ``an element with attributes'', ``a component instance'', and a few special cases (fragments, slots, and HRBR blocks).
+This chapter is the ``data model'' chapter of Relax's renderer: before we can mount virtual UI into the DOM, we need a shape that can represent ``text'', ``an element with attributes'', ``a component instance'', and a few special cases (fragments, slots, and HRBR blocks).
 
 Relax keeps this model intentionally small, and then makes the rest of the runtime depend on a single invariant:
 
 \begin{quote}
-  	extbf{Invariant:} after creation, every child in \texttt{VNode.children} is a VNode (not a primitive) and every node has a stable \texttt{type} drawn from \texttt{DOM\_TYPES}.
+  \noindent\textbf{Invariant:} after creation, every child in \texttt{VNode.children} is a VNode (not a primitive) and every node has a stable \texttt{type} drawn from \texttt{DOM\_TYPES}.
 \end{quote}
 
 You can think of \texttt{src/h.ts} as the factory layer that enforces this invariant.
@@ -20,6 +20,33 @@ A virtual DOM implementation needs a stable, serializable representation of UI. 
 \end{enumerate}
 
 The ``create'' step is deceptively important: the more regular the VNode tree is, the less branching the mount/patch code needs.
+
+\subsection*{Diagram: from render to real DOM}
+The following diagram is the "wiring diagram" for the rest of Part~II. Every later chapter is basically "zooming in" on one box:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=center},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (render) {\textbf{render()}\\(components / TSX)};
+  \node[box, right=of render] (h) {\textbf{VNode factory}\\\texttt{h()}, \texttt{hFragment()}, \texttt{hSlot()}};
+  \node[box, right=of h] (tree) {\textbf{VNode tree}\\(normalized children)};
+  \node[box, below=of tree] (mount) {\textbf{Mount}\\\texttt{mountDOM}};
+  \node[box, below=of h] (patch) {\textbf{Patch}\\\texttt{patchDOM}};
+  \node[box, below=of render] (dom) {\textbf{Real DOM}\\nodes + listeners};
+
+  \draw[arrow] (render) -- (h);
+  \draw[arrow] (h) -- (tree);
+  \draw[arrow] (tree) -- (mount);
+  \draw[arrow] (mount) -- (dom);
+  \draw[arrow] (tree) -- (patch);
+  \draw[arrow] (patch) -- (dom);
+\end{tikzpicture}
+\end{center}
+
+If you keep this picture in mind, a lot of micro-details (like \texttt{vdom.el} back-references or \texttt{areNodesEqual}) stop feeling ad-hoc: they're glue that keeps the arrows valid.
 
 \section{The VNode types: \texttt{DOM\_TYPES}}
 Relax defines node kinds as string constants in \texttt{DOM\_TYPES} (\texttt{src/h.ts}):
@@ -36,12 +63,12 @@ Relax defines node kinds as string constants in \texttt{DOM\_TYPES} (\texttt{src
 Two details are worth calling out because they influence the rest of the runtime:
 
 \begin{enumerate}
-  \item \textbf{Not every VNode has a DOM element.} \texttt{TEXT} uses a real \texttt{Text} node (\texttt{el?: Text}). \texttt{ELEMENT} uses a real \texttt{HTMLElement} (\texttt{el?: HTMLElement}). But \texttt{FRAGMENT} is special: it represents multiple siblings, so it cant point at a single ``root node''.
-  \item \textbf{Keys are part of identity.} Youll see \texttt{props.key} used later by the reconciliation algorithm to decide whether a node is ``the same logical thing''.
+  \item \textbf{Not every VNode has a DOM element.} \texttt{TEXT} uses a real \texttt{Text} node (\texttt{el?: Text}). \texttt{ELEMENT} uses a real \texttt{HTMLElement} (\texttt{el?: HTMLElement}). But \texttt{FRAGMENT} is special: it represents multiple siblings, so it can't point at a single ``root node''.
+  \item \textbf{Keys are part of identity.} You'll see \texttt{props.key} used later by the reconciliation algorithm to decide whether a node is ``the same logical thing''.
 \end{enumerate}
 
 \section{Contract: \texttt{h(tag, props, children)}}
-Relaxs primary constructor is \texttt{h()} (\texttt{src/h.ts}). Its intentionally close to ``hyperscript'' functions found in other VDOM systems.
+Relax's primary constructor is \texttt{h()} (\texttt{src/h.ts}). It's intentionally close to ``hyperscript'' functions found in other VDOM systems.
 
 \subsection*{Inputs}
 \begin{itemize}
@@ -66,11 +93,22 @@ Relax does two child normalization passes inside \texttt{h()} and \texttt{hFragm
   \item \textbf{Map primitives to \texttt{TEXT} nodes}: \texttt{mapTextNodes()} converts \texttt{string | number | boolean | bigint | symbol} into \texttt{TextVNode} via \texttt{hString()}.
 \end{enumerate}
 
+\subsection*{Why normalize eagerly?}
+Normalization at creation time is a performance and correctness tactic:
+
+\begin{itemize}
+  \item \textbf{Performance:} mount/patch are on the hot path; you want them to pay as little "figure out what this is" cost as possible.
+  \item \textbf{Correctness:} by forcing children into a single representation (VNodes), you avoid accidental differences between "first render" and "update" paths.
+  \item \textbf{Debuggability:} tests can assert on VNode shapes without having to include JS coercion rules.
+\end{itemize}
+
+You can see this philosophy reflected in the tests: instead of testing dozens of mount/patch branches for primitives, the test suite locks down the normalization helpers and then relies on the invariant.
+
 This is one of those design choices that pays rent everywhere:
 
 \begin{itemize}
   \item Mount code can check \texttt{vNode.type} and never needs to special-case ``child is a string''.
-  \item Patch code can treat text nodes uniformly; it doesnt have to worry about coercion rules.
+  \item Patch code can treat text nodes uniformly; it doesn't have to worry about coercion rules.
 \end{itemize}
 
 \section{Fragments: \texttt{hFragment(children)} and \texttt{extractChildren()}}
@@ -84,11 +122,11 @@ Later, other parts of the runtime sometimes need to treat ``a tree that may cont
 	exttt{extractChildren(vdom)} provides that flattening:
 
 \begin{itemize}
-  \item If it finds a fragment child, it recursively collects that fragments children.
+  \item If it finds a fragment child, it recursively collects that fragment's children.
   \item Otherwise it includes the child as-is.
 \end{itemize}
 
-The unit test \texttt{extract children from a tree with fragments} in \texttt{src/__tests__/h.test.ts} is your executable spec for this behavior.
+The unit test \texttt{extract children from a tree with fragments} in \texttt{src/\_\_tests\_\_/h.test.ts} is your executable spec for this behavior.
 
 \section{Slots: \texttt{hSlot(children)} as a component-level placeholder}
 Slots are how Relax expresses ``children passed into a component'' without forcing the component to take opaque \texttt{children} and do manual array plumbing.
@@ -111,15 +149,15 @@ When rendering a component, Relax needs to know whether the component output con
   \item If a slot was created, the runtime calls the slot-filling algorithm (\texttt{src/slots.ts}) and then \texttt{resetDidCreateSlot()} to avoid leaking the flag into unrelated renders.
 \end{enumerate}
 
-This is one of Relaxs ``tiny global state'' trade-offs: it keeps render fast and simple, but it also means slot creation is effectively a side-effect.
+This is one of Relax's ``tiny global state'' trade-offs: it keeps render fast and simple, but it also means slot creation is effectively a side-effect.
 
 \subsection*{What the tests prove}
-The best way to internalize slot semantics is to read \texttt{src/__tests__/component-slots.test.ts}. A few key cases:
+The best way to internalize slot semantics is to read \texttt{src/\_\_tests\_\_/component-slots.test.ts}. A few key cases:
 
 \begin{itemize}
-  \item \textbf{External content wins:} A component that renders \texttt{hSlot()} will receive the parents children in that position.
+  \item \textbf{External content wins:} A component that renders \texttt{hSlot()} will receive the parent's children in that position.
   \item \textbf{Default content:} \texttt{hSlot([ ...default ])} is used when the parent provides no children.
-  \item \textbf{Empty slot:} if theres no external content and no default content, the slot becomes empty (the test asserts \texttt{<div></div>}).
+  \item \textbf{Empty slot:} if there's no external content and no default content, the slot becomes empty (the test asserts \texttt{<div></div>}).
   \item \textbf{Conditional slots:} slot nodes can appear/disappear across re-renders, and patching handles it.
 \end{itemize}
 
@@ -132,7 +170,7 @@ HRBR (the compiled ``block'' runtime) needs to integrate into the same mounting/
   \item The returned instance exposes at least \texttt{destroy()}, and may expose \texttt{update()} / \texttt{dispose()}.
 \end{itemize}
 
-Theres an important identity rule here, and the repo encodes it explicitly in \texttt{areNodesEqual()} (\texttt{src/nodes-equal.ts}):
+There's an important identity rule here, and the repo encodes it explicitly in \texttt{areNodesEqual()} (\texttt{src/nodes-equal.ts}):
 
 \begin{quote}
   	extbf{HRBR vnode identity} is defined by mount factory identity: \texttt{old.mount === new.mount}.
@@ -141,12 +179,12 @@ Theres an important identity rule here, and the repo encodes it explicitly in \
 That single line is the difference between:
 
 \begin{itemize}
-  \item \textbf{Patch preserves instance:} stable mount function  keep the same HRBR instance.
-  \item \textbf{Patch remounts:} new mount function  destroy and mount a fresh instance.
+  \item \textbf{Patch preserves instance:} stable mount function keeps the same HRBR instance.
+  \item \textbf{Patch remounts:} new mount function destroys and mounts a fresh instance.
 \end{itemize}
 
 \subsection*{What the HRBR tests prove}
-Read \texttt{src/__tests__/hrbr-integration.test.ts} as the contract:
+Read \texttt{src/\_\_tests\_\_/hrbr-integration.test.ts} as the contract:
 
 \begin{itemize}
   \item \textbf{Mount and destroy:} an HRBR block returned from a VDOM component mounts into the DOM and gets destroyed on \texttt{destroyDOM}.
@@ -154,7 +192,7 @@ Read \texttt{src/__tests__/hrbr-integration.test.ts} as the contract:
   \item \textbf{Patch behavior:} stable vs. changing mount factory identity changes whether the HRBR instance is preserved.
 \end{itemize}
 
-This is a great example of the books theme: treat tests as executable documentation.
+This is a great example of the book's theme: treat tests as executable documentation.
 
 \section{VNode identity and diffing: a preview}
 This chapter is about creation, but VNode shape is designed with patching in mind. The function \texttt{areNodesEqual()} (\texttt{src/nodes-equal.ts}) shows you the identity rules Relax uses later:
@@ -167,20 +205,20 @@ This chapter is about creation, but VNode shape is designed with patching in min
   \item HRBR: equal if mount factory function is the same
 \end{itemize}
 
-The tests in \texttt{src/__tests__/node-equals.test.ts} enumerate these cases in small, sharp assertions.
+The tests in \texttt{src/\_\_tests\_\_/node-equals.test.ts} enumerate these cases in small, sharp assertions.
 
 \section{Mini-exercises}
 \begin{enumerate}
-  \item \textbf{Read like a maintainer:} In \texttt{src/__tests__/h.test.ts}, locate the test named \texttt{"h() maps 'number', 'boolean', 'bigint', and 'symbol' values to text vNodes"}. Explain (to yourself) why \texttt{Symbol(5)} becomes the string \texttt{"Symbol(5)"}.
+  \item \textbf{Read like a maintainer:} In \texttt{src/\_\_tests\_\_/h.test.ts}, locate the test named \texttt{"h() maps 'number', 'boolean', 'bigint', and 'symbol' values to text vNodes"}. Explain (to yourself) why \texttt{Symbol(5)} becomes the string \texttt{"Symbol(5)"}.
   \item \textbf{Write a new invariant test:} Add a small test that asserts \texttt{h('div', {}, [null, undefined, 'x']).children.length === 1}. (This should already be true, but the test helps lock the behavior down.)
 \end{enumerate}
 
 \section{Online resources}
-This chapter describes patterns that show up across many UI runtimes. These references help if you want to compare Relaxs choices to other ecosystems:
+This chapter describes patterns that show up across many UI runtimes. These references help if you want to compare Relax's choices to other ecosystems:
 
 \begin{itemize}
   \item Hyperscript and virtual node factories (conceptual background): \href{https://github.com/hyperhype/hyperscript}{https://github.com/hyperhype/hyperscript}
   \item DOM node types (Text vs Element) on MDN: \href{https://developer.mozilla.org/en-US/docs/Web/API/Node/nodeType}{https://developer.mozilla.org/en-US/docs/Web/API/Node/nodeType}
-  \item Reacts reconciliation keys (why \texttt{key} exists): \href{https://react.dev/learn/rendering-lists}{https://react.dev/learn/rendering-lists}
-  \item Web Components slots (a parallel mental model for ``default vs external'' content): \href{https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_templates_and_slots}{https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_templates_and_slots}
+  \item React's reconciliation keys (why \texttt{key} exists): \href{https://react.dev/learn/rendering-lists}{https://react.dev/learn/rendering-lists}
+  \item Web Components slots (a parallel mental model for ``default vs external'' content): \href{https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_templates_and_slots}{\url{https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_templates_and_slots}}
 \end{itemize}

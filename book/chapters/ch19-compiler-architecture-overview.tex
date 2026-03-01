@@ -41,8 +41,8 @@ The HRBR runtime expects two main pieces of data.
 Defined in \texttt{runtime/block.ts}, a \texttt{BlockDef} contains:
 
 \begin{itemize}
-\item \texttt{templateHTML: string}  the stable HTML string that will be parsed once.
-\item \texttt{slots: Record<string, BlockSlot>}  the mapping from a slot key to its write kind and a DOM path.
+\item \texttt{templateHTML: string}, the stable HTML string that will be parsed once.
+\item \texttt{slots: Record<string, BlockSlot>} , the mapping from a slot key to its write kind and a DOM path.
 \end{itemize}
 
 A \texttt{BlockSlot} describes \emph{what} to write (text/attr/class/style/prop/event, etc.) and \emph{where} to write it (a childNodes index path).
@@ -97,7 +97,7 @@ It provides two public APIs:
 \item \texttt{compileTSXOrFallback(source, opts?) -> CompileOrFallbackResult}
 \end{itemize}
 
-\subsection{\texttt{compileTSXToBlock():} parse  extract  render template}
+\subsection{\texttt{compileTSXToBlock():} parse -> extract -> render template}
 
 \textbf{Inputs}
 
@@ -151,7 +151,7 @@ In \texttt{renderJSX()}, when a child is \texttt{JsxExpression}:
 \begin{itemize}
 \item the compiler marks \texttt{meta.hasDynamicStructure = true}
 \item it allocates a slot key \texttt{sN}
-\item it emits a unique sentinel string \texttt{__hrbr_sN__} into the template
+\item it emits a unique sentinel string \texttt{\_\_hrbr\_sN\_\_} into the template
 \item it records a \texttt{text} slot whose path points to that text node
 \item it records the expression's source text as a ``read'' entry
 \end{itemize}
@@ -217,7 +217,7 @@ Compared to the TS prototype, the Babel plugin has additional responsibilities:
 \begin{itemize}
 \item Operate on full program files, not just an isolated expression string.
 \item Inject runtime imports: \texttt{defineBlock}, \texttt{mountCompiledBlock}, and optionally \texttt{mountFallback}.
-\item Generate wrapper helpers (e.g. \texttt{__hrbrBlock}) that connect emitted data literals to runtime calls.
+\item Generate wrapper helpers (e.g. \texttt{\_\_hrbrBlock}) that connect emitted data literals to runtime calls.
 \item Derive stable slot keys in dev mode (optionally) so diffs are readable.
 \end{itemize}
 

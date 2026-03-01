@@ -15,8 +15,8 @@ This chapter is grounded in:
 \begin{itemize}
   \item \texttt{runtime/hydration.ts} (hydrate implementation)
   \item \texttt{runtime/ssr.ts} (string rendering helper used in tests)
-  \item \texttt{runtime/__tests__/hydration.test.ts}
-  \item \texttt{runtime/__tests__/ssr.test.ts}
+  \item \texttt{runtime/\_\_tests\_\_/hydration.test.ts}
+  \item \texttt{runtime/\_\_tests\_\_/ssr.test.ts}
 \end{itemize}
 
 \section{A tiny contract (what hydrateBlock promises)}
@@ -273,7 +273,7 @@ This gives a full lifecycle demo:
 Hydration and SSR are notoriously easy to get "mostly right" and still ship broken edge cases.
 Relax locks down the v1 behavior with two test files.
 
-\subsection{\texttt{runtime/__tests__/hydration.test.ts}}
+\subsection{\texttt{runtime/\_\_tests\_\_/hydration.test.ts}}
 
 This suite defines the hydration safety model.
 
@@ -302,7 +302,7 @@ This suite defines the hydration safety model.
   The test asserts that hydration bails out and remounts so the template structure is restored.
 \end{itemize}
 
-\subsection{\texttt{runtime/__tests__/ssr.test.ts}}
+\subsection{\texttt{runtime/\_\_tests\_\_/ssr.test.ts}}
 
 This test is a full lifecycle demo "in miniature":
 

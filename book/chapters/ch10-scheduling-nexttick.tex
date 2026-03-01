@@ -15,9 +15,29 @@ In Relax, scheduling is treated as part of the renderer’s public contract: tes
 This chapter is anchored in:
 
 \begin{itemize}
-  \item \texttt{src/scheduler.ts} and \texttt{src/__tests__/scheduler.test.ts}
-  \item \texttt{runtime/scheduler.ts} and \texttt{runtime/__tests__/scheduler.test.ts}
+  \item \texttt{src/scheduler.ts} and \texttt{src/\_\_tests\_\_/scheduler.test.ts}
+  \item \texttt{runtime/scheduler.ts} and \texttt{runtime/\_\_tests\_\_/scheduler.test.ts}
 \end{itemize}
+
+\section{Diagram: two schedulers, two contracts}
+Relax has two schedulers because it has two kinds of work with different needs:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=left},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (vdom) {\textbf{VDOM scheduler}\\\texttt{src/scheduler.ts}\\goal: lifecycle hooks + small deferred jobs};
+  \node[box, right=18mm of vdom] (rt) {\textbf{Runtime scheduler}\\\texttt{runtime/scheduler.ts}\\goal: priority lanes + budgets + large reactive work};
+
+  \node[box, below=of vdom] (vdomc) {\textbf{contract}\\- FIFO job queue\\- one microtask flush per tick\\- doesn't await async jobs};
+  \node[box, below=of rt] (rtc) {\textbf{contract}\\- lane priority\\- deterministic ordering\\- time slicing via budget};
+
+  \draw[arrow] (vdom) -- (vdomc);
+  \draw[arrow] (rt) -- (rtc);
+\end{tikzpicture}
+\end{center}
 
 \section{The VDOM microtask job queue (\texttt{src/scheduler.ts})}
 
@@ -62,6 +82,26 @@ queueMicrotask(processJobs)
 
 So no matter how many jobs you enqueue, you’ll process them in a single microtask flush.
 
+\subsection*{Diagram: microtask batching timeline}
+This is the behavior the tests rely on:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=7mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=left},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (sync) {\textbf{sync JS turn}\\enqueueJob(A)\\enqueueJob(B)\\enqueueJob(C)};
+  \node[box, right=14mm of sync] (micro) {\textbf{microtask}\\processJobs():\\A then B then C};
+  \node[box, right=14mm of micro] (macro) {\textbf{macrotask}\\\texttt{flushPromises()} / timers};
+
+  \draw[arrow] (sync) -- (micro);
+  \draw[arrow] (micro) -- (macro);
+\end{tikzpicture}
+\end{center}
+
+This is also why hook scheduling avoids re-entrancy: hooks run after the renderer finishes its synchronous DOM work.
+
 \paragraph{Batching rule}
 
 The \texttt{isScheduled} latch is the batching mechanism:
@@ -90,7 +130,7 @@ The queue keeps running other jobs; the promise continuation runs later.
 The VDOM scheduler is designed for hook-style work ("start it soon, don’t stall unrelated hooks, but surface errors").
 If it awaited each job, one slow async hook could hold up every other component’s hook.
 
-This is tested in \texttt{src/__tests__/scheduler.test.ts}:
+This is tested in \texttt{src/\_\_tests\_\_/scheduler.test.ts}:
 
 \begin{itemize}
   \item \texttt{Asynchronous jobs enqueue more jobs} expects order \texttt{[1, 3, 2]}.
@@ -135,7 +175,7 @@ So the contract is:
 	exttt{nextTick()} is a boundary for "scheduler-driven work started", not "all async completed".
 If you write a hook that does work after an \texttt{await}, you may need an additional wait (or design your test so the awaited promise resolves immediately).
 
-Tests in \texttt{src/__tests__/scheduler.test.ts} cover:
+Tests in \texttt{src/\_\_tests\_\_/scheduler.test.ts} cover:
 
 \begin{itemize}
   \item jobs run after \texttt{nextTick}
@@ -159,7 +199,7 @@ Instead of a single FIFO queue, it manages multiple priority lanes:
 This scheduler is deterministic by design.
 It uses stable tie-breakers, explicit budgets, and a promotion system (aging + deadlines) so low-priority work eventually runs.
 
-This section is grounded directly in \texttt{runtime/scheduler.ts} and \texttt{runtime/__tests__/scheduler.test.ts}.
+This section is grounded directly in \texttt{runtime/scheduler.ts} and \texttt{runtime/\_\_tests\_\_/scheduler.test.ts}.
 
 \subsection{Creating a scheduler}
 
@@ -182,7 +222,7 @@ A scheduler flush is run with a budget (in milliseconds). The flush loop:
   \item if budget is exceeded and work remains, schedules another flush
 \end{itemize}
 
-This behavior is tested in \texttt{runtime/__tests__/scheduler.test.ts}:
+This behavior is tested in \texttt{runtime/\_\_tests\_\_/scheduler.test.ts}:
 
 \begin{itemize}
   \item \texttt{budget enforcement: flush splits work across multiple flush calls when budget is tight}
@@ -196,6 +236,27 @@ Lane priority is declared in \texttt{LANE\_PRIORITY} and selection order is:
 \begin{verbatim}
 sync > input > default > transition > idle
 \end{verbatim}
+
+\subsection*{Diagram: lane selection and budgeted flushing}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=left},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (pick) {Pick next lane\\(sync \textrightarrow input \textrightarrow default \textrightarrow transition \textrightarrow idle)};
+  \node[box, below=of pick] (run) {Run tasks in lane\\(deterministic order)};
+  \node[box, below=of run] (budget) {Check elapsed time\\budget exceeded?};
+  \node[box, below left=of budget, xshift=14mm] (yield) {yes \textrightarrow yield\\schedule another flush};
+  \node[box, below right=of budget, xshift=-14mm] (done) {no \textrightarrow continue\\or finish if empty};
+
+  \draw[arrow] (pick) -- (run);
+  \draw[arrow] (run) -- (budget);
+  \draw[arrow] (budget) -- (yield);
+  \draw[arrow] (budget) -- (done);
+\end{tikzpicture}
+\end{center}
 
 Within a lane, tasks are sorted with deterministic tie-breakers:
 
@@ -269,7 +330,7 @@ The runtime lane model is a foundation for:
 
 You can treat these as the scheduler’s executable specification.
 
-\subsection{VDOM scheduler tests (\texttt{src/__tests__/scheduler.test.ts})}
+\subsection{VDOM scheduler tests (\texttt{src/\_\_tests\_\_/scheduler.test.ts})}
 
 \begin{description}
   \item[Enqueued jobs run after nextTick] Proves \texttt{enqueueJob()} is deferred and does not run synchronously.
@@ -278,7 +339,7 @@ You can treat these as the scheduler’s executable specification.
   \item[Asynchronous jobs enqueue more jobs] Proves the "async doesn’t block" rule: a job that yields allows later jobs to run, producing \texttt{[1, 3, 2]}.
 \end{description}
 
-\subsection{Runtime scheduler tests (\texttt{runtime/__tests__/scheduler.test.ts})}
+\subsection{Runtime scheduler tests (\texttt{runtime/\_\_tests\_\_/scheduler.test.ts})}
 
 The runtime scheduler suite uses a manual clock (\texttt{now()}) and a manual flush trigger (\texttt{requestFlush(cb)} pushes \texttt{cb} into an array).
 That technique eliminates timing flakiness and makes time-based scheduling deterministic.

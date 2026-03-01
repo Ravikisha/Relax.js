@@ -2,16 +2,53 @@
 
 Mounting is the ``first render'' story. But real apps are dominated by \emph{updates}: state changes, input events, list reorders, and component re-renders.
 
-Relaxs patcher has one job: given an \emph{old} VNode tree that is already mounted and a \emph{new} VNode tree produced by the latest render, mutate the real DOM so it matches the new tree while reusing as much existing DOM as is safe.
+Relax's patcher has one job: given an \emph{old} VNode tree that is already mounted and a \emph{new} VNode tree produced by the latest render, mutate the real DOM so it matches the new tree while reusing as much existing DOM as is safe.
 
 In Relax the patcher is both:
 
 \begin{itemize}
   \item \textbf{small enough to read end-to-end} (in \texttt{src/patch-dom.ts}), and
-  \item \textbf{heavily specified by tests} (especially \texttt{src/__tests__/patch-dom.test.ts}).
+  \item \textbf{heavily specified by tests} (especially \texttt{src/\_\_tests\_\_/patch-dom.test.ts}).
 \end{itemize}
 
 This chapter is long because patching is where most correctness and performance edge cases live.
+
+\section{Diagram: the patch decision tree}
+Before reading any helper functions, keep this diagram in mind. It summarizes the control flow inside \texttt{patchDOM}:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=left},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (start) {\texttt{patchDOM(oldVdom, newVdom, parentEl, hostComponent?)}};
+  \node[box, below=of start] (eq) {\textbf{Decision:} \texttt{areNodesEqual(oldVdom, newVdom)}?};
+
+  \node[box, below left=of eq, xshift=14mm] (replace) {\textbf{Replace path}\\
+  	exttt{index = findIndexInParent(old.el)}\\
+  	exttt{destroyDOM(old)}\\
+  	exttt{mountDOM(new, parentEl, index, hostComponent)}};
+
+  \node[box, below right=of eq, xshift=-14mm] (patch) {\textbf{Patch path}\\
+  	exttt{new.el = old.el}\\
+  	exttt{switch (new.type) \{ ... \}}};
+
+  \node[box, below=of patch] (dispatch) {\textbf{Per-type patchers}\\
+  TEXT \textrightarrow{} patchText\\
+  ELEMENT \textrightarrow{} patchElement\\
+  FRAGMENT \textrightarrow{} patchFragmentChildren\\
+  COMPONENT \textrightarrow{} patchComponent\\
+  HRBR \textrightarrow{} patchHrbr};
+
+  \draw[arrow] (start) -- (eq);
+  \draw[arrow] (eq) -- node[above left]{no} (replace);
+  \draw[arrow] (eq) -- node[above right]{yes} (patch);
+  \draw[arrow] (patch) -- (dispatch);
+\end{tikzpicture}
+\end{center}
+
+This picture also explains why Chapter~4's invariant (children are always VNodes) matters: it makes the \texttt{switch} and its helper patchers tractable.
 
 \section{\texttt{patchDOM}: the top-level operation}
 The public entry point is:
@@ -65,6 +102,16 @@ The current identity rules are:
   \item \textbf{HRBR}: equal when \texttt{mount} factory identity matches.
 \end{itemize}
 
+\paragraph{Why identity is intentionally strict}
+Virtual DOM patching is always a trade-off between reuse and correctness. Relax chooses a conservative identity rule:
+
+\begin{itemize}
+  \item If identity says "not equal", Relax pays the cost of teardown + remount.
+  \item The upside is that "equal" becomes a promise: the patcher can safely assume the DOM node kind matches what it needs to mutate.
+\end{itemize}
+
+In other words, \texttt{areNodesEqual} isn't about "deep equality". It's a \emph{safety gate} that defends the patcher.
+
 If nodes are not equal, \texttt{patchDOM} does a replacement:
 
 \begin{enumerate}
@@ -73,7 +120,7 @@ If nodes are not equal, \texttt{patchDOM} does a replacement:
   \item Mount the new subtree at the same index (\texttt{mountDOM(newVdom, parentEl, index, hostComponent)}).
 \end{enumerate}
 
-This behavior is covered early in \texttt{src/__tests__/patch-dom.test.ts} by:
+This behavior is covered early in \texttt{src/\_\_tests\_\_/patch-dom.test.ts} by:
 
 \begin{itemize}
   \item \texttt{change the root node}
@@ -164,7 +211,7 @@ Then it runs \texttt{arraysDiff(oldClasses, newClasses)} to compute \texttt{adde
   \item \texttt{el.classList.add(...added)}
 \end{itemize}
 
-The behavior is tested extensively in \texttt{patch class} cases in \texttt{src/__tests__/patch-dom.test.ts}.
+The behavior is tested extensively in \texttt{patch class} cases in \texttt{src/\_\_tests\_\_/patch-dom.test.ts}.
 
 \subsection{Styles: patchStyles uses objectsDiff}
 
@@ -189,11 +236,37 @@ Test group: \texttt{patch style}.
 Why detach+attach for \emph{updated}?
 Because the wrapper listener function identity changes when the handler changes.
 
+\paragraph{Diagram: event patching as identity management}
+This is the subtle part: the browser removes listeners by the \emph{exact function object} you originally passed.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=9mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=left},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (old) {old props:\\\texttt{on: \{ click: oldHandler \}}};
+  \node[box, right=16mm of old] (wrap1) {mount/patch created\\wrapper \texttt{w1}};
+  \node[box, below=of old] (new) {new props:\\\texttt{on: \{ click: newHandler \}}};
+  \node[box, right=16mm of new] (wrap2) {needs new\\wrapper \texttt{w2}};
+
+  \node[box, below=14mm of wrap1] (detach) {detach:\\\texttt{el.removeEventListener('click', w1)}};
+  \node[box, below=of wrap2] (attach) {attach:\\\texttt{el.addEventListener('click', w2)}};
+
+  \draw[arrow] (old) -- (wrap1);
+  \draw[arrow] (new) -- (wrap2);
+  \draw[arrow] (wrap1) -- (detach);
+  \draw[arrow] (wrap2) -- (attach);
+\end{tikzpicture}
+\end{center}
+
+Tests like \texttt{patch event handlers} effectively specify this: "updating" a handler is implemented as remove+add because the wrapper identity changes.
+
 Tests to read:
 
 \begin{itemize}
-  \item \texttt{patch event handlers} in \texttt{src/__tests__/patch-dom.test.ts}
-  \item The binding rules in \texttt{src/__tests__/events.test.ts}
+  \item \texttt{patch event handlers} in \texttt{src/\_\_tests\_\_/patch-dom.test.ts}
+  \item The binding rules in \texttt{src/\_\_tests\_\_/events.test.ts}
 \end{itemize}
 
 \subsection{Component nodes: patchComponent}
@@ -233,7 +306,7 @@ This helper is used in child diffing paths where:
   \item we want to avoid scanning \texttt{parentEl.childNodes} to find the current index for every child.
 \end{itemize}
 
-When youre reading patching code, seeing \texttt{patchDOMSameElement} is a clue: ``were in an optimization path, and weve already committed to reusing the node identity.''
+When you're reading patching code, seeing \texttt{patchDOMSameElement} is a clue: ``we're in an optimization path, and we've already committed to reusing the node identity.''
 
 Relax contains an experimental HRBR interop mode. In \texttt{patch-dom.ts}, \texttt{patchHrbr(old, next)}:
 
@@ -242,7 +315,7 @@ Relax contains an experimental HRBR interop mode. In \texttt{patch-dom.ts}, \tex
   \item Otherwise, disposes/destroys the old instance and remounts into the same host element.
 \end{itemize}
 
-This behavior matches the spec tests in \texttt{src/__tests__/hrbr-integration.test.ts}.
+This behavior matches the spec tests in \texttt{src/\_\_tests\_\_/hrbr-integration.test.ts}.
 
 \section{Patching children: from fast paths to general diff}
 
@@ -264,19 +337,19 @@ This lets fragments and components present children uniformly.
 There is an optional integration with the runtime reconciler:
 
 \begin{verbatim}
-if (newVdom.props._reconcile === 'hrbr') { ... reconcileChildren(...) }
+if (newVdom.props.\_reconcile === 'hrbr') { ... reconcileChildren(...) }
 \end{verbatim}
 
 This path only applies when \emph{all direct children are keyed} (keyed list). It builds \texttt{ReconcileNode} specs and lets \texttt{reconcileChildren} (from \texttt{runtime/reconciler}) patch/move nodes with a single keyed pass.
 
 You can think of it as: "VDOM delegates list diffing to a specialized keyed reconciler".
 
-\subsection{Fast path B (opt-in): _textOnly rows}
+\subsection{Fast path B (opt-in): \_textOnly rows}
 
 For large lists of rows shaped like \texttt{<li>{label}</li>}, Relax supports an opt-in hint:
 
 \begin{itemize}
-  \item If \texttt{oldVdom.props._textOnly === true} and \texttt{newVdom.props._textOnly === true}, and
+  \item If \texttt{oldVdom.props.\_textOnly === true} and \texttt{newVdom.props.\_textOnly === true}, and
   \item both old and new children are exactly one TEXT node,
 \end{itemize}
 
@@ -293,9 +366,9 @@ The LIS (Longest Increasing Subsequence) trick is a classic VDOM strategy:
   \item then you only need to move the remaining nodes.
 \end{itemize}
 
-Relaxs implementation is in \texttt{patchKeyedChildrenReorder(...)} and uses an internal helper \texttt{lisIndices(arr)} which computes LIS indices over a sequence of old positions (ignoring \texttt{-1} markers for new nodes).
+Relax's implementation is in \texttt{patchKeyedChildrenReorder(...)} and uses an internal helper \texttt{lisIndices(arr)} which computes LIS indices over a sequence of old positions (ignoring \texttt{-1} markers for new nodes).
 
-One very practical detail from the code: \texttt{elementsForChild(child)} returns \emph{multiple} DOM elements for components (using \texttt{child.component.elements}) but only one for normal elements. Thats how the reorder path correctly moves a component that renders multiple siblings.
+One very practical detail from the code: \texttt{elementsForChild(child)} returns \emph{multiple} DOM elements for components (using \texttt{child.component.elements}) but only one for normal elements. That's how the reorder path correctly moves a component that renders multiple siblings.
 
 \texttt{patchKeyedChildrenReorder(oldChildren, newChildren, parentEl, hostComponent)} implements keyed reordering with minimal DOM moves:
 
@@ -309,11 +382,38 @@ One very practical detail from the code: \texttt{elementsForChild(child)} return
 
 This is a classic strategy: nodes in the LIS are already in relative order, so moving the rest yields the fewest inserts/reorders.
 
+\subsubsection*{Diagram: keyed children reconciliation with LIS}
+This is the bird's-eye view of what \texttt{patchKeyedChildrenReorder} is doing:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=center},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (old) {Old children\\keys: A\;B\;C\;D\;E};
+  \node[box, right=18mm of old] (new) {New children\\keys: B\;E\;A\;D};
+
+  \node[box, below=of old] (map) {Map new keys\\to old indices\\(missing \textrightarrow{} -1)};
+  \node[box, below=of map] (seq) {Sequence of old indices\\for new order\\e.g. [1,4,0,3]};
+  \node[box, below=of seq] (lis) {Compute LIS indices\\(nodes already in\\relative order)};
+  \node[box, below=of lis] (walk) {Walk backwards\\Mount new nodes\\Move non-LIS nodes};
+
+  \draw[arrow] (old) -- (map);
+  \draw[arrow] (new) -- (map);
+  \draw[arrow] (map) -- (seq);
+  \draw[arrow] (seq) -- (lis);
+  \draw[arrow] (lis) -- (walk);
+\end{tikzpicture}
+\end{center}
+
+The reason for the backward walk is practical DOM surgery: when you insert/move nodes from the end, you don't invalidate the insertion positions you haven't processed yet.
+
 Test names to read:
 
 \begin{itemize}
   \item \texttt{patchChildren keyed reorder fast path (LIS)}
-  \item The many keyed reorder cases in \texttt{src/__tests__/patch-dom.test.ts}
+  \item The many keyed reorder cases in \texttt{src/\_\_tests\_\_/patch-dom.test.ts}
 \end{itemize}
 
 \subsection{Fast path D: stable keyed same-order}
@@ -337,13 +437,13 @@ If none of the fast paths apply, Relax computes an edit script:
 const diffSeq = arraysDiffSequence(oldChildren, newChildren, areNodesEqual)
 \end{verbatim}
 
-	exttt{arraysDiffSequence} is a general-purpose utility in \texttt{src/utils/arrays.ts}. Its worth reading because it is one of the algorithmic cores of Relax.
+	exttt{arraysDiffSequence} is a general-purpose utility in \texttt{src/utils/arrays.ts}. It's worth reading because it is one of the algorithmic cores of Relax.
 
 It has extensive unit tests in:
 
 \begin{itemize}
-  \item \texttt{src/__tests__/diff-sequence.test.ts}
-  \item \texttt{src/__tests__/diff-sequence.fuzzy.test.ts}
+  \item \texttt{src/\_\_tests\_\_/diff-sequence.test.ts}
+  \item \texttt{src/\_\_tests\_\_/diff-sequence.fuzzy.test.ts}
 \end{itemize}
 
 It produces operations of types \texttt{ADD}, \texttt{REMOVE}, \texttt{MOVE}, \texttt{NOOP} (see \texttt{ARRAY\_DIFF\_OP}).
@@ -374,21 +474,21 @@ This matches the ``component as a fragment'' mental model: the component is a lo
 The patcher relies on \texttt{arraysDiffSequence} to produce a valid edit script. The contract is captured in two test files:
 
 \begin{itemize}
-  \item \texttt{src/__tests__/diff-sequence.test.ts}: a human-readable set of exact expected operation sequences for many small cases
-  \item \texttt{src/__tests__/diff-sequence.fuzzy.test.ts}: a property-style test that generates random arrays and asserts that applying the operations reproduces the target array
+  \item \texttt{src/\_\_tests\_\_/diff-sequence.test.ts}: a human-readable set of exact expected operation sequences for many small cases
+  \item \texttt{src/\_\_tests\_\_/diff-sequence.fuzzy.test.ts}: a property-style test that generates random arrays and asserts that applying the operations reproduces the target array
 \end{itemize}
 
 The workhorse assertion is essentially:
 
 \begin{quote}
-  	exttt{applyArraysDiffSequence(oldArray, arraysDiffSequence(oldArray, newArray)) === newArray}
+    exttt{applyArraysDiffSequence(oldArray, arraysDiffSequence(oldArray, newArray)) === newArray}
 \end{quote}
 
 This is a great example of how Relax uses tests: not just to assert a single result, but to lock down the correctness of an algorithm under many variations.
 
 \section{Tests to lean on}
 
-If you want to understand Relax patch semantics quickly, scan these groups in \texttt{src/__tests__/patch-dom.test.ts}:
+If you want to understand Relax patch semantics quickly, scan these groups in \texttt{src/\_\_tests\_\_/patch-dom.test.ts}:
 
 \begin{itemize}
   \item Root replacement and \texttt{.el} preservation.
@@ -414,7 +514,7 @@ If you want to understand Relax patch semantics quickly, scan these groups in \t
 \section{Online resources}
 \begin{itemize}
   \item React keys and list rendering (conceptual background; implementation differs): \href{https://react.dev/learn/rendering-lists}{https://react.dev/learn/rendering-lists}
-  \item Longest Increasing Subsequence (LIS) algorithm overview: \href{https://en.wikipedia.org/wiki/Longest_increasing_subsequence}{https://en.wikipedia.org/wiki/Longest_increasing_subsequence}
+  \item Longest Increasing Subsequence (LIS) algorithm overview: \href{https://en.wikipedia.org/wiki/Longest\_increasing\_subsequence}{https://en.wikipedia.org/wiki/Longest\_increasing\_subsequence}
   \item DOM operations cost model (MDN on \texttt{Node.insertBefore} / \texttt{Node.removeChild}): \href{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}
   \item Virtual DOM diffing background reading (generic): \href{https://increment.com/frontend/a-deep-dive-into-virtual-dom/}{https://increment.com/frontend/a-deep-dive-into-virtual-dom/}
 \end{itemize}

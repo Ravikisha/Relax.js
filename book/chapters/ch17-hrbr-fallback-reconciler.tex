@@ -17,9 +17,9 @@ This chapter is grounded in:
 \begin{itemize}
   \item \texttt{runtime/fallback.ts}
   \item \texttt{runtime/reconciler.ts}
-  \item \texttt{runtime/__tests__/fallback.test.ts}
-  \item \texttt{runtime/__tests__/reconciler.test.ts}
-  \item \texttt{runtime/__tests__/reconciler.fuzz.test.ts}
+  \item \texttt{runtime/\_\_tests\_\_/fallback.test.ts}
+  \item \texttt{runtime/\_\_tests\_\_/reconciler.test.ts}
+  \item \texttt{runtime/\_\_tests\_\_/reconciler.fuzz.test.ts}
 \end{itemize}
 
 \section{A tiny contract (what fallback + reconciler promise)}
@@ -121,15 +121,15 @@ HRBR models this with \texttt{ReconcileRange}:
 The reconciler stores the range length on the first DOM node:
 
 \begin{itemize}
-  \item \texttt{__hrbrKey}: key of the logical item (on the start node)
-  \item \texttt{__hrbrRangeLen}: number of DOM nodes in the range (on the start node)
+  \item \texttt{\_\_hrbrKey}: key of the logical item (on the start node)
+  \item \texttt{\_\_hrbrRangeLen}: number of DOM nodes in the range (on the start node)
 \end{itemize}
 
 This metadata is the core trick that lets the reconciler treat DOM as a list of \emph{logical items} rather than raw nodes.
 The helper \texttt{buildCurrentRanges(host)} reads \texttt{childNodes} and groups them into ranges by repeatedly:
 
 \begin{itemize}
-  \item read \texttt{len = __hrbrRangeLen ?? 1} from the next start node
+  \item read \texttt{len = \_\_hrbrRangeLen ?? 1} from the next start node
   \item slice \texttt{len} nodes and treat them as one logical item
   \item advance by \texttt{len}
 \end{itemize}
@@ -171,7 +171,7 @@ Keyed mode tries to:
   \item minimize DOM moves using a Longest Increasing Subsequence (LIS)
 \end{itemize}
 
-Specs in \texttt{runtime/__tests__/reconciler.test.ts} cover the basic expectations:
+Specs in \texttt{runtime/\_\_tests\_\_/reconciler.test.ts} cover the basic expectations:
 
 \begin{itemize}
   \item \texttt{keyed: moves DOM nodes instead of recreating them}
@@ -205,7 +205,7 @@ Why LIS?
 Implementation cues:
 
 \begin{itemize}
-  \item \texttt{buildCurrentRanges(host)} groups DOM nodes into logical ranges by \texttt{__hrbrRangeLen}.
+  \item \texttt{buildCurrentRanges(host)} groups DOM nodes into logical ranges by \texttt{\_\_hrbrRangeLen}.
   \item \texttt{lisIndices(seq)} computes LIS over old indices (ignoring \texttt{-1}).
   \item \texttt{moveRangeBefore(host, range, anchor)} moves nodes end-to-start to preserve order.
 \end{itemize}
@@ -251,7 +251,7 @@ This is where the metadata invariants matter. The code contains normalization pa
 
 \begin{itemize}
   \item remove unkeyed nodes owned by keyed mode
-  \item delete stale \texttt{__hrbrRangeLen} when the logical item is now a singleton
+  \item delete stale \texttt{\_\_hrbrRangeLen} when the logical item is now a singleton
 \end{itemize}
 
 The fuzz test exists largely to guard these invariants.
@@ -264,7 +264,7 @@ This is later reinforced by a final normalization pass that removes any unkeyed 
 
 \section{Property/fuzz testing as an executable oracle}
 
-\texttt{runtime/__tests__/reconciler.fuzz.test.ts} runs 250 seeded steps.
+\texttt{runtime/\_\_tests\_\_/reconciler.fuzz.test.ts} runs 250 seeded steps.
 
 It compares \texttt{reconcileChildren(host, ...)} to a reference renderer that rebuilds the list each step but reuses nodes by key.
 
@@ -277,8 +277,8 @@ For the same list of logical items, the resulting DOM represents the same logica
 The fuzz harness reads the logical structure with:
 
 \begin{itemize}
-  \item start key: \texttt{__hrbrKey}
-  \item range length: \texttt{__hrbrRangeLen} (default 1)
+  \item start key: \texttt{\_\_hrbrKey}
+  \item range length: \texttt{\_\_hrbrRangeLen} (default 1)
 \end{itemize}
 
 Then it compares the logical tuples (key, len, texts[]) against the reference.
@@ -342,13 +342,13 @@ That integration test verifies that:
   \item The fallback reconciler gives HRBR a safe strategy for dynamic structure.
   \item Keyed reconciliation preserves identity and minimizes moves via two-ended scan + LIS.
   \item Ranges let one logical item expand to multiple DOM nodes, enabling fragments and multi-root outputs.
-  \item Metadata invariants (\texttt{__hrbrKey}, \texttt{__hrbrRangeLen}) are crucial; fuzz tests enforce them.
+  \item Metadata invariants (\texttt{\_\_hrbrKey}, \texttt{\_\_hrbrRangeLen}) are crucial; fuzz tests enforce them.
   \item \texttt{mountFallback} bridges signals/scheduler to \texttt{reconcileChildren} for real apps.
 \end{itemize}
 
 \section{Walking the tests (the executable spec)}
 
-\subsection{\texttt{runtime/__tests__/reconciler.test.ts}}
+\subsection{\texttt{runtime/\_\_tests\_\_/reconciler.test.ts}}
 
 This suite locks down the core expectations:
 
@@ -362,15 +362,15 @@ This suite locks down the core expectations:
   \item \textbf{Ranges work:} a range key produces two DOM nodes and behaves as a single logical item during moves/inserts/removals.
 \end{itemize}
 
-\subsection{\texttt{runtime/__tests__/reconciler.fuzz.test.ts}}
+\subsection{\texttt{runtime/\_\_tests\_\_/reconciler.fuzz.test.ts}}
 
 This is the long-term safety net.
 It runs 250 seeded steps and compares the reconciler output against a reference renderer.
 
-Key idea: the test reads \emph{logical structure} from the DOM via \texttt{__hrbrKey} and \texttt{__hrbrRangeLen}, then compares (key, len, per-node text) tuples.
+Key idea: the test reads \emph{logical structure} from the DOM via \texttt{\_\_hrbrKey} and \texttt{\_\_hrbrRangeLen}, then compares (key, len, per-node text) tuples.
 If there’s a mismatch, it throws an error that includes seed, step, next specs, and DOM dumps to make replay/debugging practical.
 
-\subsection{\texttt{runtime/__tests__/fallback.test.ts}}
+\subsection{\texttt{runtime/\_\_tests\_\_/fallback.test.ts}}
 
 This test shows the reconciler in its intended reactive setting:
 

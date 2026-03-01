@@ -275,7 +275,7 @@ The mechanism used here is also important: the test triggers a component re-rend
 \begin{itemize}
 \item \textbf{Keep mount factories stable} if you want patch-time reuse. In practice, that means hoisting the mount function out of render (or memoizing it).
 \item \textbf{Always implement \texttt{destroy()}} in your HRBR instance. Without it, detaching the host wrapper still removes DOM, but reactive resources and event hooks can leak.
-\item \textbf{Pass \texttt{hostComponent}} when you mount blocks from components} if you want event handlers to behave like VDOM events.
+\item \textbf{Pass \texttt{hostComponent}} when you mount blocks from components, if you want event handlers to behave like VDOM events.
 \item \textbf{Don't assume DOM ownership beyond the host}. The VDOM layer treats the host wrapper as the unit of reconciliation.
 \end{itemize}
 

@@ -9,7 +9,7 @@ This chapter is grounded in:
 
 \begin{itemize}
   \item \texttt{runtime/ssr.ts}
-  \item \texttt{runtime/__tests__/ssr.test.ts}
+  \item \texttt{runtime/\_\_tests\_\_/ssr.test.ts}
   \item and the follow-on behavior in \texttt{runtime/hydration.ts} (Chapter 15).
 \end{itemize}
 
@@ -131,7 +131,7 @@ You should treat \texttt{templateHTML} as a stable ABI between server and client
 
 \section{The end-to-end spec: render \(\rightarrow\) hydrate \(\rightarrow\) update}
 
-The key test is \texttt{runtime/__tests__/ssr.test.ts}:
+The key test is \texttt{runtime/\_\_tests\_\_/ssr.test.ts}:
 
 \begin{enumerate}
   \item Define a block with \texttt{templateHTML} and a text slot.
@@ -202,13 +202,13 @@ SSR output must match the template structure so hydration can do a no-rewrite at
 
 SSR v1 has one test file, but it covers the entire story.
 
-\subsection{\texttt{runtime/__tests__/ssr.test.ts}}
+\subsection{\texttt{runtime/\_\_tests\_\_/ssr.test.ts}}
 
 The test \texttt{renders a block to HTML string, hydrates it, and updates via mountCompiledBlock} enforces these guarantees:
 
 \begin{itemize}
   \item \textbf{SSR applies initial values:} \texttt{renderBlockToString(..., \{ initialValues \})} must produce HTML containing \texttt{'A'}.
-  \item \textbf{Hydration preserves identity:} after \texttt{hydrateBlock}, the root element and the text node under \texttt{#t} are the same objects as before hydration.
+  \item \textbf{Hydration preserves identity:} after \texttt{hydrateBlock}, the root element and the text node under \texttt{\#t} are the same objects as before hydration.
   \item \textbf{Compiled updates work on hydrated DOM:} wiring a signal through \texttt{mountCompiledBlock} and then updating should change text to \texttt{'B'}.
   \item \textbf{Cleanup is explicit:} the test disposes the compiled mount and destroys the hydrated block.
 \end{itemize}

@@ -46,8 +46,8 @@ A benchmark case is a \texttt{BenchmarkCase}:
 \begin{itemize}
 \item \texttt{name}: stable identifier for reporting
 \item \texttt{setup(host)}: returns a controller with\newline
-  \texttt{tick()}  perform one unit of work\newline
-  \texttt{teardown()}  clean up resources and DOM
+  \texttt{tick()} -> perform one unit of work\newline
+  \texttt{teardown()} -> clean up resources and DOM
 \item optional \texttt{commit()}: a barrier that resolves only once the framework has committed for the tick
 \end{itemize}
 
@@ -75,7 +75,7 @@ To keep comparisons honest, the benchmark cases should follow a simple contract:
 Implementation details in \texttt{runBenchmark()}:
 
 \begin{itemize}
-\item For each tick: await \texttt{nextFrame()}  record \texttt{t0}  run \texttt{tick()}  await \texttt{commit()}  compute \texttt{dt}.
+\item For each tick: await \texttt{nextFrame()} , record \texttt{t0} , run \texttt{tick()} , await \texttt{commit()} , compute \texttt{dt}.
 \item A \textbf{frame drop} is counted when \texttt{dt > frameBudgetMs} (default 16.7ms).
 \end{itemize}
 
@@ -84,9 +84,9 @@ Implementation details in \texttt{runBenchmark()}:
 The harness reports:
 
 \begin{itemize}
-\item \texttt{avgMs}  average time per tick
-\item \texttt{p95Ms}  95th percentile tick time (tail latency)
-\item \texttt{frameDrops}  number of frames over budget
+\item \texttt{avgMs} , average time per tick
+\item \texttt{p95Ms} , 95th percentile tick time (tail latency)
+\item \texttt{frameDrops} , number of frames over budget
 \end{itemize}
 
 Percentiles are computed on sorted samples with a simple index selection.
@@ -197,12 +197,12 @@ Methodologically, that matters: both implementations are being asked to do the s
 
 \section{Build modes matter (dev vs prod)}
 
-Some frameworks change scheduling and checks based on \texttt{process.env.NODE_ENV}.
+Some frameworks change scheduling and checks based on \texttt{process\.env\.NODE\_ENV}.
 The benchmark Rollup config sets this value at bundle time.
 
 \begin{itemize}
 \item Rollup config: \texttt{rollup.benchmarks.config.mjs}
-\item It uses \texttt{@rollup/plugin-replace} to define \texttt{process.env.NODE_ENV}.
+\item It uses \texttt{@rollup/plugin-replace} to define \texttt{process.env.NODE\_ENV}.
 \end{itemize}
 
 NPM scripts in \texttt{package.json} expose common modes:
@@ -224,7 +224,7 @@ The benchmark bundles are built through two rollup configs:
 \end{itemize}
 
 Both use \texttt{@rollup/plugin-replace} to inject:\\
-	exttt{process.env.NODE_ENV = 'production'} by default.
+	exttt{process.env.NODE\_ENV = 'production'} by default.
 
 This matters for fairness because some libraries (notably React) perform extra checks and different scheduling policies in development builds.
 
@@ -262,8 +262,7 @@ Even though this isn't a Vitest file, it plays the same role as tests in earlier
 \end{itemize}
 
 This is intentional: CI machines are noisy.
-The smoke test is designed to catch catastrophic regressions (infinite loops, accidental \texttt{O(n^2)} behavior), not micro-optimizations.
-
+The smoke test is designed to catch catastrophic regressions (infinite loops, accidental \(\mathcal{O}(n^2)\) behavior), not micro-optimizations.
 This is also why the gate uses two different lenses:
 
 \begin{itemize}

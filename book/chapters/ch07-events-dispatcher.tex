@@ -10,15 +10,15 @@ Relax has two different mechanisms that people often describe with the same word
 In the repo they live in two small modules:
 
 \begin{itemize}
-  \item \texttt{src/events.ts}: turns Relaxs event props into real DOM listeners, with consistent \texttt{this}-binding.
+  \item \texttt{src/events.ts}: turns Relax's event props into real DOM listeners, with consistent \texttt{this}-binding.
   \item \texttt{src/dispatcher.ts}: a deterministic pub/sub for named commands.
 \end{itemize}
 
 And both are covered by focused tests:
 
 \begin{itemize}
-  \item \texttt{src/__tests__/events.test.ts}
-  \item \texttt{src/__tests__/dispatcher.test.ts}
+  \item \texttt{src/\_\_tests\_\_/events.test.ts}
+  \item \texttt{src/\_\_tests\_\_/dispatcher.test.ts}
 \end{itemize}
 
 \section{The practical problem: handler identity and \texttt{this}-binding}
@@ -35,7 +35,7 @@ it has to solve two problems:
   \item \textbf{Removal:} if the tree updates or unmounts, the library must remove listeners using the \emph{exact same function object} that was added.
 \end{enumerate}
 
-Relaxs answer is to always register a wrapper listener and return it to the caller.
+Relax's answer is to always register a wrapper listener and return it to the caller.
 
 \section{DOM event listener wiring (\texttt{src/events.ts})}
 The central helper is:
@@ -59,7 +59,7 @@ The central helper is:
     \end{itemize}
 \end{itemize}
 
-Returning the registered listener is not a convenienceits required for correctness. The DOM only removes listeners by identity.
+Returning the registered listener is not a convenience. it's required for correctness. The DOM only removes listeners by identity.
 
 \subsection{Implementation: the wrapper listener}
 	exttt{src/events.ts} always creates a wrapper:
@@ -110,12 +110,12 @@ Object.entries(listeners).forEach(([eventName, listener]) => {
 })
 \end{verbatim}
 
-Note whats \emph{not} present: the original user handlers. Only wrappers can be removed.
+Note what's \emph{not} present: the original user handlers. Only wrappers can be removed.
 
-\section{Tests for DOM event semantics (\texttt{src/__tests__/events.test.ts})}
+\section{Tests for DOM event semantics (\texttt{src/\_\_tests\_\_/events.test.ts})}
 The tests are small but they lock down two critical invariants.
 
-\subsection{Invariant 1: wrappers dont break sync or async handlers}
+\subsection{Invariant 1: wrappers don't break sync or async handlers}
 	exttt{events.test.ts} contains:
 
 \begin{itemize}
@@ -130,7 +130,7 @@ The async test uses \texttt{flushPromises()} (\texttt{src/utils/promises.ts}) af
   \item the handler is actually invoked and can \texttt{await} microtasks
 \end{itemize}
 
-This matters because event wrappers are a common source of subtle bugs where promises arent awaited or exceptions get lost.
+This matters because event wrappers are a common source of subtle bugs where promises aren't awaited or exceptions get lost.
 
 \subsection{Invariant 2: with a host component, \texttt{this} is correct}
 Two tests cover binding (sync and async):
@@ -177,7 +177,7 @@ An important policy choice appears in \texttt{subscribe()}:
   registering the same handler function twice is a no-op.
 \end{quote}
 
-In code, thats \texttt{handlers.includes(handler)}.
+In code, that's \texttt{handlers.includes(handler)}.
 
 This makes the dispatcher deterministic and prevents accidental handler explosions if a component subscribes in a loop.
 
@@ -193,7 +193,7 @@ This makes the dispatcher deterministic and prevents accidental handler explosio
 That last rule is important: after-hooks run even if there were no command handlers.
 It allows patterns like global logging, tracing, or devtools hooks.
 
-\section{Tests for dispatcher semantics (\texttt{src/__tests__/dispatcher.test.ts})}
+\section{Tests for dispatcher semantics (\texttt{src/\_\_tests\_\_/dispatcher.test.ts})}
 The dispatcher tests are a clean, readable spec for the API:
 
 \begin{itemize}
@@ -213,7 +213,7 @@ Notice how these tests avoid implementation details (maps, arrays, indices) and 
 \end{itemize}
 
 \section{Where this plugs into the renderer}
-Youve already seen the integration point in Chapter~5:
+You've already seen the integration point in Chapter~5:
 
 \begin{itemize}
   \item element vnodes store \texttt{props.on} (after TSX mapping)
@@ -221,12 +221,12 @@ Youve already seen the integration point in Chapter~5:
   \item destroying later calls \texttt{removeEventListeners(vdom.listeners, el)}
 \end{itemize}
 
-The remaining questionshow listeners are updated during patch without leaking, and how host binding is preserved across updateslive in \texttt{src/patch-dom.ts} and \texttt{src/destroy-dom.ts}.
+The remaining questions, how listeners are updated during patch without leaking, and how host binding is preserved across updates, live in \texttt{src/patch-dom.ts} and \texttt{src/destroy-dom.ts}.
 
 \section{Online resources}
 \begin{itemize}
-  \item DOM events and bubbling (MDN): \href{https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/Scripting/Event_bubbling}{https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/Scripting/Event_bubbling}
-  \item \texttt{EventTarget.addEventListener} / \texttt{removeEventListener} (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener}{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener}
-  \item Function \texttt{call} and \texttt{this} binding (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/call}{https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/call}
-  \item Message bus / pub-sub as a pattern (Wikipedia overview): \href{https://en.wikipedia.org/wiki/Publish%E2%80%93subscribe_pattern}{https://en.wikipedia.org/wiki/Publish%E2%80%93subscribe_pattern}
+  \item DOM events and bubbling (MDN): \href{https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/Scripting/Event_bubbling}{\url{https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/Scripting/Event_bubbling}}
+  \item \texttt{EventTarget.addEventListener} / \texttt{removeEventListener} (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener}{\url{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener}}
+  \item Function \texttt{call} and \texttt{this} binding (MDN): \href{https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/call}{\url{https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/call}}
+  \item Message bus / pub-sub as a pattern (Wikipedia overview): \href{https://en.wikipedia.org/wiki/Publish%E2%80%93subscribe_pattern}{\url{https://en.wikipedia.org/wiki/Publish-subscribe_pattern}}
 \end{itemize}

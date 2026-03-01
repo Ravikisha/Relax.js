@@ -15,7 +15,7 @@ This chapter is grounded in:
 
 \begin{itemize}
   \item Implementation: \texttt{runtime/scheduler.ts}
-  \item Specs: \texttt{runtime/__tests__/scheduler.test.ts}
+  \item Specs: \texttt{runtime/\_\_tests\_\_/scheduler.test.ts}
   \item Devtools counters/events: \texttt{runtime/devtools.ts} (used by scheduler and signals)
 \end{itemize}
 
@@ -118,7 +118,7 @@ If you don't provide one, it uses \texttt{createRequestFlush('timeout')}.
   \item \texttt{'raf'}: uses \texttt{requestAnimationFrame} if available
 \end{itemize}
 
-Specs in \texttt{runtime/__tests__/scheduler.test.ts} cover:
+Specs in \texttt{runtime/\_\_tests\_\_/scheduler.test.ts} cover:
 
 \begin{itemize}
   \item \texttt{createRequestFlush(messageChannel) uses MessageChannel when available}
@@ -313,7 +313,7 @@ Signals also emit \texttt{scheduleComputation} events when a computation is sche
 The runtime scheduler suite is unusually readable because it uses a manual clock and a manual flush queue.
 That makes time and continuation behavior deterministic.
 
-\subsection{Core semantics (\texttt{runtime/__tests__/scheduler.test.ts})}
+\subsection{Core semantics (\texttt{runtime/\_\_tests\_\_/scheduler.test.ts})}
 
 \begin{description}
   \item[runs tasks by lane priority] Proves the lane order and that \texttt{sync} executes immediately.
