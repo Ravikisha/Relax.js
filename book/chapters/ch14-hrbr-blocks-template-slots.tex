@@ -17,18 +17,25 @@ A \textbf{block} is the "fast DOM" path: it describes a stable DOM template and 
   box/.style={draw, rounded corners, align=left, inner sep=5pt},
   arrow/.style={-Latex, thick}
 ]
+% 1. Define Nodes
 \node[box] (tpl) {\textbf{TemplateHTML}\\string HTML, single root};
 \node[box, right=18mm of tpl] (mount) {\textbf{mountBlock}\\clone template\\resolve slot paths};
 \node[box, right=18mm of mount] (inst) {\textbf{Instance DOM}\\stable structure};
-\node[box, below=10mm of mount] (slots) {\textbf{Slots}\\(key, kind, path)};
-\node[box, below=10mm of inst] (update) {\textbf{update(values)}\\O(k) slot writes\\skip redundant};
+\node[box, below=3cm of inst] (update) {\textbf{update(values)}\\O(k) slot writes\\skip redundant};
 
+% 2. Draw Arrows
 \draw[arrow] (tpl) -- (mount);
 \draw[arrow] (mount) -- (inst);
-\draw[arrow] (slots) -- (mount);
-\draw[arrow] (slots) -| (update);
 \draw[arrow] (inst) -- (update);
 \end{tikzpicture}
+
+% 3. Text OUTSIDE the tikzpicture
+\vspace{1em}
+\texttt{mountCompiledBlock(..., options)} accepts \texttt{lane} and/or a custom \texttt{scheduler}.
+\begin{itemize}
+  \item \textbf{input-latency sensitive} (use \texttt{input} or \texttt{sync})
+  \item \textbf{deferable} (use \texttt{transition} or \texttt{idle})
+\end{itemize}
 \end{center}
 
 If you remember only one thing about blocks, make it this:
@@ -45,6 +52,70 @@ This chapter is grounded in:
   \item Slot matrix: \texttt{runtime/\_\_tests\_\_/block-slot-matrix.test.ts}
   \item Input controls: \texttt{runtime/\_\_tests\_\_/block-input-controls.test.ts}
   \item Disposal correctness: \texttt{runtime/\_\_tests\_\_/block-disposal.test.ts}
+\end{itemize}
+
+\section{Why blocks exist (what VDOM cannot do efficiently)}
+
+VDOM diffing is a \emph{general-purpose} way to update UI.
+That generality costs work:
+
+\begin{itemize}
+  \item allocate a new tree of VNodes
+  \item compare old/new trees
+  \item figure out where the DOM should change
+\end{itemize}
+
+Compiled UI wants the opposite trade-off: specialize up-front so runtime work is minimal.
+Blocks do that by encoding two things that VDOM typically learns at runtime:
+
+\begin{itemize}
+  \item \textbf{Structure is stable}: the template defines the DOM shape.
+  \item \textbf{Dynamic writes are explicit}: slots pre-compute where updates go.
+\end{itemize}
+
+The result is a small set of direct DOM operations per update.
+This is the same general idea behind other compiler-first frameworks.
+Svelte has a well-known write-up for the intuition (even if you disagree with the framing, the mental model is useful):
+\href{https://svelte.dev/blog/virtual-dom-is-pure-overhead}{https://svelte.dev/blog/virtual-dom-is-pure-overhead}.
+
+\section{A minimal block from scratch (end-to-end)}
+
+Let's build the smallest meaningful block: a greeting with a dynamic name and a click handler.
+This is not pseudo-code; it matches the contracts in \texttt{runtime/block.ts}.
+
+\begin{lstlisting}[language=JavaScript]
+import { defineBlock, mountBlock } from './runtime/block'
+
+const HelloBlock = defineBlock({
+  templateHTML: `<div>Hello <span>world</span> <button>ok</button></div>`,
+  slots: {
+    // root.childNodes = [Text('Hello '), span, Text(' '), button]
+    // span.childNodes = [Text('world')]
+    name: { kind: 'text', path: [1, 0] },
+
+    // button is childNodes[3]
+    onClick: { kind: 'event', path: [3], name: 'click' },
+  },
+})
+
+const host = document.getElementById('app')
+const mounted = mountBlock(HelloBlock, host, {
+  name: 'Ravi',
+  onClick: () => console.log('clicked'),
+})
+
+// later: this is O(1) targeted DOM writes
+mounted.update({ name: 'Relax' })
+
+// cleanup
+mounted.destroy()
+\end{lstlisting}
+
+Two details matter more than they look:
+
+\begin{itemize}
+  \item The \texttt{text} slot must point to an \emph{existing} Text node in the template. That's why the template uses \texttt{<span>world</span>} instead of \texttt{<span><!--placeholder--></span>}.
+  \item The \texttt{path} walks \texttt{childNodes}, not \texttt{children}. Text nodes (including whitespace) count.
 \end{itemize}
 
 \section{A tiny contract (what a block guarantees)}
@@ -135,6 +206,40 @@ Paths are the “compiled fast path” address:
 
 One subtle point the tests implicitly enforce: \texttt{childNodes} includes text nodes (including whitespace). That means a compiler must be in control of template serialization and whitespace if it wants stable paths.
 
+\subsection{Path stability: whitespace is part of your ABI}
+
+This is worth slowing down for, because it's the most surprising part of the block model.
+
+	extbf{Paths are an ABI between the compiler and runtime.}
+If the compiler emits \texttt{path: [3, 0]}, it is assuming a specific \texttt{childNodes} layout.
+
+That means these two templates are \emph{not equivalent} from the runtime's perspective:
+
+\begin{lstlisting}[language=JavaScript]
+// Template A
+`<div><span>hi</span><button>ok</button></div>`
+
+// Template B (note the whitespace/newlines)
+`<div>
+  <span>hi</span>
+  <button>ok</button>
+</div>`
+\end{lstlisting}
+
+Template B contains additional text nodes for the whitespace/newlines.
+So a slot path that points to the \texttt{button} in template A may point to a whitespace Text node in template B.
+
+\paragraph{Practical rule for compilers}
+
+Compilers should either:
+
+\begin{itemize}
+  \item serialize templates in a whitespace-stable canonical form, or
+  \item generate paths from the exact serialized string they ship as \texttt{templateHTML}
+\end{itemize}
+
+Otherwise you'll get "works in dev, breaks in prod" bugs when minifiers/formatters rewrite whitespace.
+
 \section{The public API (surface area)}
 
 The core exports in \texttt{runtime/block.ts} are:
@@ -158,12 +263,12 @@ Reading guide:
 
 \section{defineBlock(): the type boundary}
 
-	exttt{defineBlock(def)} doesn’t transform input. It exists so "compiled" code can be explicit and type-safe.
+	texttt{defineBlock(def)} doesn’t transform input. It exists so "compiled" code can be explicit and type-safe.
 
 In \texttt{runtime/block.ts}, it is literally an identity function:
 
 \begin{quote}
-	exttt{export function defineBlock(def: BlockDef): BlockDef \{ return def \}}
+	texttt{export function defineBlock(def: BlockDef): BlockDef \{ return def \}}
 \end{quote}
 
 That sounds trivial, but it creates a clean “compiler boundary” and a stable type surface.
@@ -330,6 +435,22 @@ Writes use \texttt{Text.nodeValue} and normalize nullish values to the empty str
 
 Spec: \texttt{mounts a template and updates text slots by path}.
 
+\paragraph{DOM ops (what actually happens)}
+
+This is conceptually equivalent to:
+
+\begin{lstlisting}[language=JavaScript]
+textNode.nodeValue = next == null ? '' : String(next)
+\end{lstlisting}
+
+No nodes are created and no subtree scans happen.
+
+\paragraph{Gotcha: Text slots are strict about node type}
+
+The runtime asserts \texttt{nodeType === Node.TEXT\_NODE}.
+So if a compiler points a text slot at an Element (for example, thinking in terms of \texttt{textContent}), updates will throw.
+This strictness is a feature: it turns silent misaddressing into a loud, debuggable error.
+
 \subsection{attr slots (including boolean attributes and SVG xlink)}
 
 Attribute writes route through \texttt{setAttr(el, name, next)}:
@@ -355,6 +476,14 @@ Specs:
   \item \texttt{sets xlink:* attributes with the xlink namespace on SVG elements}
 \end{itemize}
 
+\paragraph{DOM ops summary}
+
+\begin{itemize}
+  \item \texttt{null | false} \textrightarrow \texttt{removeAttribute} (or \texttt{removeAttributeNS} for SVG xlink)
+  \item boolean-ish \textrightarrow \texttt{setAttribute(name, '')} (presence indicates truth)
+  \item other values \textrightarrow \texttt{setAttribute(name, String(value))}
+\end{itemize}
+
 \subsection{prop slots (input correctness)}
 
 Property slots route through \texttt{setProp(el, name, next)}.
@@ -375,6 +504,12 @@ Specs:
   \item \texttt{updates input value/checked via property semantics for prop slots}
   \item input control suite in \texttt{block-input-controls.test.ts}
 \end{itemize}
+
+\paragraph{Why prop slots exist at all}
+
+Because for form controls the live state is on properties.
+Setting an attribute might update the HTML, but not the user-visible control state in the same way.
+The tests in \texttt{block-input-controls.test.ts} are basically saying: ``treat blocks like controlled inputs''.
 
 \subsection{class slots}
 
@@ -436,6 +571,19 @@ Specs:
 
 After \texttt{destroy()}, \texttt{update()} becomes a no-op (guarded by the same \texttt{destroyed} flag). That prevents stale scheduled work from mutating detached DOM.
 
+\subsection{Why the destroyed guard matters in a scheduled world}
+
+Once you introduce lanes + budgets, "later" becomes a first-class concept.
+So the runtime must assume:
+
+\begin{itemize}
+  \item a compiled block can be disposed while a flush task is still pending
+  \item events may still fire on detached nodes in test environments
+\end{itemize}
+
+The destroyed guard plus listener removal turns those situations into safe no-ops.
+The disposal tests exist to make this behavior non-negotiable.
+
 Specs:
 
 \begin{itemize}
@@ -444,6 +592,17 @@ Specs:
 \end{itemize}
 
 \section{mountCompiledBlock(): wiring signals to slot writes}
+
+\subsection{The contract the compiler relies on}
+
+The compiler's job is to turn template expressions into a list of \texttt{CompiledSlot} entries:
+
+\begin{itemize}
+  \item \texttt{key} must match a slot key in \texttt{def.slots}
+  \item \texttt{read()} must be a pure read of the current values (it may read signals)
+\end{itemize}
+
+The runtime's job is to evaluate these reads inside effects, coalesce them, and commit them through \texttt{block.update()}.
 
 \begin{center}
 \begin{tikzpicture}[
@@ -487,10 +646,180 @@ The coalescing logic (\texttt{pending} + \texttt{scheduled} flag) is the perform
 Scheduling goes through the deterministic lane scheduler from Chapter 13:
 
 \begin{quote}
-	exttt{scheduler.schedule(lane, flushPending)}
+	texttt{scheduler.schedule(lane, flushPending)}
 \end{quote}
 
 Spec: \texttt{changing a signal updates only the intended DOM node (mountCompiledBlock)}.
+
+\subsection{Why coalescing matters (and how it stays deterministic)}
+
+Without coalescing, a burst of signal writes could schedule and run many DOM commits.
+With coalescing:
+
+\begin{itemize}
+  \item each effect recomputes its slot value and writes it into a \texttt{pending\{\}} object
+  \item a single scheduled task flushes \texttt{pending} to the DOM
+\end{itemize}
+
+This mirrors the scheduler philosophy from Chapter 13:
+run tasks in a deterministic order, but avoid doing redundant work.
+
+In code form, the shape looks like:
+
+\begin{lstlisting}[language=JavaScript]
+// Conceptual shape (names simplified)
+const pending = {}
+let scheduled = false
+
+function flushPending() {
+  scheduled = false
+  batch(() => block.update(pending))
+  // reset pending
+}
+
+createEffect(() => {
+  pending[key] = read()
+  if (!scheduled) {
+    scheduled = true
+    scheduler.schedule(lane, flushPending)
+  }
+})
+\end{lstlisting}
+
+The actual implementation is in \texttt{runtime/block.ts} and uses the same primitives you've already learned: \texttt{createEffect}, \texttt{batch}, and the deterministic scheduler lanes.
+
+\subsection{Timeline: what happens when two signals change in the same tick}
+
+The spec \texttt{changing a signal updates only the intended DOM node (mountCompiledBlock)} is tiny, but it implies a timing model.
+Here's the practical timeline:
+
+\begin{enumerate}
+  \item Two signals are written (often in the same event handler).
+  \item Their dependent slot effects re-run and compute new values.
+  \item Each effect writes its value into \texttt{pending[key]}.
+  \item The first effect that notices \texttt{scheduled === false} schedules \texttt{flushPending} exactly once.
+  \item The scheduler later runs \texttt{flushPending} (based on lane + flush strategy).
+  \item \texttt{flushPending} calls \texttt{block.update(pending)} inside \texttt{batch()}.
+\end{enumerate}
+
+This is the block-runtime equivalent of a "commit phase": compute reactively, then commit a coalesced set of DOM writes.
+
+\subsection{Annotated walkthrough: \texttt{mountCompiledBlock()} line-by-line}
+
+This section is a literate read of the real implementation in \texttt{runtime/block.ts}. The goal is to understand the exact control flow that turns \emph{many reactive invalidations} into \emph{one scheduled DOM commit}.
+
+\begin{lstlisting}[language=JavaScript, caption={The full \texttt{mountCompiledBlock()} implementation (from \texttt{runtime/block.ts})}]
+export function mountCompiledBlock(def, host, slots, options = {}) {
+  const lane = options.lane ?? 'default'
+  const scheduler = options.scheduler ?? createScheduler()
+
+  // initial values from slots
+  const initialValues = Object.create(null)
+  for (const s of slots) initialValues[s.key] = s.read()
+
+  const block = mountBlock(def, host, initialValues)
+
+  // Coalesce multiple slot invalidations into a single scheduled update.
+  let scheduled = false
+  const pending = Object.create(null)
+
+  function flushPending() {
+    scheduled = false
+    const values = Object.assign(Object.create(null), pending)
+    for (const k of Object.keys(pending)) delete pending[k]
+    batch(() => block.update(values))
+  }
+
+  const effects = slots.map((s) =>
+    createEffect(() => {
+      const next = s.read()
+      pending[s.key] = next
+      if (scheduled) return
+      scheduled = true
+      scheduler.schedule(lane, flushPending)
+    })
+  )
+
+  let disposed = false
+
+  return Object.assign(block, {
+    dispose() {
+      if (disposed) return
+      disposed = true
+      for (const e of effects) e.dispose()
+      block.destroy()
+    },
+  })
+}
+\end{lstlisting}
+
+Now let's go line-by-line and name the invariants.
+
+\paragraph{\texttt{lane} + \texttt{scheduler}: where the commit runs}
+\begin{itemize}
+  \item \texttt{const lane = options.lane ?? 'default'}: the compiler (or framework integration) chooses the lane that this block uses for DOM commits.
+  \item \texttt{const scheduler = options.scheduler ?? createScheduler()}: by default each mounted compiled block gets a scheduler instance; passing one in allows sharing a scheduler across many blocks so their commits interleave deterministically (Chapter~13).
+\end{itemize}
+
+\paragraph{Initial read: mount with a consistent snapshot}
+\begin{itemize}
+  \item \texttt{for (const s of slots) initialValues[s.key] = s.read()}: we read every compiled slot once up front.
+  \item This matters because \texttt{mountBlock(...)} immediately calls \texttt{block.update(initialValues)} internally, so the DOM is created already reflecting the current reactive state.
+  \item The read happens \emph{before} we install effects, so we don't accidentally schedule any work while mounting.
+\end{itemize}
+
+\paragraph{The coalescing state: \texttt{pending} + \texttt{scheduled}}
+\begin{itemize}
+  \item \texttt{pending}: a plain dictionary \texttt{\{ [slotKey]: nextValue \}} of the latest computed values.
+  \item \texttt{scheduled}: a one-bit latch that says whether a flush task has already been enqueued.
+\end{itemize}
+
+This pair implements a standard UI-runtime trick: \emph{many producers, single consumer}. Every slot effect can write into \texttt{pending}, but only the first invalidation schedules a consumer run.
+
+\paragraph{\texttt{flushPending()}: the commit phase}
+\begin{itemize}
+  \item \texttt{scheduled = false}: we open the gate so that new invalidations can schedule the next flush.
+  \item \texttt{const values = Object.assign(Object.create(null), pending)}: we take a snapshot of the bag.
+  \item \texttt{for (const k of Object.keys(pending)) delete pending[k]}: clear \texttt{pending} in-place.
+  \item \texttt{batch(() => block.update(values))}: commit the DOM writes, but keep the signals runtime in a batched mode so downstream effects don't thrash while we patch nodes.
+\end{itemize}
+
+Two subtle details here are worth calling out:
+\begin{itemize}
+  \item \textbf{Snapshot then clear:} if a slot changes \emph{while} we're in \texttt{block.update}, it writes into the cleared \texttt{pending} bag and can schedule a \emph{new} flush (because \texttt{scheduled} was reset first).
+  \item \textbf{The update payload is sparse:} \texttt{values} only contains keys that changed since the last flush, so \texttt{block.update} iterates fewer entries.
+\end{itemize}
+
+\paragraph{Per-slot effects: producers that only schedule once}
+\begin{itemize}
+  \item \texttt{createEffect(() => \{ const next = s.read(); ... \})}: each compiled slot becomes an effect.
+  \item The effect writes \texttt{pending[s.key] = next} on every re-run.
+  \item \texttt{if (scheduled) return}: if a flush is already enqueued, we stop here.
+  \item Otherwise we set \texttt{scheduled = true} and enqueue \texttt{flushPending} into the scheduler lane.
+\end{itemize}
+
+This is the key guarantee: \emph{no matter how many times effects re-run before the scheduler flushes, we only enqueue one task}. The tasks queue stays small, and the DOM work happens at a predictable point.
+
+\paragraph{Disposal: stop reactive producers, then remove DOM}
+\begin{itemize}
+  \item \texttt{let disposed = false} + \texttt{if (disposed) return}: disposal is idempotent (safe to call twice).
+  \item \texttt{for (const e of effects) e.dispose()}: the critical step. If we destroyed DOM first but kept effects alive, a later signal write would try to update detached (or missing) nodes.
+  \item \texttt{block.destroy()}: removes DOM and event listeners (from \texttt{mountBlock}), and also destroys any nested blocks registered via composition helpers.
+\end{itemize}
+
+For additional background on why frameworks separate ``compute'' from ``commit'' phases (even when the implementation is small like this), see React's render/commit model \href{https://react.dev/learn/render-and-commit}{https://react.dev/learn/render-and-commit}.
+
+\subsection{Lane choice is part of the compiled contract}
+
+  	\texttt{mountCompiledBlock(..., options)} accepts \texttt{lane} and/or a custom \texttt{scheduler}.
+That lets compiled code decide whether DOM writes are:
+
+\begin{itemize}
+  \item \textbf{input-latency sensitive} (use \texttt{input} or \texttt{sync}), or
+  \item \textbf{deferable} (use \texttt{transition} or \texttt{idle}).
+\end{itemize}
+
+So blocks aren't just a faster patching mechanism; they're also a practical location to attach scheduling intent.
 
 That test also checks identity stability:
 
@@ -550,7 +879,7 @@ Compiled stable subtrees use blocks; dynamic subtrees route to fallback reconcil
 \end{quote}
 
 Implementation detail: composition is tracked with a small internal child registry.
-	exttt{mountBlock} exposes an internal \texttt{\_\_hrbrTrackChild} function, and the composition helpers use it to register child destroyers so teardown order is correct.
+	texttt{mountBlock} exposes an internal \texttt{\_\_hrbrTrackChild} function, and the composition helpers use it to register child destroyers so teardown order is correct.
 
 \begin{center}
 \begin{tikzpicture}[

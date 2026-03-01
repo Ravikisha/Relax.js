@@ -2,6 +2,33 @@
 
 Components are most reusable when they can accept external structure. In Relax, \emph{slots} are the mechanism for content projection.
 
+\paragraph{What problem are slots solving?}
+
+Without slots, a component can only vary by \emph{data} (props/state). But many UI building-blocks need to vary by \emph{structure}.
+Examples:
+
+\begin{itemize}
+  \item \textbf{A Card} needs a customizable header/body/footer.
+  \item \textbf{A TableRow} needs a caller-provided cell.
+  \item \textbf{A Layout} needs to accept "whatever children" and place them inside a container.
+\end{itemize}
+
+In other frameworks, you might see this as:
+\href{https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_templates_and_slots}{Web Components \texttt{<slot>}},
+\href{https://react.dev/learn/passing-props-to-a-component#passing-jsx-as-children}{React children},
+or \href{https://vuejs.org/guide/components/slots.html}{Vue slots}.
+
+Relax takes a deliberately small approach: model the slot as a \emph{temporary marker VNode}, then erase it with a deterministic tree rewrite.
+This gives us content projection without making mounting or patching "slot-aware".
+
+\paragraph{Tiny contract (keep this in your head)}
+
+\begin{itemize}
+  \item \textbf{Input}: A component renders a VNode tree that may contain SLOT markers (created by \texttt{hSlot()}).
+  \item \textbf{Rewrite}: If the component received external children, \texttt{fillSlots()} rewrites the first slot position(s) into fragments containing chosen content.
+  \item \textbf{Output}: After rewriting, the tree contains only normal VNodes (elements, fragments, text, components). No slots remain.
+\end{itemize}
+
 Relax’s slot model is intentionally minimal:
 
 \begin{itemize}
@@ -87,6 +114,38 @@ if (didCreateSlot()) {
 }
 \end{verbatim}
 
+\subsection{Authoring from scratch: what the user writes vs. what Relax sees}
+
+It helps to keep two mental views:
+
+\begin{itemize}
+  \item \textbf{Author view}: you "render a slot" and "pass children".
+  \item \textbf{Runtime view}: you render a placeholder VNode of type \texttt{SLOT}, then run a rewrite that replaces it.
+\end{itemize}
+
+Here's a simple author-level example:
+
+\begin{lstlisting}[language=JavaScript]
+// A component with a slot position
+const Card = defineComponent({
+  render() {
+    return h('section', { class: 'card' }, [
+      h('header', {}, [h('h2', {}, ['Title'])]),
+      h('main', {}, [hSlot([h('em', {}, ['Default body'])])]),
+    ])
+  },
+})
+
+// Call site provides external children
+const app = h(Card, {}, [h('p', {}, ['Hello from the outside'])])
+mountDOM(app, document.body)
+
+// After slot rewrite, patch/mount only sees normal children under <main>
+// (slot marker is gone)
+\end{lstlisting}
+
+Even if you never think about slots again, this explains why they're cheap: the renderer doesn't need special mount logic.
+
 So slot filling is a \emph{conditional rewrite pass} executed only when a slot marker was created.
 
 The tests explicitly check this optimization:
@@ -125,6 +184,19 @@ At a high level:
   \item Output: it mutates the tree in-place.
   \item Post-condition: every SLOT marker encountered is rewritten into a FRAGMENT node.
 \end{itemize}
+
+\subsection{A more precise contract: invariants you can rely on}
+
+If you're debugging a slots issue, hand-wavy descriptions aren't enough. The tests assume these invariants:
+
+\begin{itemize}
+  \item \textbf{No slot markers survive}: after the rewrite, \texttt{DOM\_TYPES.SLOT} must not appear in the tree that gets mounted/patched.
+  \item \textbf{One component = one filling context}: a component only fills slots within the VDOM tree returned by its own \texttt{render()}.
+  \item \textbf{External children are late-bound per render}: on every component render, the caller-provided children array is considered "the current external content".
+  \item \textbf{Mount/patch remain slot-agnostic}: any observable behavior must reduce to normal fragment/child reconciliation.
+\end{itemize}
+
+This design is why slots are "easy" in Relax: they are implemented as a deterministic pre-processing pass.
 
 \subsection*{Diagram: the traversal + rewrite policy}
 
@@ -195,7 +267,7 @@ Test: \texttt{remove the slot if no content or default content}.
 
 \paragraph{A subtle implementation detail}
 
-	exttt{fillSlots()} itself doesn’t have access to a parent pointer.
+	exttt{fillSlots()} itself doesn't have access to a parent pointer.
 So it can’t ``remove the slot node'' directly.
 Instead it uses a two-step approach:
 
@@ -205,6 +277,88 @@ Instead it uses a two-step approach:
 \end{enumerate}
 
 That design keeps the algorithm simple and makes behavior local to the traversal.
+
+\subsection{A subtle but crucial point: \texttt{children} is not "DOM children"}
+
+In Relax, component call-sites pass \emph{VNode children}, not DOM nodes.
+That means "slot content" participates in the same rules we've already learned:
+
+\begin{itemize}
+  \item strings/numbers passed as children are normalized into TEXT VNodes (by \texttt{h()} / child mapping)
+  \item arrays are structurally meaningful (fragments flatten in some places; slot-default content has a special shape rule)
+  \item children are diffed like any other VNode list after slot filling
+\end{itemize}
+
+If you come from Web Components: HTML \texttt{<slot>} projects "real DOM".
+Relax is closer to "project a subtree description".
+Conceptual reference: \href{https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_templates_and_slots}{MDN \texttt{<slot>}}.
+
+\subsection{A code-walk of \texttt{fillSlots} (in plain JavaScript)}
+
+The real implementation is in \texttt{src/slots.ts}, but this version captures the exact intent and shape.
+The key is: \textbf{slot rewrite is mutation}, not allocation of a second tree.
+
+\begin{lstlisting}[language=JavaScript]
+function fillSlots(vdom, externalChildren) {
+  if (!vdom) return
+
+  // 1) Slot node found: rewrite it into a fragment
+  if (vdom.type === DOM_TYPES.SLOT) {
+    const defaultContent = Array.isArray(vdom.children) ? vdom.children : []
+    const passed = Array.isArray(externalChildren) ? externalChildren : []
+    const content = passed.length > 0 ? passed : defaultContent
+
+    vdom.type = DOM_TYPES.FRAGMENT
+
+    // Empty slot => become empty fragment; parent traversal later drops it
+    if (content.length === 0) {
+      vdom.children = []
+      return
+    }
+
+    // Shape rule: hSlot([defaultContent]) means `content` is [[...]]
+    const first = content[0]
+    if (Array.isArray(first) && content.length === 1) {
+      vdom.children = content
+    } else {
+      vdom.children = [content]
+    }
+
+    return
+  }
+
+  // 2) Traverse children, but treat components as opaque boundaries
+  if (Array.isArray(vdom.children) && vdom.type !== DOM_TYPES.COMPONENT) {
+    const next = []
+    for (const child of vdom.children) {
+      fillSlots(child, externalChildren)
+
+      // Optional cleanup: drop empty fragments produced by empty slots
+      if (child && child.type === DOM_TYPES.FRAGMENT && (!child.children || child.children.length === 0)) {
+        continue
+      }
+      next.push(child)
+    }
+    vdom.children = next
+  }
+}
+\end{lstlisting}
+
+If you've implemented compilers, this should feel familiar: it's a single-pass rewrite with a few invariants.
+
+\paragraph{Important: the real implementation differs slightly from the teaching version}
+
+In the actual \texttt{src/slots.ts}, external content is set as:
+
+\begin{quote}
+fragment children = \texttt{content}
+\end{quote}
+
+not \texttt{[content]}. This matters for patching.
+If you accidentally wrap external content in another array, you'd introduce an extra nesting level, which would make the fragment children shape wrong.
+
+Interpretation:
+	extbf{default content has a special container shape; external content is already a list.}
 
 \subsection{Shape detail: why \texttt{hSlot([defaultContent])} is special}
 
@@ -250,8 +404,54 @@ This is a major boundary rule:
 Slot rewriting is done per-component and must not cross component vnode boundaries.
 \end{quote}
 
+\subsection{Why this boundary matters in real apps}
+
+If the parent traversal rewrote nested component internals, you'd get extremely confusing coupling:
+
+\begin{itemize}
+  \item A parent could accidentally fill a child component's slot with the wrong content.
+  \item A refactor that wraps content in an extra component would silently change slot behavior.
+  \item Slot filling would become order-dependent across renders (hard to test, hard to reason about).
+\end{itemize}
+
+By treating components as tuples of \texttt{(props, children)} and letting each component own its own slot rewrite,
+Relax preserves a clean mental model: \textbf{slots are part of the component API surface, not the global tree.}
+
 It also aligns with how the renderer treats components elsewhere:
 components are patched/mounted as black boxes whose internal VDOM is managed by the component instance.
+
+\subsection{From-scratch example: why crossing the boundary would be a bug}
+
+Imagine this:
+
+\begin{lstlisting}[language=JavaScript]
+const Inner = defineComponent({
+  render() {
+    return h('div', {}, [hSlot([h('em', {}, ['Inner default'])])])
+  },
+})
+
+const Outer = defineComponent({
+  render() {
+    return h('section', {}, [
+      // Outer has a slot too
+      hSlot([h('span', {}, ['Outer default'])]),
+
+      // And it renders Inner
+      h(Inner, {}, []),
+    ])
+  },
+})
+
+// Call site passes ONE set of children to Outer
+mountDOM(h(Outer, {}, [h('b', {}, ['Projected into Outer'])]), document.body)
+\end{lstlisting}
+
+If \texttt{fillSlots} descended into the \texttt{Inner} component vnode,
+it could (incorrectly) fill Inner's slot with Outer's external children.
+That would mean Inner's content depends on who rendered it (bad encapsulation).
+
+Relax avoids this by making \texttt{COMPONENT} a hard boundary during traversal.
 
 This behavior is tested in \texttt{src/\_\_tests\_\_/slots.test.ts}:
 
@@ -306,6 +506,70 @@ Practically:
 
 \subsection{Nested slots inside lists}
 
+The last integration scenario in \texttt{component-slots.test.ts} is important because it looks like ``normal app code'':
+build a list, render repeated components, and project a different child into each one.
+
+Mentally, it's just two loops:
+
+\begin{itemize}
+  \item The parent maps \texttt{items} to \texttt{TableRow} component vnodes.
+  \item Each \texttt{TableRow} render tree contains a slot marker in a \texttt{<td>}.
+\end{itemize}
+
+In author-level code (simplified):
+
+\begin{lstlisting}[language=JavaScript]
+const TableRow = defineComponent({
+  render() {
+    return h('tr', {}, [
+      h('td', {}, [hSlot([h('em', {}, ['(empty)'])])]),
+    ])
+  },
+})
+
+const Table = defineComponent({
+  render() {
+    const titles = ['One', 'Two']
+    return h('table', {}, [
+      h('tbody', {}, titles.map((t) =>
+        // Each row receives different external children.
+        h(TableRow, {}, [t])
+      )),
+    ])
+  },
+})
+\end{lstlisting}
+
+The slot rewrite story stays exactly the same:
+each \texttt{TableRow} instance stores its own external children (here: \texttt{['One']} or \texttt{['Two']}) and fills the slot while rendering.
+
+Senior rule of thumb:
+\begin{quote}
+If you can explain repeated slots-in-lists, you understand slots. Everything else is a smaller case.
+\end{quote}
+
+\section{Walking the integration tests in slow motion (event-loop + render pipeline)}
+
+Slots can feel magical until you align them with the component pipeline from earlier chapters.
+At a high level, mounting a component with slot children looks like this:
+
+\begin{enumerate}
+  \item \textbf{Mount begins} at the parent vnode.
+  \item When the renderer hits a \texttt{COMPONENT} vnode:
+    \begin{enumerate}
+  \item create the component instance
+  \item store external children array on the instance (conceptually: \texttt{this.\#children})
+  \item call \texttt{render()} to get an internal subtree
+  \item if \texttt{didCreateSlot()} was set by \texttt{hSlot()}, run \texttt{fillSlots(subtree, this.\#children)}
+  \item mount the rewritten subtree to DOM
+    \end{enumerate}
+\end{enumerate}
+
+In other words, slot filling is part of "turn render output into mountable VDOM".
+The patcher never sees a slot marker.
+
+This is why the spy tests in \texttt{component-slots.test.ts} are important: they confirm the optimization boundary is hooked up correctly.
+
 \texttt{slot in a nested component} uses a table row component with a slot in a \texttt{<td>}.
 The parent maps titles \texttt{['One','Two']} into multiple \texttt{TableRow} instances.
 
@@ -358,4 +622,46 @@ Slots are specified in two layers: a pure tree-rewrite unit suite and a DOM-leve
   \item Vue: \href{https://vuejs.org/guide/components/slots.html}{Slots and content projection}
   \item React: \href{https://react.dev/learn/passing-props-to-a-component#passing-jsx-as-children}{Passing JSX as children}
   \item SolidJS (conceptual): \href{https://www.solidjs.com/docs/latest#children}{Children utilities}
+\end{itemize}
+
+\section{Common pitfalls (senior notes)}
+
+\begin{itemize}
+  \item \textbf{Mistaking slots for "render props"}: Relax slots are structural children, not callbacks. If you need code execution with parameters, pass functions as props.
+  \item \textbf{Forgetting the rewrite step exists}: by the time \texttt{mountDOM/patchDOM} runs, there is no slot node. Debug by inspecting the post-rewrite VDOM.
+  \item \textbf{Component-boundary confusion}: if your slot isn't filling, check where you placed \texttt{hSlot()} -- it must be inside the component that receives the children.
+  \item \textbf{Default content shape surprises}: remember that \texttt{hSlot([defaultContent])} uses a container shape that becomes a single fragment child.
+\end{itemize}
+
+If you internalize one idea: \textbf{Relax slots are a simple, deterministic rewrite into fragments}. Everything else follows.
+
+\section{Performance notes (why this is fast in practice)}
+
+Two design choices keep this lightweight:
+
+\begin{itemize}
+  \item \textbf{Conditional traversal}: the \texttt{didCreateSlot()} flag lets the component skip traversal when there are no slots.
+  \item \textbf{In-place rewrite}: \texttt{fillSlots} mutates existing vnode objects. No cloning of the full tree.
+\end{itemize}
+
+That matters because slot filling runs on every render where slots are present.
+This is the same kind of micro-optimization you see in production UI frameworks: avoid whole-tree work unless a feature is actually used.
+
+Reference (conceptual): \href{https://react.dev/learn/render-and-commit}{React render/commit mental model}.
+
+\section{Exercises}
+
+\begin{enumerate}
+  \item Modify the \texttt{fillSlots} teaching implementation so it matches \texttt{src/slots.ts} exactly---especially the external-content shape.
+  \item Write a small component pair \texttt{Outer/Inner} (like the boundary example) and predict what would go wrong if traversal crossed into components.
+  \item Explain (in 3-5 sentences) why "slots compiled away into fragments" simplifies the patcher.
+\end{enumerate}
+
+\section{Chapter summary}
+
+\begin{itemize}
+  \item Relax implements slots as a VNode marker (\texttt{DOM\_TYPES.SLOT}) created by \texttt{hSlot()}.
+  \item Slot behavior is a deterministic rewrite pass: SLOT is rewritten to FRAGMENT containing either external or default content.
+  \item Component vnodes are traversal boundaries: each component owns slot filling for its own render output.
+  \item After filling, mount and patch operate on normal VDOM only---no special slot logic downstream.
 \end{itemize}

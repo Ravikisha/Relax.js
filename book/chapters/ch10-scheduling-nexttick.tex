@@ -1,5 +1,9 @@
 \chapter{Scheduling, nextTick, and Deterministic Work}
 
+Scheduling is one of those topics that every UI developer feels they "kind of" understands
+even while still getting surprised by it weekly.
+So we\'ll treat the scheduler as a real subsystem with a contract, not a vague "async happens later" box.
+
 Relax has \emph{two} schedulers:
 
 \begin{itemize}
@@ -40,6 +44,31 @@ Relax has two schedulers because it has two kinds of work with different needs:
 \end{center}
 
 \section{The VDOM microtask job queue (\texttt{src/scheduler.ts})}
+
+Before we read Relax\'s scheduler, we need one shared mental model: \textbf{the JavaScript event loop}.
+
+\subsection{From scratch: one thread, a call stack, and two queues}
+
+In a browser (and in many JS environments), your code runs on one main thread.
+Execution is a loop:
+
+\begin{enumerate}
+  \item run synchronous code on the call stack
+  \item when the stack is empty, run microtasks (promises / \texttt{queueMicrotask}) until empty
+  \item then allow the next macrotask (timers, IO, UI events) to run
+\end{enumerate}
+
+Two important consequences for UI frameworks:
+
+\begin{itemize}
+  \item \textbf{Microtasks run sooner than timers.} If you want "run after this render, but before the browser handles the next event",
+    microtasks are the sharp tool.
+  \item \textbf{Microtasks can starve the browser if abused.} If you keep queueing microtasks from microtasks,
+    you can delay input/paint.
+\end{itemize}
+
+References: \href{https://developer.mozilla.org/en-US/docs/Web/JavaScript/Event_loop}{MDN: JavaScript event loop}
+and \href{https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask}{MDN: \texttt{queueMicrotask()}}.
 
 The VDOM layer uses a minimal scheduling primitive: \texttt{enqueueJob(job)}.
 
@@ -125,6 +154,51 @@ This makes lifecycle hooks cheap even when many components mount in the same syn
 Important nuance (documented in the code): \textbf{async jobs do not block the queue}.
 The queue keeps running other jobs; the promise continuation runs later.
 
+\subsubsection{A code walk (as JavaScript)}
+
+Here is the scheduler rewritten into minimal JavaScript so the control flow is obvious.
+It mirrors \texttt{src/scheduler.ts} exactly, just without TypeScript types:
+
+\begin{lstlisting}[style=relax,language=JavaScript]
+let isScheduled = false
+const jobs = []
+
+export function enqueueJob(job) {
+  jobs.push(job)
+  scheduleUpdate()
+}
+
+function scheduleUpdate() {
+  if (isScheduled) return
+  isScheduled = true
+  queueMicrotask(processJobs)
+}
+
+function processJobs() {
+  while (jobs.length > 0) {
+    const job = jobs.shift()
+    const result = job()
+
+    // Important: we don't await async jobs.
+    // We only attach a rejection handler so async errors are visible.
+    Promise.resolve(result).then(
+      () => {},
+      (error) => console.error(`[scheduler]: ${error}`)
+    )
+  }
+  isScheduled = false
+}
+\end{lstlisting}
+
+From this we can state the contract precisely:
+
+\begin{itemize}
+  \item Jobs run \textbf{after} the current synchronous call stack.
+  \item Jobs run in \textbf{FIFO order} within a single flush.
+  \item The queue does \textbf{not await} async jobs.
+  \item Async errors are surfaced (logged) instead of turning into silent unhandled rejections.
+\end{itemize}
+
 \paragraph{Why the queue doesn’t await}
 
 The VDOM scheduler is designed for hook-style work ("start it soon, don’t stall unrelated hooks, but surface errors").
@@ -172,8 +246,81 @@ So the contract is:
 
 \paragraph{Practical testing guidance}
 
-	exttt{nextTick()} is a boundary for "scheduler-driven work started", not "all async completed".
+
+    \texttt{nextTick()} is a boundary for "scheduler-driven work started", not "all async completed".
 If you write a hook that does work after an \texttt{await}, you may need an additional wait (or design your test so the awaited promise resolves immediately).
+
+\subsubsection{Why does \texttt{flushPromises()} use \texttt{setTimeout}?}
+
+This is subtle but important.
+Relax\'s \texttt{nextTick()} is:
+
+\begin{verbatim}
+scheduleUpdate()
+return flushPromises() // setTimeout(resolve)
+\end{verbatim}
+
+If \texttt{nextTick()} only awaited a microtask, you could end up in situations where:
+
+\begin{itemize}
+  \item the scheduler flush runs in a microtask
+  \item a job itself queues more microtasks
+  \item and your test resumes before the environment has advanced a real "turn" (macrotask)
+\end{itemize}
+
+Using \texttt{setTimeout(resolve)} forces the promise to settle on the next macrotask,
+which is a stronger "breathing point" for tests.
+
+Reference: \href{https://developer.mozilla.org/en-US/docs/Web/API/setTimeout}{MDN: \texttt{setTimeout()}}.
+
+\subsubsection{Batching correctness: a tiny proof sketch}
+
+The batching mechanism is the \texttt{isScheduled} latch.
+Here\'s the key claim:
+
+\begin{quote}
+Within a single synchronous JS turn, regardless of how many times \texttt{enqueueJob()} is called,
+      \texttt{processJobs()} will be scheduled at most once.
+\end{quote}
+
+Reasoning:
+
+\begin{enumerate}
+  \item The first \texttt{enqueueJob()} sees \texttt{isScheduled === false}, flips it to true, and schedules one microtask.
+  \item Every later \texttt{enqueueJob()} in the same turn hits \texttt{if (isScheduled) return} and schedules nothing.
+  \item Only after the microtask flush completes does \texttt{processJobs()} set \texttt{isScheduled = false} again.
+\end{enumerate}
+
+So: one turn \textrightarrow one microtask flush \textrightarrow all jobs drained.
+
+\subsubsection{Timeline: why the tests produce those arrays}
+
+The scheduler tests are easiest to understand as timelines.
+
+\paragraph{Jobs run after synchronous code (expects \texttt{[4, 1, 2, 3]})}
+
+\begin{enumerate}
+  \item Sync: enqueue jobs \texttt{1,2,3}. Scheduler schedules one microtask flush.
+  \item Sync: push \texttt{4} directly into the array.
+  \item Microtask: scheduler flush runs and executes \texttt{1,2,3}.
+\end{enumerate}
+
+So the sync side-effect (\texttt{4}) happens before the microtask side-effects.
+
+\paragraph{Asynchronous jobs enqueue more jobs (expects \texttt{[1, 3, 2]})}
+
+This is the "async jobs don\'t block" rule.
+
+\begin{enumerate}
+  \item Microtask flush starts.
+  \item Job A runs: pushes \texttt{1}, then hits \texttt{await Promise.resolve()} and yields.
+  \item Scheduler continues the flush loop and runs Job B (sync): pushes \texttt{3}.
+  \item Later microtask: Job A continuation runs and pushes \texttt{2}.
+\end{enumerate}
+
+So \texttt{3} appears between \texttt{1} and \texttt{2}.
+
+Reference: \href{https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise}{MDN: \texttt{Promise}} (microtask semantics).
 
 Tests in \texttt{src/\_\_tests\_\_/scheduler.test.ts} cover:
 
@@ -363,4 +510,74 @@ Key tests and the guarantees they enforce:
   \item WHATWG HTML: \href{https://html.spec.whatwg.org/multipage/webappapis.html#microtask-queue}{Microtask queue (spec)}
   \item React (conceptual parallel): \href{https://react.dev/learn/queueing-a-series-of-state-updates}{Queued updates and batching}
   \item MDN (conceptual parallel): \href{https://developer.mozilla.org/en-US/docs/Web/API/Background_Tasks_API}{Cooperative background work}
+\end{itemize}
+
+\section{Pitfalls and debugging (senior notes)}
+
+This section is where real-world scheduler bugs live.
+
+\subsection{Mistaking \texttt{nextTick()} for "wait for all async"}
+
+      \texttt{nextTick()} does not promise to await async jobs.
+It promises the scheduler had a chance to flush and start them.
+
+If a lifecycle hook does:
+
+\begin{verbatim}
+async onMounted() {
+  await fetch(...)
+  this.updateState(...)
+}
+\end{verbatim}
+
+then \texttt{await nextTick()} only guarantees the hook started.
+It does \emph{not} guarantee the \texttt{fetch} completed.
+
+\subsection{Microtask storms (starving input/paint)}
+
+If jobs keep enqueueing more jobs in a tight cycle, you can monopolize the microtask queue.
+In production this looks like:
+
+\begin{itemize}
+  \item input lag
+  \item delayed paints
+  \item "the browser froze" reports
+\end{itemize}
+
+This is one reason the runtime scheduler exists: it introduces budgets and yielding.
+
+\subsection{Re-entrancy and why hooks are scheduled}
+
+The component lifecycle tests (\texttt{src/\_\_tests\_\_/component-lifecycle.test.ts}) enforce the contract:
+
+\begin{itemize}
+  \item \texttt{mountDOM}/\texttt{destroyDOM} do structural work synchronously
+  \item \texttt{onMounted}/\texttt{onUnmounted} run later via the scheduler
+\end{itemize}
+
+This keeps the renderer from entering "mount triggers patch triggers mount" spirals.
+
+\section{Exercises}
+
+\begin{enumerate}
+  \item \textbf{Order reasoning:} explain why the scheduler test expects \texttt{[4, 1, 2, 3]} in
+      \texttt{Jobs run after synchronous code}. Write the timeline in terms of call stack vs microtasks.
+
+  \item \textbf{Async ordering:} explain why \texttt{Asynchronous jobs enqueue more jobs} yields \texttt{[1, 3, 2]}.
+    What would have to change in the scheduler for it to yield \texttt{[1, 2, 3]} instead?
+
+  \item \textbf{Design exercise:} if you wanted a variant \texttt{nextTickAll()} that awaited async jobs too,
+    what bookkeeping would you need? What new failure mode could that introduce (hint: one slow job blocks all hooks)?
+
+  \item \textbf{Lane intuition:} when would you choose \texttt{transition} lane over \texttt{input} lane?
+    Give a UI example (typing vs expensive filtering).
+\end{enumerate}
+
+\section{Chapter summary}
+
+\begin{itemize}
+  \item The VDOM scheduler is intentionally tiny: FIFO microtask batching for lifecycle hooks.
+  \item The key mechanism is the \texttt{isScheduled} latch, collapsing many enqueues into one flush.
+  \item \texttt{nextTick()} is a useful flush boundary for tests, but it is not an "await all async" primitive.
+  \item The runtime scheduler adds lanes, deadlines, budgets, and starvation prevention for large reactive workloads.
 \end{itemize}

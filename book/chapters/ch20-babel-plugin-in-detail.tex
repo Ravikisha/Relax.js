@@ -162,7 +162,7 @@ The slot objects are turned into AST literals through \texttt{literalizeSlot(slo
 The plugin uses \texttt{unshiftContainer('body', ...)} on the program node to emit:
 
 \begin{quote}
-	exttt{const \_\_hrbr\_block\_N = defineBlock({ templateHTML, slots })}
+	texttt{const \_\_hrbr\_block\_N = defineBlock({ templateHTML, slots })}
 \end{quote}
 
 Hoisting matters for two reasons:
@@ -232,7 +232,7 @@ This is enough to prove the end-to-end pipeline and to connect the compiler to t
 
 The fallback compiler intentionally avoids capturing complex structures.
 It builds a \texttt{renderFn} with the shape:\\
-	exttt{() => ({ children: [spec] })}
+	texttt{() => ({ children: [spec] })}
 
 Where \texttt{spec.create()} and \texttt{spec.patch(node)} both close over the user expressions.
 
@@ -259,6 +259,223 @@ In block mode, the transformer supports:
 \item expression attributes -> slot kinds \texttt{class/style/attr}
 \item dynamic text children -> only when the expression is ``text-like''
 \end{itemize}
+
+So far this chapter has described the transform like a black box.
+Now we\'ll build the mental model from scratch: how a Babel plugin works, which AST nodes it sees, and how this particular scaffold chooses to represent output.
+
+\section{Babel plugins from scratch: the minimum you need to know}
+
+If you\'ve never written a Babel plugin, the key idea is simple:
+
+\begin{itemize}
+\item Babel parses your file into an AST (a tree of node objects).
+\item A plugin gives Babel a \emph{visitor}: a set of functions like \texttt{Program()}, \texttt{JSXElement()}, \texttt{Identifier()}, etc.
+\item As Babel walks the tree, it calls your visitor functions with a \emph{path} object.
+  A path is like ``a cursor pointing at this node'', with helpers to replace, insert, and inspect context.
+\end{itemize}
+
+In Relax\'s scaffold we rely on three path operations:
+
+\begin{itemize}
+\item \texttt{path.replaceWith(newNode)}: turn \texttt{<div/>} into \texttt{host => ...}.
+\item \texttt{programPath.unshiftContainer('body', stmt)}: insert imports and hoisted constants.
+\item \texttt{programPath.pushContainer('body', stmt)}: append helper functions like \texttt{\_\_hrbrBlock}.
+\end{itemize}
+
+What makes compiler work feel hard is not Babel itself.
+It\'s the discipline of preserving semantics:
+
+\begin{itemize}
+\item when can we treat an expression as \emph{just a string}? (text slot)
+\item when does it become \emph{structure}? (must use fallback)
+\item how do we keep paths stable so runtime updates don\'t hit the wrong node?
+\end{itemize}
+
+\section{A tiny contract for this file (inputs/outputs/error modes)}
+
+Treat \texttt{compiler/jsx/transform.ts} as implementing this contract:
+
+\begin{itemize}
+\item \textbf{Input:} a JS/TS program containing JSX elements.
+\item \textbf{Output (block success):} the JSX expression is replaced by a mount factory
+  	exttt{(host) => \_\_hrbrBlock(host, def, compiledSlots)}.
+\item \textbf{Output (fallback):} the JSX expression is replaced by a mount factory
+  	exttt{(host) => mountFallback(host, renderFn)}.
+\item \textbf{Errors:} unsupported constructs in the scaffold (fragments, spreads, components, events) throw with a friendly code-frame.
+\end{itemize}
+
+Notice that both success and fallback produce the \emph{same outer type}: a mount function.
+That\'s what makes the rest of the system clean.
+The VDOM layer doesn\'t need to know which mode was chosen.
+
+\section{Why this scaffold emits ``raw AST objects'' instead of Babel helpers}
+
+If you\'re used to Babel plugins, you might expect to see heavy usage of \texttt{@babel/types} helpers like \texttt{t.identifier('x')}.
+This scaffold goes the other direction: it constructs node objects like:
+
+\begin{lstlisting}[language=JavaScript]
+{
+  type: 'ImportDeclaration',
+  specifiers: [
+    { type: 'ImportSpecifier', imported: { type: 'Identifier', name: 'defineBlock' }, local: { type: 'Identifier', name: 'defineBlock' } }
+  ],
+  source: { type: 'StringLiteral', value: runtimeImport }
+}
+\end{lstlisting}
+
+Why it matters:
+
+\begin{itemize}
+\item It keeps the scaffold dependency surface small.
+\item It makes it obvious what Babel is doing: everything is an AST node object.
+\item It\'s easier to read snapshots because the output is less abstracted.
+\end{itemize}
+
+As the compiler grows, you may still migrate toward Babel helpers for correctness and less boilerplate.
+But the raw-node style is an excellent teaching tool.
+
+\section{Program-level synthesis: \texttt{ensureRuntimeImport} and \texttt{ensureWrapper}}
+
+The transform maintains file-scoped flags:\\
+  	exttt{needsRuntimeImport}, \texttt{needsFallbackImport}, \texttt{needsWrapper}.
+
+These flags solve a real ``compiler ergonomics'' problem: we don\'t want to inject imports or helpers unless the file actually used JSX in a supported way.
+
+\subsection{How imports are synthesized}
+
+In block mode, we need \texttt{defineBlock} and \texttt{mountCompiledBlock}.
+In fallback mode, we also need \texttt{mountFallback}.
+
+So \texttt{ensureRuntimeImport(programPath)} emits exactly:
+
+\begin{lstlisting}[language=JavaScript]
+import { defineBlock, mountCompiledBlock } from "relax/hrbr"
+// (plus mountFallback if needed)
+\end{lstlisting}
+
+This is asserted by \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts}.
+
+\subsection{Why we have a wrapper helper at all}
+
+The wrapper is intentionally boring:
+
+\begin{lstlisting}[language=JavaScript]
+function __hrbrBlock(host, def, slots) {
+  return mountCompiledBlock(def, host, slots)
+}
+\end{lstlisting}
+
+So why keep it?
+Because it gives you one stable call site to instrument later (devtools, tracing, invariants, feature flags).
+A compiler that emits a dozen ad-hoc call sites is harder to evolve.
+
+\section{Template extraction as a recursive renderer}
+
+The heart of block mode is \texttt{buildTemplateFromJsxElement(elPath)}.
+It\'s easiest to understand it as a recursive function that tries to \emph{render JSX into HTML} while simultaneously recording slots.
+
+\subsection{Key data structures}
+
+Inside \texttt{buildTemplateFromJsxElement()} the compiler builds three things:
+
+\begin{itemize}
+\item \texttt{templateHTML}: a string that can be parsed as an element.
+\item \texttt{slotMap}: \texttt{\{ key -> \{ kind, path, name?, lane? \} \}}.
+\item \texttt{compiledSlots}: an array of objects with \texttt{\{ key, read: () => expr \}}.
+\end{itemize}
+
+The first two belong to \texttt{defineBlock} (module scope).
+The third belongs next to the mount call (runtime scope).
+
+\subsection{Paths: tracked while rendering}
+
+The recursive helper \texttt{renderElement(node, pathToHere, childIndexRef)} incrementally builds the DOM path.
+Every time we emit a child node into the HTML string, we increment a counter.
+When we encounter a dynamic expression that\'s allowed as a text slot, we record:
+
+\begin{quote}
+  	exttt{path: [...pathToHere, childIndex]}
+\end{quote}
+
+This is exactly the scheme you reverse-engineered in Chapter~\ref{ch:compiler-architecture} via the snapshot.
+
+\subsection{The ``text-like'' gate: why \texttt{isTextLikeExpr} exists}
+
+Remember: \textbf{block mode cannot represent structural variability}.
+So if a child expression might yield an element/fragment/conditional structure, we must route to fallback.
+
+In this scaffold the rule is encoded as:\\
+  	exttt{if (!isTextLikeExpr(expr)) return null}.
+
+The important thing here is not the exact heuristic.
+It\'s the \emph{architectural pattern}:
+
+\begin{itemize}
+\item template extraction is best-effort
+\item any ambiguous construct returns \texttt{null}
+\item the caller chooses fallback
+\end{itemize}
+
+This makes the compiler safe by construction.
+
+\section{Fallback synthesis: the semantic firewall (minimal but real)}
+
+When block mode returns \texttt{null}, the transform builds a minimal fallback mount.
+You can see this end-to-end in:
+
+\begin{itemize}
+\item \texttt{compiler/\_\_tests\_\_/babel-transform.fallback.e2e-jsdom.test.ts}
+\end{itemize}
+
+That test compiles:
+
+\begin{lstlisting}[language=JavaScript]
+const App = () => (
+  <div>{show() ? name() : ''}</div>
+)
+\end{lstlisting}
+
+Even though the child expression is ``text-like'' at runtime, it\'s a \texttt{ConditionalExpression}, and the current heuristic treats that as structural.
+So the plugin emits \texttt{mountFallback} and the test asserts that updates are reactive and do not throw.
+
+\subsection{From scratch: what the fallback compiler is building}
+
+The fallback compiler doesn\'t build a vdom tree.
+It builds a tiny \emph{reconciliation spec} object with two operations:
+
+\begin{itemize}
+\item \texttt{create(): Node} --- build initial DOM.
+\item \texttt{patch(node): void} --- mutate existing DOM in place.
+\end{itemize}
+
+Then it wraps those specs in a \texttt{renderFn}:
+
+\begin{quote}
+  	exttt{() => (\{ children: [spec] \})}
+\end{quote}
+
+And finally emits:\\
+  	exttt{host => mountFallback(host, renderFn)}.
+
+Why this matters: by giving fallback the same outer mounting shape, the rest of Relax stays composable.
+Block mode and fallback mode become interchangeable implementations behind one vnode contract.
+
+\section{Failure modes are part of the design (and are tested)}
+
+Not everything should silently route to fallback---especially in a scaffold.
+The project currently chooses to throw for several constructs.
+That\'s intentional because it makes the supported subset crisp.
+
+The tests in \texttt{compiler/\_\_tests\_\_/babel-transform.errors.test.ts} document the current hard constraints:
+
+\begin{itemize}
+\item event handlers like \texttt{onClick}
+\item spread attributes like \texttt{\{...props\}}
+\item fragments \texttt{<>...</>}
+\item non-intrinsic tags like \texttt{<Foo />}
+\end{itemize}
+
+As the fallback runtime becomes more feature complete, you can change the policy (throw vs fallback)---but you should always encode it in tests first.
 
 It explicitly rejects (in block mode):
 
@@ -397,6 +614,167 @@ The next incremental steps typically look like:
 \item expand fallback routing to support nested children specs (not just a single root spec)
 \item improve text-like analysis so common conditionals can stay in block mode when both arms are text
 \end{itemize}
+
+\section{Full trace: one \texttt{JSXElement} visitor call, end to end}
+
+You now have all the pieces.
+Let\'s glue them together by tracing a single JSX expression through the plugin.
+
+We\'ll use the smallest example that still exercises the three interesting mechanics:
+
+\begin{itemize}
+\item a dynamic attribute (becomes a slot)
+\item a nested element (forces recursion)
+\item a dynamic text child (becomes a text slot)
+\end{itemize}
+
+\subsection{Author input (JSX in user code)}
+
+\begin{lstlisting}[language=JavaScript]
+const App = () => (
+  <section id="root" className={cls()}>
+    <h1>Title</h1>
+    <p>Hello {name()}</p>
+  </section>
+)
+\end{lstlisting}
+
+This is the same structure used by the inline snapshot in
+  exttt{compiler/\_\_tests\_\_/babel-transform.test.ts}.
+That\'s intentional: we want a trace that is already pinned by tests.
+
+\subsection{Step A: \texttt{Program.enter} resets per-file state}
+
+Before any JSX is transformed, the plugin resets:
+
+\begin{itemize}
+\item \texttt{needsRuntimeImport = false}
+\item \texttt{needsFallbackImport = false}
+\item \texttt{needsWrapper = false}
+\item \texttt{nextBlockId = 0}
+\end{itemize}
+
+This ensures a plugin run is deterministic per file.
+If you ever see ``block ids jump'' across compiles, this is the first place to look.
+
+\subsection{Step B: \texttt{JSXElement(path)} attempts block compilation}
+
+When Babel visits the \texttt{<section ...>} node, the visitor calls:
+
+\begin{quote}
+  exttt{const built = buildTemplateFromJsxElement(path)}
+\end{quote}
+
+Think of \texttt{built} as three outputs:
+
+\begin{itemize}
+\item \texttt{built.templateHTML}: the static HTML string
+\item \texttt{built.slots}: the slot metadata map (kind + path + name/lane)
+\item \texttt{built.compiledSlots}: the runtime \texttt{[{ key, read }]} array
+\end{itemize}
+
+If \texttt{built} is null, the visitor routes to fallback.
+But in this example it succeeds.
+
+\subsection{Step C: \texttt{buildTemplateFromJsxElement} renders HTML and records slots}
+
+Inside the template builder, \texttt{renderElement} walks:
+
+\begin{enumerate}
+\item Root: \texttt{<section id="root" className=\{cls()\}> ...}
+\item Child element: \texttt{<h1>Title</h1>}
+\item Child element: \texttt{<p>Hello \{name()\}</p>}
+\end{enumerate}
+
+Along the way it produces two slots:
+
+\begin{itemize}
+\item a \texttt{class} slot on the root element (path \texttt{[]})
+\item a \texttt{text} slot inside the \texttt{<p>} node (a deeper path)
+\end{itemize}
+
+The important implementation trick is how text slots are anchored:
+when a text expression is accepted, the builder emits a literal space in \texttt{templateHTML}.
+That guarantees a real text node exists at mount time.
+
+\subsection{Step D: the visitor hoists \texttt{defineBlock(...)} at module scope}
+
+Once we have \texttt{built}, the visitor sets:
+
+\begin{itemize}
+\item \texttt{needsRuntimeImport = true}
+\item \texttt{needsWrapper = true}
+\end{itemize}
+
+And it emits a module-scope constant:
+
+\begin{lstlisting}[language=JavaScript]
+const __hrbr_block_0 = defineBlock({
+  templateHTML: "...",
+  slots: {
+    "s0": { kind: "class", path: [] },
+    "s1": { kind: "text", path: [3, 1] }
+  }
+})
+\end{lstlisting}
+
+Why this is hoisted: it makes template parsing a one-time cost per module.
+At runtime, multiple mounts just reference the same \texttt{\_\_hrbr\_block\_0}.
+
+\subsection{Step E: the JSX expression becomes a mount factory}
+
+Finally, the plugin replaces the original JSX expression with an arrow function:
+
+\begin{lstlisting}[language=JavaScript]
+const App = () => host => __hrbrBlock(host, __hrbr_block_0, [
+  { key: "s0", read: () => cls() },
+  { key: "s1", read: () => name() }
+])
+\end{lstlisting}
+
+This is the key compiler/runtime boundary:
+
+\begin{itemize}
+\item \texttt{defineBlock(...)} is static data (safe to hoist)
+\item \texttt{read: () => expr} is dynamic code (must live in runtime scope)
+\end{itemize}
+
+The snapshot in \texttt{babel-transform.test.ts} asserts that this shape stays stable.
+If you change output shape, you should expect snapshot churn.
+
+\subsection{Step F: \texttt{Program.exit} injects imports and the wrapper helper}
+
+At the end of the file walk, \texttt{Program.exit} materializes any pending artifacts:
+
+\begin{itemize}
+\item an import from \texttt{runtimeImport}
+\item the \texttt{\_\_hrbrBlock} wrapper function
+\end{itemize}
+
+This is the "emit only what you used" policy: no JSX compiled, no injected runtime surface.
+
+\section{Exercises (tests-first, like a real compiler engineer)}
+
+If you want to really internalize this transform, do these small, test-backed exercises.
+
+\subsection{Exercise 1: explain a slot path without running code}
+
+Open the snapshot in \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts} and pick the \texttt{text} slot \texttt{path} (for example \texttt{[3, 1]}).
+Write out the \texttt{childNodes} array layout that makes the path correct.
+
+\subsection{Exercise 2: add a new slot kind (carefully)}
+
+The builder already classifies \texttt{class}, \texttt{style}, and generic \texttt{attr}.
+Add a test that forces a \texttt{prop} slot (for example \texttt{value=\{val()\}} on \texttt{<input>}).
+Then implement the minimal compiler support in \texttt{buildTemplateFromJsxElement}.
+
+\subsection{Exercise 3: widen \texttt{isTextLikeExpr} with a test}
+
+Right now the transform routes \texttt{show() ? name() : ''} to fallback.
+Add a unit test that asserts this can remain in block mode \emph{only when} both arms are "text-like".
+Then update \texttt{isTextLikeExpr} to accept that case.
+
+If you can complete Exercise 3 without breaking the E2E suites, you\'ve learned the right lesson: compiler changes are always negotiated via tests.
 
 The rule is always: add a targeted test first (unit + e2e), then widen syntax support.
 

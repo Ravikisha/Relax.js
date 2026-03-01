@@ -1,5 +1,38 @@
 \chapter{Repo tour \& project constraints}
 
+\section{What you'll build}
+By the end of this chapter, you will have:
+
+\begin{itemize}
+  \item A system-level map of the Relax.js repository (what subsystems exist and why).
+  \item A repeatable workflow to go from a question \textrightarrow tests \textrightarrow implementation.
+  \item One complete mental trace of a user interaction from DOM event \textrightarrow component method \textrightarrow DOM patch.
+\end{itemize}
+
+\section{What you'll learn}
+\begin{itemize}
+  \item How I split this repo into three cooperating products (VDOM runtime, HRBR runtime, compiler).
+  \item Why jsdom constraints make the runtime \emph{more} deterministic and teachable.
+  \item The smallest set of files you should read to understand an end-to-end update.
+\end{itemize}
+
+\section{Prereqs}
+Read Chapter~1.
+You should be comfortable with the idea that DOM nodes have identity and can be mutated.
+
+\section{Concept: read the system before you read the code}
+When you're learning a new codebase, the worst mistake is to start at \texttt{src/index.ts} and keep scrolling.
+You'll drown in details.
+
+Instead, I want you to start with two maps:
+
+\begin{itemize}
+  \item a \textbf{module map} (what subsystems exist)
+  \item a \textbf{causal map} (what happens when a user clicks / types)
+\end{itemize}
+
+This chapter gives you both.
+
 \section{What you're looking at}
 This repository is intentionally small, but it isn't a single ``runtime''.
 It is a collection of cooperating subsystems, each with its own contract and its own tests.
@@ -116,8 +149,110 @@ You can trace that across:
 
 Doing this with the tests open beside you is the theme of this book.
 
+\section{Build-along: follow one interaction end-to-end}
+Now let's do the thing I personally do when I need to understand or debug a UI runtime:
+I pick one user interaction and trace it until I can explain every boundary.
+
+We'll use the Todo app test as our "story".
+The specification is \texttt{src/\_\_tests\_\_/app.test.ts}.
+
+\subsection{The spec (test) as the narrative}
+In that test file, the interesting lines look like this:
+
+\begin{lstlisting}[style=relax,language=JavaScript]
+input.value = 'Buy milk'
+input.dispatchEvent(new Event('input'))
+
+button.click()
+
+await nextTick()
+expect(document.body.innerHTML).toBe(...)
+\end{lstlisting}
+
+\textbf{Why this matters:}
+this is an executable description of the user story.
+The only reason we can trust the runtime is because this story is repeatable.
+
+In the rest of this chapter, I’m going to connect this story to the implementation.
+
+\subsection{Step 1: the root lifecycle boundary (createApp)}
+The first system boundary is the application lifecycle.
+In Relax, \texttt{createApp()} is intentionally tiny.
+Its entire job is to create the root VNode and unmount it.
+
+Implementation: \texttt{src/app.ts}.
+
+\begin{lstlisting}[style=relax,language=JavaScript]
+export function createApp(RootComponent, props = {}) {
+  let vdom = null
+
+  return {
+    mount(parentEl) {
+      vdom = h(RootComponent, props)
+      mountDOM(vdom, parentEl)
+    },
+    unmount() {
+      destroyDOM(vdom)
+      vdom = null
+    },
+  }
+}
+\end{lstlisting}
+
+	extbf{Why this design:}
+I want exactly one owner for the root VNode.
+If you don't have a clear ownership boundary, "unmount" becomes best-effort cleanup and bugs get subtle.
+
+\subsection{Step 2: DOM event binding (how a handler gets installed)}
+When a VNode contains an \texttt{on} map (events), Relax wires listeners during mount.
+The low-level helper lives in \texttt{src/events.ts}:
+
+\begin{lstlisting}[style=relax,language=JavaScript]
+export function addEventListener(eventName, handler, el, hostComponent = null) {
+  const listener = (event) => {
+    if (hostComponent) handler.call(hostComponent, event)
+    else handler(event)
+  }
+
+  el.addEventListener(eventName, listener)
+  return listener
+}
+\end{lstlisting}
+
+	extbf{Why this matters:}
+the listener wrapper is a tiny but crucial semantic guarantee.
+It means component methods can rely on \texttt{this} being the component instance.
+(We’ll return to this in the events chapter.)
+
+\subsection{Step 3: component-to-component communication (Dispatcher)}
+In Relax, components don't reach into each other directly.
+They communicate through a tiny command dispatcher: \texttt{src/dispatcher.ts}.
+
+\begin{lstlisting}[style=relax,language=JavaScript]
+dispatch(commandName, payload) {
+  if (this.#subs.has(commandName)) {
+    this.#subs.get(commandName).forEach((handler) => handler(payload))
+  }
+
+  this.#afterHandlers.forEach((handler) => handler())
+}
+\end{lstlisting}
+
+	extbf{Why this matters:}
+this gives me a clean abstraction boundary: event handlers emit events, components react, and then we run after-hooks (often ``schedule a patch'').
+
+\subsection{Step 4: where does the DOM update happen?}
+This is the final thing you must always locate:
+
+\begin{quote}
+Where is the code that turns a "new desired UI" into DOM mutations?
+\end{quote}
+
+In the VDOM runtime, that answer is \texttt{src/patch-dom.ts} (covered in depth later).
+In this chapter, the important idea is simply: \emph{there is exactly one patching engine}, and everything funnels into it.
+
 \section{A concrete example: createApp() is tiny on purpose}
-	exttt{createApp()} exists so the user has a simple lifecycle API.
+	texttt{createApp()} exists so the user has a simple lifecycle API.
 The full file is short: \texttt{src/app.ts}.
 
 Key behavior:
@@ -144,6 +279,41 @@ This test file shows a full mount-to-interaction flow:
 \end{itemize}
 
 That single test is a great ``reading harness'' for learning how Relax wires components + events + patching.
+
+\section{Tests as specs (my rule for this repo)}
+If you only remember one workflow from this chapter, make it this:
+
+\begin{enumerate}
+  \item Start from a test that matches the behavior you care about.
+  \item Read the assertions and treat them as the contract.
+  \item Jump to implementation and locate the code that makes those assertions true.
+  \item If you're changing behavior, change the test first.
+\end{enumerate}
+
+Concrete anchors for this chapter:
+
+\begin{itemize}
+  \item App lifecycle story: \texttt{src/\_\_tests\_\_/app.test.ts}
+  \item Event semantics: \texttt{src/\_\_tests\_\_/events.test.ts}
+  \item Dispatcher semantics: \texttt{src/\_\_tests\_\_/dispatcher.test.ts}
+\end{itemize}
+
+\section{Common pitfalls}
+\begin{itemize}
+  \item Reading implementation first and assuming the behavior is intentional.
+  \item Ignoring jsdom differences (inputs/selection are special).
+  \item Treating "unmount" as optional cleanup.
+  \item Not understanding what is synchronous vs deferred to \texttt{nextTick()}.
+\end{itemize}
+
+\section{Mini-exercise}
+Open \texttt{src/\_\_tests\_\_/app.test.ts} and answer:
+
+\begin{itemize}
+  \item Why does the test call \texttt{await nextTick()} after mount?
+  \item Which user actions are simulated (exact DOM APIs)?
+  \item Which pieces of the runtime must exist for that simulation to work (mounting, events, patching)?
+\end{itemize}
 
 \section{Project constraint: small API surface}
 Relax exports only a few primitives (h, fragments, components, scheduler).

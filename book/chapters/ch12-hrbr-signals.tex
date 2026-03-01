@@ -10,6 +10,31 @@ Part III begins the HRBR runtime. Unlike the VDOM runtime (\texttt{src/*}), HRBR
 
 This chapter focuses on the reactive graph implementation in \texttt{runtime/signals.ts}.
 
+\section{Why signals exist (and why HRBR needs them)}
+
+Up to this point, Relax updates UI via a Virtual DOM pipeline: you re-run \texttt{render()}, diff children, then patch the DOM.
+That model is flexible and easy to reason about, but it can do more work than necessary when updates are tiny and frequent.
+
+Signals exist to make a different trade-off:
+
+\begin{quote}
+Track \emph{exactly} which computations depend on a value, and when that value changes, re-run only those computations.
+\end{quote}
+
+This is the core HRBR idea: the compiler can translate template expressions into tiny computations (effects/memos) that update very specific DOM nodes.
+So instead of reconciling a large subtree, a signal write can result in “update this text node”.
+
+Compare the philosophies:
+
+\begin{itemize}
+  \item \textbf{VDOM:} change state \textrightarrow rerender \textrightarrow reconcile structure.
+  \item \textbf{Signals:} change signal \textrightarrow schedule dependent computations \textrightarrow update exactly where read.
+\end{itemize}
+
+For external context (not Relax-specific), see:
+\href{https://www.solidjs.com/docs/latest#signals}{SolidJS signals} (fine-grained model) and
+\href{https://react.dev/learn/render-and-commit}{React render/commit} (VDOM model).
+
 \section{Public API: the contract we have to satisfy}
 
 The file \texttt{runtime/index.ts} exports these symbols from \texttt{runtime/signals.ts}:
@@ -54,6 +79,28 @@ There’s a third, more pragmatic constraint you’ll see in the code:
 \end{itemize}
 
 This is not a ``fully-featured'' reactive system; it’s a compact kernel meant to be embedded into compiled blocks.
+
+\section{The tiny contract (keep this in your head)}
+
+Signals are small, so their contract can be crisp:
+
+\begin{itemize}
+  \item \textbf{Read} returns a value and optionally registers a dependency edge.
+  \item \textbf{Write} updates the value and schedules observers \emph{in deterministic order}.
+  \item \textbf{Effect} runs once initially, then re-runs when its dependencies change.
+  \item \textbf{Memo} caches a derived value and notifies dependents when it changes.
+  \item \textbf{batch(fn)} coalesces multiple writes into a single downstream flush.
+  \item \textbf{untrack(fn)} temporarily disables dependency capture.
+\end{itemize}
+
+And the failure modes we must avoid (the tests are built around these):
+
+\begin{itemize}
+  \item \textbf{Nondeterminism}: the observer order changes across runs.
+  \item \textbf{Leaks}: disposed computations still run after future writes.
+  \item \textbf{Re-entrancy recursion}: an effect writes to what it reads and causes stack overflow.
+  \item \textbf{Stale dependencies}: conditional reads don’t update subscriptions.
+\end{itemize}
 
 \section{Diagram: signals graph (sources \textrightarrow computations \textrightarrow derived values)}
 The runtime is easiest to visualize as a graph where reads register edges and writes schedule computations:
@@ -111,6 +158,47 @@ Each dependency edge is represented twice:
 
 This dual representation is what makes ``conditional dependencies'' safe: each run starts by detaching previous sources and then re-registering based on the reads that actually occur.
 
+\subsection{Diagram: forward observers vs. reverse sources}
+
+This is the part that makes signals feel like a real runtime (not a toy): every edge is represented twice.
+
+\begin{itemize}
+  \item The \textbf{forward edge} lives on the signal: ``who should I notify when I change?''
+  \item The \textbf{reverse edge} lives on the computation: ``what did I subscribe to last run, so I can detach?''
+\end{itemize}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=8mm,
+  box/.style={draw,rounded corners,fill=RelaxLight,inner sep=5pt,align=left},
+  arrow/.style={-Latex,thick}
+]
+  \node[box] (sig) {SignalNode\\\texttt{value}\\\texttt{observersHead/Tail}};
+  \node[box, right=26mm of sig] (comp) {Computation\\\texttt{sourcesHead/Tail}\\\texttt{run()} / \texttt{dispose()}};
+
+  \node[box, below=of sig] (ol) {ObserverLink\\(in signal list)\\\texttt{prev/next}};
+  \node[box, below=of comp] (sl) {SourceLink\\(in computation list)\\\texttt{prev/next}};
+
+  \draw[arrow] (sig) -- node[above]{forward: notify} (ol);
+  \draw[arrow] (comp) -- node[above]{reverse: detach} (sl);
+  \draw[arrow] (sl) to[bend left=10] node[below]{points to} (sig);
+  \draw[arrow] (sl) to[bend right=10] node[below]{points to} (ol);
+\end{tikzpicture}
+\end{center}
+
+In \texttt{runtime/signals.ts}, this is the practical outcome:
+
+\begin{itemize}
+  \item \texttt{addObserver(node, comp)} inserts an \texttt{ObserverLink} into \texttt{node.observers...}
+  \item and it appends a \texttt{SourceLink} into \texttt{comp.sources...} that points back to that observer link
+  \item \texttt{unlinkAllSources(comp)} walks \texttt{comp.sources...} and removes each referenced observer link from its signal
+\end{itemize}
+
+Senior takeaway:
+\begin{quote}
+If you don't keep the reverse list, you can't implement conditional dependencies without leaks.
+\end{quote}
+
 \section{Dependency capture: \texttt{currentComputation}}
 
 Reactive systems need a way to know "who is currently running".
@@ -131,6 +219,63 @@ In \texttt{createSignal()}, the reader is:
 \end{itemize}
 
 That means dependencies are collected by running the effect/memo function and letting reads "register".
+
+\subsubsection{From scratch: the global pointer trick}
+
+The \texttt{currentComputation} pointer is the entire core of dependency tracking.
+When a computation is running, it sets this global.
+Signal reads check it and attach the dependency edge.
+
+Here’s a very small teaching implementation in plain JavaScript (not the real Relax code):
+
+\begin{lstlisting}[language=JavaScript]
+let currentComputation = null
+
+function createSignal(initial) {
+  const node = { value: initial, observers: [] }
+
+  function read() {
+    if (currentComputation) node.observers.push(currentComputation)
+    return node.value
+  }
+
+  function write(next) {
+    const nextValue = typeof next === 'function' ? next(node.value) : next
+    if (Object.is(nextValue, node.value)) return
+    node.value = nextValue
+
+    for (const comp of node.observers) {
+      comp.run()
+    }
+  }
+
+  return [read, write]
+}
+
+function createEffect(fn) {
+  const comp = {
+    run() {
+      const prev = currentComputation
+      currentComputation = comp
+      try {
+        fn()
+      } finally {
+        currentComputation = prev
+      }
+    },
+  }
+  comp.run()
+  return { dispose() {} }
+}
+\end{lstlisting}
+
+Relax’s real implementation adds the hard parts:
+
+\begin{itemize}
+  \item leak-safety via a reverse list (so it can detach old edges)
+  \item deterministic order via monotonically increasing ids + sorted insertion
+  \item correct batching + re-entrancy via a pending set and deterministic flush
+\end{itemize}
 
 \paragraph{No dedupe (by design)}
 
@@ -206,6 +351,93 @@ The key implementation trick is the one shown in the code snippet above: capture
 When a signal is written, Relax schedules the dependent computations.
 Scheduling does not necessarily mean ``run immediately'' (see batching and lanes), but it always preserves the \emph{creation order} contract.
 
+\subsection{A precise code-walk: \texttt{scheduleComputation} and the \texttt{pending} set}
+
+All the tricky correctness properties (re-entrancy, batching, lane scheduling) flow through one choke point:
+	exttt{scheduleComputation(computation)}.
+
+In the real implementation (\texttt{runtime/signals.ts}), there are four gates.
+Reading them as a ruleset helps:
+
+\begin{enumerate}
+  \item \textbf{Disposed computations are inert.}
+  \item \textbf{Running computations don't re-enter.} If a computation schedules itself while running, it is queued in \texttt{pending} and flushed after the current stack unwinds.
+  \item \textbf{Lane-aware computations don't run inline.} If a computation has \texttt{\_schedule}, scheduling is delegated to the runtime scheduler.
+  \item \textbf{Batching defers work.} If \texttt{isBatching > 0}, add to \texttt{pending} instead of running.
+\end{enumerate}
+
+Here's the same logic in a teaching version (simplified JavaScript), preserving the ordering of checks:
+
+\begin{lstlisting}[language=JavaScript]
+function scheduleComputation(comp) {
+  if (comp._disposed) return
+
+  // Re-entrancy: don't recurse.
+  if (comp._running) {
+    pending.add(comp)
+    return
+  }
+
+  // Lane scheduling: hand off to the scheduler.
+  if (comp._schedule) {
+    comp._schedule(comp)
+    return
+  }
+
+  // Batching: defer until end of outer batch.
+  if (isBatching > 0) {
+    pending.add(comp)
+    return
+  }
+
+  // Default: run inline.
+  comp.run()
+}
+\end{lstlisting}
+
+\subsubsection{Why re-entrancy and batching share the same queue}
+
+At first glance, using one \texttt{pending} set for two distinct situations looks odd.
+It's actually a good simplification because both situations mean the same thing:
+
+\begin{quote}
+We are not allowed to run this computation right now, but we must not lose the fact that it became dirty.
+\end{quote}
+
+The only additional requirement is determinism.
+That's why \texttt{flushPendingIfNeeded()} sorts the set by \texttt{\_id} before scheduling.
+
+\subsubsection{Timeline: the re-entrancy convergence test}
+
+Spec: \texttt{re-entrancy: effect that schedules itself via writes does not recurse infinitely}.
+
+The effect is:
+
+\begin{lstlisting}[language=JavaScript]
+createEffect(() => {
+  const v = s()
+  seen.push(v)
+  if (v < 3) setS(v + 1)
+})
+\end{lstlisting}
+
+The important thing is not just that it ends at \texttt{3}, but that it does not recurse.
+The run looks like this:
+
+\begin{enumerate}
+  \item Start run: comp becomes \texttt{\_running = true}
+  \item Reads \texttt{s()} (dependency edge registered)
+  \item Calls \texttt{setS(v + 1)} which tries to schedule the same computation
+  \item Because it is \texttt{\_running}, scheduling goes to \texttt{pending} (no re-entry)
+  \item End run: \texttt{\_running = false}, then we flush \texttt{pending}
+\end{enumerate}
+
+This repeats until the signal hits 3.
+That is exactly why the expected log is deterministic: \texttt{[0, 1, 2, 3]}.
+
+Reference (conceptual background): Solid's reactivity avoids re-entrancy recursion via queuing and batching as well:
+\href{https://www.solidjs.com/docs/latest#execution-order}{Solid: execution order}.
+
 \section{Effects: cleanup, re-run, disposal}
 
 \subsection{Cleanup semantics}
@@ -243,10 +475,112 @@ An effect's dependencies are exactly the signals it read during its last run.
 
 It also enables conditional dependencies (read signal A in one run, read signal B in another) without leaking observers.
 
+\subsection{Conditional dependencies in slow motion (the reason \texttt{unlinkAllSources} exists)}
+
+Conditional dependencies are the most common place reactive systems silently leak.
+The problem looks like this:
+
+\begin{quote}
+An effect reads \texttt{a()} in one run, but reads \texttt{b()} in the next run. If you never detach old edges, the effect ends up subscribed to both forever.
+\end{quote}
+
+Relax avoids this by making \texttt{unlinkAllSources(comp)} step 0 of every run.
+Then the effect/memo re-subscribes only to the signals it \emph{actually reads} this time.
+
+Here's a minimal example to build intuition:
+
+\begin{lstlisting}[language=JavaScript]
+const [useA, setUseA] = createSignal(true)
+const [a, setA] = createSignal(0)
+const [b, setB] = createSignal(0)
+
+createEffect(() => {
+  if (useA()) {
+    console.log('A path:', a())
+  } else {
+    console.log('B path:', b())
+  }
+})
+\end{lstlisting}
+
+Now imagine this sequence:
+
+\begin{enumerate}
+  \item Initial run: \texttt{useA() == true} so the effect reads \texttt{useA()} and \texttt{a()}.
+  \item Flip to \texttt{false}: the effect re-runs, but now it reads \texttt{useA()} and \texttt{b()}.
+\end{enumerate}
+
+If the runtime does not detach, a later \texttt{setA(...)} would still schedule the effect even though it no longer reads \texttt{a()}.
+That is wasted work and (in large graphs) becomes a performance cliff.
+
+\subsubsection{What the implementation guarantees}
+
+This is the practical contract enforced by the forward+reverse lists:
+
+\begin{itemize}
+  \item Before each run, unlink all previously tracked sources.
+  \item During the run, every signal/memo read adds new source links.
+  \item After the run, the computation is subscribed to exactly the set of reads that occurred.
+\end{itemize}
+
+That is why the dual list structure matters: the reverse list is what makes detaching cheap and precise.
+
+Conceptual reference: Solid's explanation of fine-grained dependency tracking is very similar:
+\href{https://www.solidjs.com/docs/latest#how-it-works}{Solid: how it works}.
+
 \paragraph{Leak-safety note}
 
 	exttt{unlinkAllSources()} also deliberately nulls out fields on the link objects (with \texttt{@ts-expect-error} comments).
 That’s not required for correctness, but it makes accidental retention less likely in this prototype implementation.
+
+\section{The tests as specs: what behavior is non-negotiable}
+
+If you want to understand signals fast, read the tests first.
+They encode the contract in a way that prevents “almost works” implementations.
+
+\subsection{Core semantics: \texttt{runtime/\_\_tests\_\_/signals.test.ts}}
+
+The suite asserts:
+
+\begin{itemize}
+  \item dependency tracking (reads register; writes re-run)
+  \item \texttt{Object.is} bail-out prevents no-op writes from causing work
+  \item \texttt{untrack} disables edge registration
+  \item \texttt{batch} is a flush boundary (including nested batching)
+  \item cleanup is run before re-run and on dispose
+  \item dispose fully detaches
+  \item re-entrancy converges without recursive re-entry
+  \item non-sync lanes schedule through the runtime scheduler (tests intercept \texttt{setTimeout})
+  \item memos behave like derived signals and notify dependents
+\end{itemize}
+
+\subsubsection{A senior reading of the suite: what it forces in the implementation}
+
+The most important thing these tests enforce is that signals are not just a pub/sub primitive.
+They are a mini runtime with strict invariants:
+
+\begin{itemize}
+  \item \textbf{Idempotent writes}: \texttt{Object.is} bail-out means no "useless work" on repeated values.
+  \item \textbf{Precise tracking}: \texttt{untrack} demonstrates that dependency capture is opt-in per read, not an ambient global subscription.
+  \item \textbf{Deterministic event ordering}: effect order must be stable even under batching.
+  \item \textbf{Cleanup correctness}: cleanup must run before the next run, not after.
+\end{itemize}
+
+If you've ever debugged a real UI bug caused by nondeterministic ordering, you'll appreciate why determinism is treated as a contract, not an "implementation detail".
+
+\subsection{Determinism + leak-ish checks: \texttt{signals.determinism.test.ts}}
+
+The determinism suite checks a stronger property:
+\emph{same seed + same operations produce identical logs across two fresh graphs}.
+
+That forces the runtime to be stable in ways a single unit test won’t catch.
+It also includes a practical disposal check: once an effect is disposed, later writes must not produce any new log entries for it.
+
+\subsection{Fuzz/property checks: \texttt{signals.fuzz.test.ts}}
+
+The fuzz test generates nested batches, sets, and disposals.
+The primary assertion is determinism (two runs produce identical logs).
+There is also a “smoke” property related to disposal: if effects were disposed, later mass-writes shouldn’t explode log volume.
 
 \subsection{Dispose}
 
@@ -425,4 +759,23 @@ These systems are common in UI runtimes; the references below help connect the d
   \item Effects detach and re-subscribe each run, enabling conditional dependencies safely.
   \item Batching and re-entrancy are implemented with a pending set plus deterministic flush ordering.
   \item Lanes integrate with the scheduler so work can be delayed and budgeted.
+\end{itemize}
+
+\section{Exercises}
+
+\begin{enumerate}
+  \item In \texttt{runtime/signals.ts}, find the exact line in the signal write loop that captures \texttt{next} before scheduling. Explain why this matters when observers unsubscribe/resubscribe while running.
+  \item Build a conditional dependency like the \texttt{useA/a/b} example and write down exactly which writes should schedule the effect in each phase.
+  \item Using the tests as a guide, explain the difference between \texttt{isBatching} and \texttt{pending}: what does each represent, and why are both needed?
+  \item Explain why the \texttt{pending} set is a \texttt{Set} and not an array. What bug would an array allow in batch-heavy code?
+\end{enumerate}
+
+\section{Chapter summary}
+
+\begin{itemize}
+  \item Signals implement fine-grained dependency tracking via \texttt{currentComputation}: reads register edges.
+  \item Determinism is a user-facing guarantee: observers are ordered by creation id, and pending flushes are sorted.
+  \item Leak-safety comes from the dual representation of edges (forward observers + reverse sources) and aggressive detaching via \texttt{unlinkAllSources}.
+  \item Batching and re-entrancy share the same mechanism: a \texttt{pending} set flushed after the current stack unwinds or after the outer batch ends.
+  \item Effects can be lane-scheduled via the HRBR scheduler so the compiler can choose when work runs.
 \end{itemize}

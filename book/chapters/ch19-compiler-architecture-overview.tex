@@ -3,6 +3,42 @@
 
 This chapter explains how Relax's HRBR compiler takes TSX/JSX input and produces output that mounts \emph{compiled blocks} (the fast path) or routes to the \emph{fallback runtime} when the template's structure is dynamic.
 
+\subsection*{What you\'ll build (mentally)}
+
+This chapter is about building a reliable mental model, not shipping a production compiler.
+By the end, you should be able to:
+
+\begin{itemize}
+\item explain the compiler/runtime boundary in one sentence
+\item read transformed output and understand where \texttt{templateHTML}, \texttt{slots}, and \texttt{read()} closures come from
+\item predict when compilation must route to \texttt{mountFallback()} because the DOM structure isn\'t stable
+\item debug slot path bugs by reasoning about \texttt{childNodes} indexing (elements \emph{and} text nodes)
+\end{itemize}
+
+\subsection*{Prerequisites}
+
+You\'ll get the most value if you already understand:
+
+\begin{itemize}
+\item HRBR blocks: \texttt{defineBlock()} + \texttt{mountCompiledBlock()} (Chapter~\ref{ch:hrbr-blocks-template-slots})
+\item fallback reconciliation: \texttt{mountFallback()} + structural patching (Chapter~\ref{ch:hrbr-fallback-reconciler})
+\item VDOM \(\leftrightarrow\) HRBR interop boundary: \texttt{hBlock(mount)} (Chapter~\ref{ch:vdom-hrbr-interop})
+\end{itemize}
+
+\subsection*{Why this matters}
+
+Compilers are optional in UI libraries until they aren\'t.
+The moment you want both:
+
+\begin{itemize}
+\item a stable template that never re-creates DOM, and
+\item ergonomic authoring in JSX/TSX,
+\end{itemize}
+
+you end up building a compiler or transform.
+
+This chapter is deliberately practical: we\'ll treat tests as specs, and we\'ll keep the compiler contract small enough that you can maintain it.
+
 The compiler currently exists in two forms:
 
 \begin{itemize}
@@ -88,6 +124,22 @@ In particular, the TypeScript prototype compiler deliberately returns no reads; 
 
 In contrast, the Babel transform \emph{can} emit \texttt{read: () => expr} arrow functions directly into the output program, precisely because it is already transforming a file with the correct lexical scope.
 
+\subsection{A 3-part boundary you should memorize}
+
+At the boundary, the compiler emits three things:
+
+\begin{enumerate}
+\item a \texttt{BlockDef} (pure data: stable HTML + slot metadata)
+\item a \texttt{compiledSlots[]} list (closures: how to read live values)
+\item a mount factory (a closure boundary: where lexical scope lives)
+\end{enumerate}
+
+That last bullet is easy to miss.
+It\'s the reason the Babel transform can emit \texttt{read: () => expr} directly, while the TypeScript prototype compiler intentionally stops at ``expression source code''.
+
+For a background overview of why JSX is typically compiled, see:\
+\href{https://react.dev/learn/writing-markup-with-jsx}{https://react.dev/learn/writing-markup-with-jsx}.
+
 \section{Routing decision: block vs fallback}
 
 The compiler's core architectural decision is: \emph{can this TSX be represented as a stable HTML template?}
@@ -130,6 +182,23 @@ When structure is dynamic, we let the fallback runtime reconcile children.
 \end{center}
 
 Relax’s current compilers deliberately err on the safe side: anything that could introduce or remove DOM nodes is treated as “dynamic structure”.
+
+\subsection{A useful rule of thumb}
+
+If an expression could evaluate to:
+
+\begin{itemize}
+\item \texttt{null}
+\item \texttt{false}
+\item an array of nodes
+\item a \texttt{<div>} sometimes and \texttt{<span>} other times
+\end{itemize}
+
+then it’s structural and must go to fallback.
+
+If it always evaluates to a \emph{value} that can be written into an existing node (text/attr/prop/class/style), then it can stay in block mode.
+
+This is conservative, but it keeps the compiler honest.
 
 \subsection{How ``block vs fallback'' relates to Chapter~\ref{ch:vdom-hrbr-interop}}
 
@@ -188,6 +257,192 @@ When the compiler emits a slot, it records the current path (a list of child ind
 \paragraph{Why this works}
 
 The block runtime later parses \texttt{templateHTML} into a DOM tree and walks \texttt{childNodes[index]} repeatedly to locate the slot target.
+
+\subsection{The one gotcha that causes most bugs: \texttt{childNodes} includes text nodes}
+
+If you take nothing else from this chapter, take this:
+
+\begin{quote}
+	extbf{Slot paths are based on DOM \texttt{childNodes}, not \texttt{children}.}
+\end{quote}
+
+That means whitespace and literal text in your template count as nodes.
+So when you look at markup like:
+
+\begin{quote}
+	exttt{<p>Hello \{name()\}</p>}
+\end{quote}
+
+the compiled \texttt{templateHTML} might contain literal spaces or newlines, and those become \texttt{Text} nodes when parsed.
+
+This is also why the tests talk about paths like \texttt{[3, 1]} (not \texttt{[0, 0]}).
+In the Babel snapshot test (\texttt{compiler/\_\_tests\_\_/babel-transform.test.ts}), the template contains indentation and newlines.
+When parsed, they become text nodes that affect indexing.
+
+\subsection{Walkthrough: compute a slot path by hand}
+
+Let\'s do a small thought experiment that matches the compiler\'s rules.
+
+Input TSX:
+
+\begin{lstlisting}[language=JavaScript]
+const App = () => (
+	<section id="root" className={cls()}>
+		<h1>Title</h1>
+		<p>Hello {name()}</p>
+	</section>
+)
+\end{lstlisting}
+
+The Babel transform snapshot illustrates this exact structure as a static template plus two slots:
+
+\begin{itemize}
+\item \texttt{s0}: a \texttt{class} slot on the root element, with \texttt{path: []}
+\item \texttt{s1}: a \texttt{text} slot inside the \texttt{<p>}, with \texttt{path: [3, 1]}
+\end{itemize}
+
+Why \texttt{[3, 1]}?
+
+\begin{itemize}
+\item \texttt{[]} means \"start at the template root element\" (the \texttt{<section>}).
+\item \texttt{3} means \"go to the 4th \texttt{childNodes} entry under \texttt{<section>}\".
+	In formatted templates, the \texttt{childNodes} often look like: newline text, \texttt{<h1>}, newline text, \texttt{<p>}, newline text.
+\item \texttt{1} then means \"go to the 2nd \texttt{childNodes} entry under \texttt{<p>}\".
+		Under \texttt{<p>}, you often have: \texttt{Text('Hello ')} then \texttt{Text('\_\_hrbr\_\_')} (or an empty placeholder) depending on how the compiler encodes it.
+\end{itemize}
+
+This is ugly but reliable.
+And reliability is the whole point: the compiler and runtime just need to agree.
+
+For background on DOM node lists, see MDN:
+\href{https://developer.mozilla.org/en-US/docs/Web/API/Node/childNodes}{https://developer.mozilla.org/en-US/docs/Web/API/Node/childNodes}.
+
+\subsection{What the TS prototype actually returns (and why the reads are empty)}
+
+In \texttt{compiler/index.ts}, \texttt{compileTSXToBlock()} returns:
+
+\begin{itemize}
+\item \texttt{block: \{ templateHTML, slots \}}
+\item \texttt{slots: []} (yes, empty)
+\item \texttt{meta} about dynamic structure, lanes, etc.
+\end{itemize}
+
+That\'s not a bug.
+It\'s an explicit constraint: a string-only compiler doesn\'t have access to the lexical scope where \texttt{count()}, \texttt{cls()}, or \texttt{name()} live.
+So it records the expression source code internally (\texttt{reads: \{key, code\}[]}) but does not pretend it can create closures.
+
+The end-to-end test in \texttt{compiler/\_\_tests\_\_/compiler.e2e.test.ts} shows the intended integration:
+the caller wires in the \texttt{read} closures manually.
+
+\begin{lstlisting}[language=JavaScript]
+const { block } = compileTSXToBlock(`(<div className={count()}>Count</div>)`)
+
+const mounted = mountCompiledBlock(block, host, [
+	{ key: 's0', read: () => count() },
+])
+\end{lstlisting}
+
+The key behavioral contract in that test is worth repeating:
+
+\begin{quote}
+	extbf{Updating signals must never recreate the root element.}
+\end{quote}
+
+In other words, compilation is only useful if it reduces work to \emph{writes}, not \emph{mount/unmount}.
+
+\section{Babel transform: how the output program is shaped}
+
+The Babel plugin in \texttt{compiler/jsx/transform.ts} exists to solve the closure problem.
+It runs inside your real source file, so it can emit \texttt{read: () => expr} in-place.
+
+\subsection{The shape (as asserted by tests)}
+
+The unit tests in \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts} basically define the public contract.
+The transform must emit:
+
+\begin{itemize}
+\item an import from \texttt{relax/hrbr} that includes \texttt{defineBlock} and \texttt{mountCompiledBlock}
+\item a module-scope \texttt{const \_\_hrbr\_block\_N = defineBlock(...)}
+\item component output that returns a \textbf{mount factory}: \texttt{host => \_\_hrbrBlock(host, def, slots)}
+\item a wrapper function \texttt{\_\_hrbrBlock(host, def, slots)} that calls \texttt{mountCompiledBlock(def, host, slots)}
+\end{itemize}
+
+Here\'s the key part of the snapshot (reformatted as teaching code):
+
+\begin{lstlisting}[language=JavaScript]
+import { defineBlock, mountCompiledBlock } from "relax/hrbr";
+
+const __hrbr_block_0 = defineBlock({
+	templateHTML: "<section id=\"root\" class=\"\">\n...",
+	slots: {
+		"s0": { kind: "class", path: [] },
+		"s1": { kind: "text", path: [3, 1] },
+	}
+});
+
+const App = () => host => __hrbrBlock(host, __hrbr_block_0, [
+	{ key: "s0", read: () => cls() },
+	{ key: "s1", read: () => name() },
+]);
+
+function __hrbrBlock(host, def, slots) {
+	return mountCompiledBlock(def, host, slots);
+}
+\end{lstlisting}
+
+There are two deeply important design choices here:
+
+\begin{enumerate}
+\item \textbf{The \texttt{BlockDef} is module-scope data.}
+	It should be created once, not per render.
+\item \textbf{The mount factory is per render, and it closes over reads.}
+	That\'s where \texttt{cls()} and \texttt{name()} are actually in scope.
+\end{enumerate}
+
+This pattern is very similar in spirit to Solid\'s compilation strategy (static DOM + fine-grained updates), though the runtime and APIs differ.
+For a conceptual reference, see:
+\href{https://www.solidjs.com/docs/latest\#compiling}{https://www.solidjs.com/docs/latest\#compiling}.
+
+\subsection{Lane pragmas: compiler-to-scheduler hints without changing semantics}
+
+Both compilers support a tiny \"lane pragma\" syntax:
+
+\begin{lstlisting}[language=JavaScript]
+<div
+	className={/*@lane transition*/ cls()}
+	data-x={/*@lane input*/ x()}
+/>
+\end{lstlisting}
+
+The Babel test asserts that these land in slot metadata as \texttt{lane: "transition"} and \texttt{lane: "input"}.
+
+Why it matters: when you start integrating compilation into an app/runtime scheduler, this gives you a way to nudge \emph{when} updates flush without changing \emph{what} updates mean.
+
+\section{Debugging: when a slot path is wrong}
+
+The most common failure mode when you build a compiler like this is:\
+	extbf{the slot writes go to the wrong node.}
+
+When that happens, you should immediately suspect one of these:
+
+\begin{itemize}
+\item you counted \texttt{children} instead of \texttt{childNodes}
+\item your template string gained or lost whitespace (newlines/indentation)
+\item you treated a void tag as having children (or forgot it closes itself)
+\end{itemize}
+
+\subsection*{Mini-exercise (tests-as-spec)}
+
+Open \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts} and find the inline snapshot where \texttt{path: [3, 1]}.
+Then:
+
+\begin{enumerate}
+\item remove the whitespace/newlines in the template emitter (so the HTML becomes a single line),
+\item update the snapshot, and
+\item explain (in one sentence) why the path changed.
+\end{enumerate}
+
+This is the simplest way to internalize the \texttt{childNodes} rule.
 
 The critical detail is that the compiler counts \emph{every child node} (elements \emph{and} text nodes), because \texttt{childNodes} includes text nodes. In \texttt{compiler/index.ts} this is represented by \texttt{PathState\{ childIndex \}}.
 
@@ -263,6 +518,289 @@ Even when later phases choose to ignore (or reinterpret) these hints, keeping th
 
 \subsection{Fallback decision wrapper: \texttt{compileTSXOrFallback()}}
 
+This wrapper is the ``policy layer'' on top of template extraction.
+It answers one question: \emph{is it safe to run in block mode?}
+
+At the top level, the TS prototype exposes a convenience API:
+	exttt{compileTSXOrFallback(source)}.
+
+Its semantics are intentionally boring:
+
+\begin{lstlisting}[language=JavaScript]
+const res = compileTSXToBlock(source)
+
+if (res.meta.hasDynamicStructure) {
+	return { kind: 'fallback', reason: 'dynamic-structure', meta: res.meta }
+}
+
+return { kind: 'block', ...res }
+\end{lstlisting}
+
+This is important because it makes ``fallback'' a first-class output, not an exception.
+The compiler is allowed to say ``I don't know''.
+
+\section{Dynamic structure detection (what triggers fallback)}
+
+Now we'll make the fuzzy idea from earlier (\emph{structure vs values}) precise.
+The easiest way is to turn the implementation into a checklist.
+
+\subsection{Decision table: TS prototype vs Babel transform}
+
+Relax currently has a \emph{conservative} detector in the TS prototype and a \emph{slightly more permissive} detector in the Babel transform.
+They differ because Babel has access to more information (and can safely reject with fallback by returning \texttt{null} from template building).
+
+\begin{center}
+\begin{tabular}{|p{0.34\textwidth}|p{0.29\textwidth}|p{0.29\textwidth}|}
+\hline
+	extbf{Input pattern} & \textbf{TS prototype (\texttt{compiler/index.ts})} & \textbf{Babel transform (\texttt{compiler/jsx/transform.ts})}\\
+\hline
+Child expression: \texttt{<p>Hello \{expr\}</p>} & Marks \texttt{meta.hasDynamicStructure = true} (always) & Allows only \emph{text-like} expressions; otherwise returns \texttt{null} to route to fallback \\
+\hline
+Conditional/logical children: \texttt{cond ? <A/> : <B/>}, \texttt{cond \&\& <A/>} & Treated as dynamic structure (child expression) & Treated as ``not text-like'' (\texttt{ConditionalExpression}/\texttt{LogicalExpression}); routes to fallback \\
+\hline
+Non-intrinsic tags: \texttt{<Component/>}, \texttt{<Foo.Bar/>} & Marks dynamic structure when tag is not lowercase & Template builder returns \texttt{null} when tag is not a lowercase intrinsic \\
+\hline
+Event handlers: \texttt{onClick=\{fn\}} & Marks dynamic structure (events not representable in static HTML) & Immediately returns \texttt{null} (block mode not supported for events yet) \\
+\hline
+Spread attributes: \texttt{<div \{...props\} />} & Marks dynamic structure (and throws in strict template mode) & Returns \texttt{null} (not supported in block template) \\
+\hline
+Void tags: \texttt{<input/>}, \texttt{<img/>} & Emitted with correct HTML void syntax via \texttt{VOID\_TAGS} & Emitted with a regex-based void-tag check \\
+\hline
+\end{tabular}
+\end{center}
+
+This table is the practical meaning of \emph{``dynamic structure''} in Relax today.
+
+\subsection{Babel's \texttt{isTextLikeExpr}: the tiny heuristic that buys you a lot}
+
+The Babel transform has a helper called \texttt{isTextLikeExpr(expr)}.
+The idea is simple: if a child expression could evaluate to an element/fragment/array, then the template structure isn't stable.
+But if it's always a value that can be written into \texttt{textContent}, we can keep block mode.
+
+From the scaffold (summarized):
+
+\begin{lstlisting}[language=JavaScript]
+function isTextLikeExpr(expr) {
+	if (expr is JSXElement or JSXFragment) return false
+	if (expr is ConditionalExpression) return false
+	if (expr is LogicalExpression) return false
+	return true
+}
+\end{lstlisting}
+
+Notice what this buys us:
+
+\begin{itemize}
+\item \textbf{Text updates stay cheap.} Most UIs do a lot of ``render some string'' work.
+\item \textbf{You can still escape hatch.} The moment an expression might be structural, it falls back.
+\end{itemize}
+
+This is a deliberately small heuristic.
+In later chapters, you'll see how it grows, and how tests keep it honest.
+
+\section{Babel compilation from scratch: how one JSX element becomes a block}
+
+So far we've looked at the \emph{shape} of the output.
+Now we'll build a mental model for the \emph{mechanics} of how the Babel transform creates that output.
+
+The transform in \texttt{compiler/jsx/transform.ts} does three jobs:
+
+\begin{enumerate}
+\item build a static HTML template string
+\item allocate slots + paths for the dynamic parts
+\item emit a mount factory that closes over live reads
+\end{enumerate}
+
+If you understand those three, the whole transform stops feeling magical.
+
+\subsection{Step 1: pick a stable root (or give up)}
+
+The transform only wants to compile stable, intrinsic HTML tags like \texttt{div}, \texttt{section}, and \texttt{button}.
+If the tag is not a lowercase intrinsic (for example \texttt{<Component/>} or \texttt{<Foo.Bar/>}), there is no obvious static HTML representation.
+So the template builder returns \texttt{null}, and the plugin routes to fallback.
+
+Why is this the right default?
+
+\begin{itemize}
+\item In JSX, a capitalized tag means ``call some function and let it return anything''.
+\item That means the compiler can't promise stable structure.
+\end{itemize}
+
+Block mode only works when the compiler can promise that \emph{the same DOM nodes exist forever}.
+
+\subsection{Step 2: render a string that the browser will parse deterministically}
+
+Think of compilation as emitting a \texttt{<template>} string.
+Your compiler isn't building DOM; the browser will.
+So your job is just to produce a string that will be parsed into a stable tree.
+
+That implies two constraints:
+
+\begin{itemize}
+\item \textbf{Void tags matter.} \texttt{<input>} can't accidentally become \texttt{<input></input>}.
+\item \textbf{Whitespace matters.} Newlines/indentation become text nodes and shift \texttt{childNodes} indices.
+\end{itemize}
+
+This is why the snapshot tests in \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts} are so valuable.
+They lock down not just the slot paths, but the \emph{exact} template string (including newlines).
+
+\subsection{Step 3: allocate slots: ``static HTML with holes''}
+
+When the transform sees something dynamic, it does \emph{not} generate DOM operations directly.
+It just records metadata that the runtime knows how to apply later.
+
+You can think of slot allocation as making a table that answers:
+
+\begin{quote}
+When the runtime mounts this template, \emph{where} is the thing to update, and \emph{how} should it be updated?
+\end{quote}
+
+Examples you should expect as you read the code:
+
+\begin{itemize}
+\item \textbf{Attribute slot:} dynamic attribute value (\texttt{kind: 'attr'}).
+\item \textbf{Class slot:} \texttt{className=\{...\}} normalized to \texttt{class} (\texttt{kind: 'class'}).
+\item \textbf{Text slot:} dynamic text content inside an element (\texttt{kind: 'text'}).
+\end{itemize}
+
+Every slot includes a \texttt{path}, which is just a frozen version of the \texttt{childNodes} walk we discussed earlier.
+
+\subsection{Step 4: emit reads as closures (the key Babel advantage)}
+
+The TS prototype can't produce \texttt{read: () => expr} because it doesn't know which variables exist.
+But Babel is transforming your actual file, so it can emit closures that reference \texttt{cls()}, \texttt{name()}, or any local binding.
+
+The key idea is:
+
+\begin{quote}
+	extbf{All dynamic values are read through closures passed to \texttt{mountCompiledBlock()}.}
+\end{quote}
+
+This means compilation doesn't change your state model.
+Signals are still signals.
+The compiler just gives the runtime a faster way to apply their values.
+
+\subsection{Step 5: fallback routing is just ``emit a different mount factory''}
+
+In the Babel plugin, ``fallback'' isn't a special runtime mode.
+It's just a different function call in the generated output:
+
+\begin{itemize}
+\item block mode: emit \texttt{mountCompiledBlock(def, host, compiledSlots)}
+\item fallback mode: emit \texttt{mountFallback(host, () => <JSX...>)} (shape varies as the scaffold evolves)
+\end{itemize}
+
+The important part is the architecture: both modes still return a mount function.
+So the caller doesn't care which one it got.
+
+For conceptual background on why many UI frameworks separate ``render'' from ``commit'' (build a description then apply it), see:
+\href{https://react.dev/learn/render-and-commit}{https://react.dev/learn/render-and-commit}.
+
+\section{Tests as specs: how to validate compiler changes safely}
+
+Compilers are notoriously easy to break with tiny edits.
+Relax deals with this by treating tests as the spec.
+If you're modifying the compiler, keep these two mental buckets:
+
+\begin{itemize}
+\item \textbf{Behavioral contracts:} integration tests that assert DOM stability.
+\item \textbf{Shape contracts:} snapshot tests that assert exact emitted output.
+\end{itemize}
+
+\subsection{Spec-to-test mapping (start here when debugging)}
+
+\begin{itemize}
+\item \textbf{"Don't recreate root DOM" contract:} \texttt{compiler/\_\_tests\_\_/compiler.e2e.test.ts}
+\item \textbf{"Exact codegen shape" contract (imports, defineBlock, wrapper):} \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts}
+\item \textbf{"Path semantics" contract (whitespace affects \texttt{childNodes}):} also \texttt{babel-transform.test.ts} snapshots
+\end{itemize}
+
+When you're unsure whether a change is safe, prefer adding a tiny unit test over adding another heuristic.
+Heuristics get clever; tests keep you honest.
+
+Now we\'ll make the fuzzy idea from earlier (\emph{structure vs values}) precise.
+The easiest way is to turn the implementation into a checklist.
+
+\subsection{Decision table: TS prototype vs Babel transform}
+
+Relax currently has a \emph{conservative} detector in the TS prototype and a \emph{slightly more permissive} detector in the Babel transform.
+They differ because Babel has access to more information (and can safely reject with fallback by returning \texttt{null} from template building).
+
+\begin{center}
+\begin{tabular}{|p{0.34\textwidth}|p{0.29\textwidth}|p{0.29\textwidth}|}
+\hline
+	extbf{Input pattern} & \textbf{TS prototype (\texttt{compiler/index.ts})} & \textbf{Babel transform (\texttt{compiler/jsx/transform.ts})}\\
+\hline
+Child expression: \texttt{<p>Hello \{expr\}</p>} & Marks \texttt{meta.hasDynamicStructure = true} (always) & Allows only \emph{text-like} expressions; otherwise returns \texttt{null} to route to fallback \\
+\hline
+Conditional/logical children: \texttt{cond ? <A/> : <B/>}, \texttt{cond \&\& <A/>} & Treated as dynamic structure (child expression) & Treated as \\"not text-like\\" (\texttt{ConditionalExpression}/\texttt{LogicalExpression}); routes to fallback \\
+\hline
+Non-intrinsic tags: \texttt{<Component/>}, \texttt{<Foo.Bar/>} & Marks dynamic structure when tag is not lowercase & Template builder returns \texttt{null} when tag is not a lowercase intrinsic \\
+\hline
+Event handlers: \texttt{onClick=\{fn\}} & Marks dynamic structure (events not representable in static HTML) & Immediately returns \texttt{null} (block mode not supported for events yet) \\
+\hline
+Spread attributes: \texttt{<div \{...props\} />} & Marks dynamic structure (and throws in strict template mode) & Returns \texttt{null} (not supported in block template) \\
+\hline
+Void tags: \texttt{<input/>}, \texttt{<img/>} & Emitted with correct HTML void syntax via \texttt{VOID\_TAGS} & Emitted with a regex-based void-tag check \\
+\hline
+\end{tabular}
+\end{center}
+
+This table is the practical meaning of \emph{\"dynamic structure\"} in Relax today.
+
+\subsection{Babel\'s \texttt{isTextLikeExpr}: the tiny heuristic that buys you a lot}
+
+The Babel transform has a helper called \texttt{isTextLikeExpr(expr)}.
+The idea is simple: if a child expression could evaluate to an element/fragment/array, then the template structure isn\'t stable.
+But if it\'s always a value that can be written into \texttt{textContent}, we can keep block mode.
+
+From the scaffold (summarized):
+
+\begin{lstlisting}[language=JavaScript]
+function isTextLikeExpr(expr) {
+	if (expr is JSXElement or JSXFragment) return false
+	if (expr is ConditionalExpression) return false
+	if (expr is LogicalExpression) return false
+	return true
+}
+\end{lstlisting}
+
+Notice what this buys us:
+
+\begin{itemize}
+\item \texttt{<span>{count()}</span>} can be compiled as a text slot.
+\item \texttt{<span>{count() > 0 ? <b/> : null}</span>} must go to fallback.
+\end{itemize}
+
+Even though this is conservative, it gets you most of the performance wins for the common case (text/attr/class/style bindings).
+
+\section{How fallback routing looks in the Babel output (scaffold)}
+
+When \texttt{buildTemplateFromJsxElement()} returns \texttt{null}, the plugin constructs a minimal \texttt{mountFallback()} call.
+This is still early-stage code, but it\'s worth understanding the design:
+
+\begin{itemize}
+\item block mode emits a \texttt{BlockDef} and a tight \texttt{CompiledSlot[]} list
+\item fallback emits a \emph{render function} that returns reconciliation specs (create/patch)
+\end{itemize}
+
+That means fallback is not \"VDOM\" in the React sense.
+It\'s a small structural reconciler that still aims to avoid recreating nodes whenever possible.
+
+If you want a conceptual baseline for why compilers do this \"static template + runtime writes\" split, React\'s docs on render/commit are a good mental model:
+\href{https://react.dev/learn/render-and-commit}{https://react.dev/learn/render-and-commit}.
+
+\subsection*{Spec-to-test mapping (what to read next)}
+
+When you\'re debugging compiler behavior, treat these tests as your spec:
+
+\begin{itemize}
+\item \textbf{No DOM recreation on updates}: \texttt{compiler/\_\_tests\_\_/compiler.e2e.test.ts}
+\item \textbf{Output program shape}: \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts}
+\end{itemize}
+
+If a behavior isn't asserted there yet, it's not stable.
+
 \texttt{compileTSXOrFallback()} runs \texttt{compileTSXToBlock()} and then returns:
 
 \begin{itemize}
@@ -337,7 +875,7 @@ It extracts the lane and stores it on the slot metadata.
 Later chapters will connect this to the deterministic scheduler.
 
 Concretely, \texttt{extractLanePragmaFromExpressionContainer()} scans leading comments for a pattern like:\\
-	exttt{@lane transition}.
+	texttt{@lane transition}.
 When found, the compiler attaches \texttt{lane: "transition"} to the slot metadata object.
 
 \section{Tests-as-spec}
@@ -358,6 +896,7 @@ In the rest of this section, we'll treat the tests as a specification of the com
 We won't run them here, but reading them tells you what changes are allowed without breaking the public contract.
 
 \subsection{Unit tests (TS): compile + mount sanity}
+
 
 	extbf{File:} \texttt{compiler/\_\_tests\_\_/compiler.test.ts}
 
@@ -389,6 +928,7 @@ This test also documents a scheduling assumption: it comments that HRBR scheduli
 
 \subsection{Babel transform unit tests: shape of emitted program}
 
+
 	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts}
 
 These tests assert that the plugin is producing the intended \emph{program shape}:
@@ -411,6 +951,7 @@ The suite also asserts two ``developer experience'' guarantees:
 
 \subsection{Babel transform errors: the intentional block-mode subset}
 
+
 	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.errors.test.ts}
 
 This suite documents what is currently \emph{rejected} in block mode:
@@ -425,6 +966,7 @@ This suite documents what is currently \emph{rejected} in block mode:
 Even if future versions route these to fallback instead of throwing, the existence of these tests is useful: it makes the current compilation subset explicit and prevents accidental expansion that would silently generate incorrect templates.
 
 \subsection{Babel transform E2E (jsdom): evaluate emitted literals + mount}
+
 
 	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.e2e-jsdom.test.ts}
 
@@ -441,7 +983,124 @@ Notable aspects:
 
 This approximates how ``real code'' will behave: the compile-time output must work with runtime scope (signals) and produce stable DOM.
 
+\section{Worked example: derive \texttt{templateHTML} and slot paths from the snapshot}
+
+Now we\'ll do the most valuable ``learn it from scratch'' exercise: take the golden snapshot in
+	exttt{compiler/\_\_tests\_\_/babel-transform.test.ts} and derive the template and slot paths by hand.
+If you can do this once, debugging a compiler becomes much less mysterious.
+
+\subsection{The input JSX (what the author writes)}
+
+The snapshot test compiles this input:
+
+\begin{lstlisting}[language=JavaScript]
+const App = () => (
+	<section id="root" className={cls()}>
+		<h1>Title</h1>
+		<p>Hello {name()}</p>
+	</section>
+)
+\end{lstlisting}
+
+At a high level, the compiler must split this into:
+
+\begin{itemize}
+\item \textbf{Structure:} a static HTML template string.
+\item \textbf{Values:} a list of dynamic slots with deterministic DOM paths.
+\end{itemize}
+
+\subsection{Step 1: the static template string (structure + placeholders)}
+
+In the normalized snapshot, the transform emits a \texttt{defineBlock({ templateHTML, slots })} where \texttt{templateHTML} is a single string.
+It contains the \texttt{<section>} with \texttt{id="root"}, plus an empty \texttt{class=""} placeholder.
+
+In the snapshot, the template also includes indentation and newlines.
+That\'s not just cosmetic: when the runtime parses HTML, whitespace becomes text nodes.
+
+Why the placeholders matter:
+
+\begin{itemize}
+\item \texttt{className=\{cls()\}} becomes \texttt{class=""} in the template so the runtime can later write the real attribute value.
+\item \texttt{Hello \{name()\}} becomes \texttt{Hello  } in the template (leaving a stable ``spot'' for the text slot).
+\end{itemize}
+
+If you ever see a compiler try to ``just concatenate strings'' at runtime, this is the key difference: HRBR wants the template to be parsed once, and then updated via direct DOM writes.
+
+\subsection{Step 2: the slot declarations (what to write + where to write it)}
+
+The same snapshot asserts two slot declarations:
+
+\begin{itemize}
+\item \texttt{s0}: \texttt{kind: "class"}, \texttt{path: []}
+\item \texttt{s1}: \texttt{kind: "text"}, \texttt{path: [3, 1]}
+\end{itemize}
+
+Think of \texttt{path} as a precomputed set of array indexes into \texttt{childNodes}.
+No search. No diff. Just indexing.
+
+\subsection{Step 3: compute \texttt{path: [3, 1]} by hand (the whitespace trap)}
+
+We\'ll compute \texttt{[3, 1]} mechanically.
+
+First hop: \texttt{3} means we\'re selecting \texttt{section.childNodes[3]}.
+Because the template contains whitespace between elements, the \texttt{childNodes} list includes \emph{text nodes}:
+
+\begin{enumerate}
+\item \texttt{childNodes[0]}: text (newline/indent before \texttt{<h1>})
+\item \texttt{childNodes[1]}: \texttt{<h1>}
+\item \texttt{childNodes[2]}: text (newline/indent between \texttt{</h1>} and \texttt{<p>})
+\item \texttt{childNodes[3]}: \texttt{<p>}
+\item \texttt{childNodes[4]}: text (newline/indent before \texttt{</section>})
+\end{enumerate}
+
+So hop 1 lands on the \texttt{<p>}.
+
+Second hop: \texttt{1} means \texttt{p.childNodes[1]}.
+The \texttt{<p>} contains static text (\texttt{Hello }) plus a dynamic text slot.
+The compiler\'s job is to ensure there\'s a stable text node representing the dynamic value.
+So we get:
+
+\begin{itemize}
+\item \texttt{p.childNodes[0]}: text node for \texttt{"Hello "}
+\item \texttt{p.childNodes[1]}: text node that will receive \texttt{name()} updates
+\end{itemize}
+
+That\'s what \texttt{path: [3, 1]} means: ``the second text node inside the paragraph.''
+
+This is the most important compiler invariant in HRBR: if you change the template emitter and accidentally add/remove whitespace, you can shift every downstream path.
+
+\subsection{Step 4: compiled slot readers (how values cross the boundary)}
+
+The final piece the snapshot asserts is the compiled slot array literal:
+
+\begin{lstlisting}[language=JavaScript]
+const App = () => host => __hrbrBlock(host, __hrbr_block_0, [
+	{ key: "s0", read: () => cls() },
+	{ key: "s1", read: () => name() },
+])
+\end{lstlisting}
+
+This is where Babel shines: \texttt{read} is a closure in the output program.
+There\'s no serialization format for expressions.
+The emitted code just calls the original functions.
+
+\subsection{Debugging checklist (tests-first)}
+
+When a compiled block updates the wrong node, treat it like a deterministic math error.
+Use the tests to narrow it down:
+
+\begin{enumerate}
+\item Check the snapshot: \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts}.
+  If your change modified whitespace in \texttt{templateHTML}, you probably shifted paths.
+\item Recompute the \texttt{childNodes} list by hand and see if the asserted \texttt{path} still lands on the intended node.
+\item Run the E2E that actually mounts the evaluated literals:
+  	exttt{compiler/\_\_tests\_\_/babel-transform.e2e-jsdom.test.ts}.
+\end{enumerate}
+
+If you get into the habit of adding a snapshot test first, you\'ll catch most path regressions before they reach runtime.
+
 \subsection{Babel fallback E2E (jsdom): structural expression routes to \texttt{mountFallback}}
+
 
 	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.fallback.e2e-jsdom.test.ts}
 

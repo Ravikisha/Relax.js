@@ -4,6 +4,41 @@
 This chapter covers the experimental interop layer that allows compiled HRBR output to live \emph{inside} a Relax VDOM tree.
 The goal is practical: you can adopt HRBR incrementally (or only for hot paths) without rewriting your whole app.
 
+\subsection*{What you\'ll build}
+
+By the end of the chapter you\'ll be able to:
+
+\begin{itemize}
+\item return an HRBR block from a normal Relax VDOM component (mixed trees)
+\item understand why HRBR needs a wrapper host element and why that host is the thing the VDOM ``owns''
+\item predict when patching will reuse an existing HRBR instance vs dispose/destroy/remount it
+\item reason about event handler binding semantics when HRBR uses VDOM-style component instances
+\end{itemize}
+
+\subsection*{Prerequisites}
+
+You should already be comfortable with:
+
+\begin{itemize}
+\item the Relax vnode model (Chapter~\ref{ch:vnode-model})
+\item the mount/patch/destroy split in the DOM runtime (Chapters on \texttt{mountDOM} and \texttt{patchDOM})
+\item the HRBR mental model: ``mount into a host, then the runtime owns what\'s inside''
+\end{itemize}
+
+\subsection*{Why this matters (the real-world motivation)}
+
+In production UIs, you rarely get to rewrite everything.
+Interop gives you a migration path:
+
+\begin{itemize}
+\item keep most of the app in VDOM where the ergonomics are great
+\item drop in HRBR for hotspots (large lists, heavy patching, micro-interactions) where you want tighter control
+\item avoid building ``two apps'' and stitching them manually
+\end{itemize}
+
+This design is also a useful general lesson: if you ever embed one rendering runtime into another, you need a \emph{boundary object} that both runtimes can agree on.
+In Relax, that boundary object is a wrapper host element.
+
 \section*{Diagram: where HRBR sits inside a VDOM tree}
 \begin{center}
 \begin{tikzpicture}[
@@ -37,7 +72,7 @@ The HRBR vnode type is defined as \texttt{HrbrVNode}:
 \end{itemize}
 
 The important part is that \texttt{mount} is referentially meaningful. Two HRBR vnodes are treated as the ``same'' subtree iff:\\
-	exttt{old.mount === new.mount}.
+	texttt{old.mount === new.mount}.
 
 In other words, \emph{mount factory identity is the key}. This identity flows through three separate places that must agree:
 
@@ -48,6 +83,29 @@ In other words, \emph{mount factory identity is the key}. This identity flows th
 \end{itemize}
 
 This isn't an accident: it lets the VDOM runtime treat HRBR the same way it treats components. ``Same function identity'' means ``keep state/instance''.
+
+\subsection{A tiny contract you can hold in your head}
+
+If you forget everything else, remember this:
+
+\begin{quote}
+The VDOM runtime treats an HRBR vnode like a component instance whose ``type'' is the \texttt{mount} function identity.
+\end{quote}
+
+That yields a very concrete set of guarantees (and constraints):
+
+\begin{itemize}
+\item If you keep returning the same \texttt{mount} function (same reference), you keep the same mounted HRBR instance.
+\item If you return a new \texttt{mount} function reference, you are asking the VDOM runtime to throw away and rebuild that subtree.
+\item The VDOM runtime does \emph{not} diff the DOM inside the HRBR host. That\'s HRBR\'s job.
+\end{itemize}
+
+This kind of contract shows up in many UI runtimes:
+
+\begin{itemize}
+\item React treats function component identity as the key to preserving state (``same function, same hooks state''). See \href{https://react.dev/learn/preserving-and-resetting-state}{https://react.dev/learn/preserving-and-resetting-state}.
+\item Solid treats compiled templates as stable ``owners'' that update reactive expressions without remounting DOM. See \href{https://www.solidjs.com/docs/latest\#the-compiler}{https://www.solidjs.com/docs/latest\#the-compiler}.
+\end{itemize}
 
 \subsection{HRBR instances: a minimal lifecycle interface}
 
@@ -70,6 +128,23 @@ The helper \texttt{hBlock()} in \texttt{src/h.ts} wraps a mount factory into an 
 \end{quote}
 
 This is the shape the compiler produces (or that you can use manually for experiments).
+
+\subsubsection*{Code: the actual \texttt{hBlock()} helper}
+
+The source implementation is intentionally tiny: it\'s just a tagged vnode:
+
+\begin{lstlisting}[language=JavaScript]
+function hBlock(mount) {
+	return { type: DOM_TYPES.HRBR, mount }
+}
+\end{lstlisting}
+
+That simplicity is a feature:
+
+\begin{itemize}
+\item the VDOM runtime doesn\'t need to know about blocks, templates, or signals
+\item HRBR is ``just another vnode type'' as far as mount/patch/destroy are concerned
+\end{itemize}
 
 \section{Mounting: why HRBR gets its own host container}
 
@@ -111,6 +186,17 @@ So \texttt{createHrbrNode()} intentionally makes the wrapper the unit of ownersh
 \end{itemize}
 
 Even though the vnode type includes an \texttt{el?: Element} field described as ``first element produced by the block'' in \texttt{src/h.ts}, the mount code currently treats \texttt{el} as the wrapper host. This aligns with ``VDOM owns the wrapper, HRBR owns the inside''.
+
+\subsection{Edge cases this design avoids}
+
+Owning the wrapper host solves a bunch of subtle problems you\'ll hit otherwise:
+
+\begin{itemize}
+\item \textbf{Replace correctness:} VDOM replace logic can always locate the subtree by scanning for \texttt{oldVdom.el} among direct children.
+\item \textbf{Move correctness:} keyed reorders can move one DOM node (the wrapper) instead of trying to reason about a variable-length range of nodes.
+\item \textbf{Encapsulation:} HRBR can freely insert/remove/patch children inside the host without violating VDOM invariants.
+\item \textbf{Teardown safety:} removing the host element guarantees the whole subtree is gone, even if an inner runtime makes mistakes.
+\end{itemize}
 
 \subsection*{Diagram: mount path (VDOM creates host, HRBR fills it)}
 \begin{center}
@@ -160,6 +246,26 @@ In the actual implementation, the fast path copies internal bookkeeping from the
 
 That copy step is important because the patcher returns the \emph{new} vnode object, and subsequent patches/destroys must be able to reach the original HRBR host and instance.
 
+\subsubsection*{Code: fast-path reuse in \texttt{patchHrbr()}}
+
+The happy path is just a bookkeeping transfer:
+
+\begin{lstlisting}[language=JavaScript]
+function patchHrbr(oldVdom, newVdom) {
+	if (oldVdom.mount === newVdom.mount) {
+		// Keep the existing already-mounted instance.
+		newVdom.host = oldVdom.host
+		newVdom.instance = oldVdom.instance
+		newVdom.el = oldVdom.el
+		return
+	}
+
+	// ...remount path...
+}
+\end{lstlisting}
+
+When you get this right, an HRBR subtree behaves like a normal component subtree with preserved state.
+
 \subsection*{Diagram: patch decision (reuse vs remount)}
 \begin{center}
 \begin{tikzpicture}[
@@ -199,6 +305,36 @@ Note the interplay with \texttt{areNodesEqual()}:
 \end{itemize}
 
 This makes HRBR a first-class citizen in the patcher without teaching the patcher HRBR internals.
+
+\subsubsection*{Code: remount ordering (dispose, destroy, clear, mount)}
+
+The slow path is still small, but order matters:
+
+\begin{lstlisting}[language=JavaScript]
+function patchHrbr(oldVdom, newVdom) {
+	if (oldVdom.mount === newVdom.mount) return
+
+	const host = oldVdom.host
+	const inst = oldVdom.instance
+
+	// 1) detach reactivity / cancel scheduled work
+	if (inst && inst.dispose) inst.dispose()
+
+	// 2) cleanup DOM and internal state
+	if (inst && inst.destroy) inst.destroy()
+
+	// 3) ensure the host is empty even if destroy() was partial
+	while (host.firstChild) host.removeChild(host.firstChild)
+
+	// 4) mount the new subtree into the same wrapper host
+	const nextInst = newVdom.mount(host)
+	newVdom.host = host
+	newVdom.instance = nextInst
+}
+\end{lstlisting}
+
+There\'s a deliberate ``belt and suspenders'' step here: even if \texttt{destroy()} forgets to remove some nodes, the host is forcibly emptied.
+That makes remounts deterministic.
 
 \subsection{A note on where remounts happen}
 
@@ -258,6 +394,88 @@ This pattern matches the rest of the HRBR runtime in this book:
 \item \texttt{dispose()} is for disconnecting from reactive graphs (signals/effects) and releasing scheduled work.
 \item \texttt{destroy()} is for deterministic DOM cleanup, including nested mounts.
 \end{itemize}
+
+\section{Tests as specs: what the integration tests guarantee}
+
+The behavior in this chapter is backed by a small integration test suite in:
+
+\begin{quote}
+	exttt{src/\_\_tests\_\_/hrbr-integration.test.ts}
+\end{quote}
+
+It\'s worth reading these tests like a contract.
+Here are the key guarantees they encode.
+
+\subsection{Mounting an HRBR block returned from a VDOM component}
+
+The first test verifies a basic shape: a VDOM component can return \texttt{hBlock(mount)}, and mounting the VDOM tree calls \texttt{mount(host)} exactly once.
+
+\begin{lstlisting}[language=JavaScript]
+const mount = (host) => {
+	const el = document.createElement('div')
+	el.textContent = 'HRBR'
+	host.appendChild(el)
+	return { destroy() { host.innerHTML = '' } }
+}
+
+const Comp = defineComponent({
+	render() {
+		return hBlock(mount)
+	},
+})
+\end{lstlisting}
+
+The point of this test isn\'t the DOM details.
+It\'s the ownership boundary: the VDOM runtime gives you a host element, and you\'re free to fill it.
+
+\subsection{Patching: stable mount function preserves instance}
+
+Another test asserts the most important property: if the mount factory is stable, patching doesn\'t remount.
+
+Implementation detail: this works because \texttt{src/nodes-equal.ts} defines HRBR vnode equality as \texttt{old.mount === new.mount}.
+
+\subsection{Patching: changing mount function forces remount}
+
+Finally, a test changes the function identity and expects a dispose/destroy/remount into the same host.
+This is the contract you lean on when you want to intentionally reset an HRBR subtree.
+
+\section{Common pitfalls (and how to avoid them)}
+
+\subsection{Pitfall: creating a new mount function every render}
+
+If you write:
+
+\begin{lstlisting}[language=JavaScript]
+render() {
+	return hBlock((host) => mountBlock(def, host, slots))
+}
+\end{lstlisting}
+
+then you\'re creating a new function every render, so patching will treat it as a different subtree and remount.
+
+Fix: hoist the mount function to a stable reference (module scope, constructor/init, memo), or structure your API so the mount function is stable and you pass changing values via an \texttt{update()} hook.
+
+\subsection{Pitfall: forgetting that VDOM owns the wrapper, not the inner nodes}
+
+When writing debugging tools or DOM traversal helpers, don\'t assume the HRBR subtree\'s ``root element'' is a direct child of the VDOM parent.
+The direct child is always the wrapper host (currently \texttt{<span data-hrbr="1">}).
+
+\subsection{Pitfall: leaking event handlers without a teardown hook}
+
+If an HRBR runtime attaches global listeners (\texttt{window}, \texttt{document}) or schedules work, it should put the cleanup in \texttt{dispose()} and/or \texttt{destroy()}.
+The VDOM layer will faithfully call them.
+
+\section{Mini-exercise: design an HRBR block API that updates without remounting}
+
+Goal: avoid remounting on every render.
+
+\begin{enumerate}
+\item Define a block mount factory that returns \texttt{\{ update(values), destroy() \}}.
+\item Keep the \texttt{mount} function reference stable.
+\item On VDOM component updates, call \texttt{instance.update(nextValues)} instead of returning a brand new mount function.
+\end{enumerate}
+
+This is the same idea as ``props update'' in a component system, just expressed as a tiny imperative contract at the boundary.
 
 The VDOM runtime calls both (when present) so HRBR implementations can keep those concerns separate.
 

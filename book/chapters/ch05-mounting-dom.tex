@@ -2,6 +2,14 @@
 
 This chapter is about the first half of the renderer: taking the data structures from \texttt{src/h.ts} and producing real DOM nodes.
 
+I'm going to teach mounting the way I teach any system that mutates state:
+
+\begin{enumerate}
+  \item Define the \textbf{contract} (inputs/outputs/failure modes).
+  \item Define the \textbf{invariants} we keep true after each step.
+  \item Walk the code path \emph{by node type}, because real renderers are dispatchers.
+\end{enumerate}
+
 In Relax there's a clean separation:
 
 \begin{itemize}
@@ -39,8 +47,57 @@ The entry point is \texttt{mountDOM(vdom, parentEl, index?, hostComponent?)} in 
 
 The tests in \texttt{src/\_\_tests\_\_/mount-dom.test.ts} include a couple of ``guardrail'' cases that assert these errors exist.
 
+\subsection*{Two subtle but crucial invariants}
+When mounting is correct, these invariants hold and the rest of the runtime can be simpler:
+
+\begin{enumerate}
+  \item \textbf{Back-references exist:} every mounted vnode that conceptually ``owns'' a DOM node sets \texttt{vdom.el}.
+  \item \textbf{Cleanup data exists:} element vnodes store their concrete listener wrapper functions in \texttt{vdom.listeners}.
+\end{enumerate}
+
+Those two fields are what make later patching and destroying possible without extra DOM queries.
+
 \section{The central pattern: dispatch by \texttt{vdom.type}}
-    exttt{mountDOM()} is a type-dispatcher. In code it's a \texttt{switch (vdom.type)} that delegates to one helper per vnode kind:
+	exttt{mountDOM()} is a type-dispatcher. In code it's a \texttt{switch (vdom.type)} that delegates to one helper per vnode kind.
+
+\subsection*{Code: the actual dispatch loop}
+This is the heart of \texttt{src/mount-dom.ts}:
+
+\begin{lstlisting}[language=JavaScript]
+export function mountDOM(vdom, parentEl, index, hostComponent = null) {
+  if (parentEl == null) {
+    throw new Error('[mountDOM] Parent element is null')
+  }
+
+  switch (vdom.type) {
+    case DOM_TYPES.TEXT:
+      createTextNode(vdom, parentEl, index)
+      break
+    case DOM_TYPES.ELEMENT:
+      createElementNode(vdom, parentEl, index, hostComponent)
+      break
+    case DOM_TYPES.FRAGMENT:
+      createFragmentNodes(vdom, parentEl, index, hostComponent)
+      break
+    case DOM_TYPES.COMPONENT:
+      createComponentNode(vdom, parentEl, index, hostComponent)
+      enqueueJob(() => vdom.component.onMounted())
+      break
+    case DOM_TYPES.HRBR:
+      createHrbrNode(vdom, parentEl, index)
+      break
+    default:
+      throw new Error(`Can't mount DOM of type: ${vdom.type}`)
+  }
+}
+\end{lstlisting}
+
+There are two design choices worth noticing right away:
+
+\begin{itemize}
+  \item Components schedule \texttt{onMounted()} via the job queue instead of running it inline.
+  \item HRBR mounting is isolated behind a host container element so it can be treated as a unit.
+\end{itemize}
 
 \begin{itemize}
   \item \texttt{createTextNode} for \texttt{DOM\_TYPES.TEXT}
@@ -92,7 +149,7 @@ For \texttt{TextVNode}, mounting is:
 \end{enumerate}
 
 \subsection*{What the tests prove}
-  	exttt{src/\_\_tests\_\_/mount-dom.test.ts} contains two small tests that act like a contract:
+  	texttt{src/\_\_tests\_\_/mount-dom.test.ts} contains two small tests that act like a contract:
 
 \begin{itemize}
   \item \texttt{mount a text element in a host element}: asserts the DOM contains \texttt{hello}.
@@ -115,7 +172,7 @@ For \texttt{ElementVNode}, Relax mounts in a deliberate order:
 The most important concept here is that Relax treats events specially.
 
 \subsection{\texttt{addProps}: extracting attrs vs. events}
-  	exttt{addProps()} calls \texttt{extractPropsAndEvents(vdom)} (from \texttt{src/utils/props.ts}). The return value is split into:
+  	texttt{addProps()} calls \texttt{extractPropsAndEvents(vdom)} (from \texttt{src/utils/props.ts}). The return value is split into:
 
 \begin{itemize}
   \item \textbf{attrs}: everything that becomes DOM attributes/properties (\texttt{id}, \texttt{class}, \texttt{style}, \texttt{data-*}, etc).
@@ -131,6 +188,27 @@ Then mounting wires two subsystems:
 
 That \texttt{vdom.listeners} back-reference is critical later in Chapter~9: destroying uses it to remove listeners even if the vnode is no longer in the DOM.
 
+\subsection*{Code: attributes vs. events are wired by two different subsystems}
+This little helper function is worth memorizing:
+
+\begin{lstlisting}[language=JavaScript]
+function addProps(el, vdom, hostComponent) {
+  const { props: attrs, events } = extractPropsAndEvents(vdom)
+
+  vdom.listeners = addEventListeners(events, el, hostComponent)
+  setAttributes(el, attrs)
+}
+\end{lstlisting}
+
+The important point isn't ``how to set an attribute''; it's \emph{where the boundary is}:
+
+\begin{itemize}
+  \item Events are installed through a wrapper so patching can update handlers without leaking listeners.
+  \item Attributes are applied directly and are purely data-driven.
+\end{itemize}
+
+We'll dive deeper into listener stability in Chapter~7.
+
 \subsection*{What the tests prove}
 The tests in \texttt{src/\_\_tests\_\_/mount-dom.test.ts} cover a small but meaningful matrix:
 
@@ -143,7 +221,7 @@ The tests in \texttt{src/\_\_tests\_\_/mount-dom.test.ts} cover a small but mean
 These are not ``just tests'', they are a spec for how Relax converts the VNode \texttt{props} object into real DOM behavior.
 
 \section{Event handler binding: the meaning of \texttt{hostComponent}}
-  	exttt{mountDOM()} accepts an optional \texttt{hostComponent} argument, which gets threaded into \texttt{createElementNode(...)} and ultimately into \texttt{addEventListeners(...)}.
+  	texttt{mountDOM()} accepts an optional \texttt{hostComponent} argument, which gets threaded into \texttt{createElementNode(...)} and ultimately into \texttt{addEventListeners(...)}.
 
 \subsection*{Diagram: how \texttt{hostComponent} flows into events}
 
@@ -178,6 +256,18 @@ The test \texttt{where there is a host component, the event handlers are bound t
 
 This is a key piece of ``component semantics'' even though it's implemented entirely inside the mounting layer.
 
+\subsection*{From scratch: why I like this explicit \texttt{hostComponent} thread}
+Many frameworks hide handler binding behind closures.
+That works, but it makes patching harder because you constantly allocate new function identities.
+
+Relax takes a more systems-y stance:
+
+\begin{quote}
+  Event listeners are installed once, and the wrapper decides what \texttt{this} should be.
+\end{quote}
+
+That gives you an explicit place to encode semantics (bind to component instance when present) and it makes garbage pressure more predictable.
+
 \section{Fragments: \texttt{createFragmentNodes} and insertion indices}
 Fragments are the trickiest type to mount because a fragment is ``many nodes''.
 
@@ -188,6 +278,38 @@ Relax's move is simple:
 \end{quote}
 
 That is, a fragment doesn't own a DOM node. Instead, it keeps a reference to the container it was mounted in.
+
+\subsection*{Code: the fragment mount loop and the shifting index}
+This loop is the entire reason fragments are a little tricky:
+
+\begin{lstlisting}[language=JavaScript]
+function createFragmentNodes(vdom, parentEl, index, hostComponent) {
+  const { children } = vdom
+  vdom.el = parentEl
+
+  let idx = index ?? null
+  for (const child of children) {
+    mountDOM(child, parentEl, idx, hostComponent)
+
+    if (idx == null) {
+      continue
+    }
+
+    switch (child.type) {
+      case DOM_TYPES.FRAGMENT:
+        idx += child.children.length
+        break
+      case DOM_TYPES.COMPONENT:
+        idx += child.component.elements.length
+        break
+      default:
+        idx++
+    }
+  }
+}
+\end{lstlisting}
+
+If you want to understand why patching later is careful about indices, start here.
 
 \subsection{The index problem}
 When mounting into an explicit \texttt{index}, you want fragment children to appear starting at that position.
@@ -212,7 +334,7 @@ This design implies a subtle contract with the component implementation: compone
 You'll revisit that in the component lifecycle chapters.
 
 \subsection*{What the tests prove}
-  	exttt{src/\_\_tests\_\_/mount-dom.test.ts} contains several important fragment tests:
+  	texttt{src/\_\_tests\_\_/mount-dom.test.ts} contains several important fragment tests:
 
 \begin{itemize}
   \item \texttt{mount a fragment in a host element} and \texttt{mount a fragment inside a fragment...}: show that fragments flatten naturally at mount time.
@@ -239,14 +361,33 @@ The last step is important: a component vnode cannot point to ``the component'' 
 Immediately after creating a component node, \texttt{mountDOM()} enqueues a lifecycle callback:
 
 \begin{quote}
-  	exttt{enqueueJob(() => vdom.component.onMounted())}
+  	texttt{enqueueJob(() => vdom.component.onMounted())}
 \end{quote}
 
 So \texttt{onMounted()} is intentionally asynchronous relative to ``the DOM nodes now exist''.
 This approach avoids re-entrancy hazards (mount causing mount causing mount) and aligns with how many UI systems schedule lifecycle effects.
 
+\subsection*{From scratch: why schedule \texttt{onMounted} instead of calling it directly?}
+Calling lifecycle hooks synchronously during mount makes it easy to write code that accidentally mutates the tree while you are still building it.
+That creates re-entrancy hazards like:
+
+\begin{itemize}
+  \item a component mounting triggers state updates
+  \item those updates trigger patching
+  \item patching now operates on a partially mounted tree
+\end{itemize}
+
+The job queue turns that into a two-phase commit:
+
+\begin{enumerate}
+  \item Mount builds the DOM and installs listeners.
+  \item Jobs run afterward, when invariants are established.
+\end{enumerate}
+
+This theme will show up again in scheduling (Chapter~10).
+
 \subsection*{What the tests prove}
-  	exttt{src/\_\_tests\_\_/mount-dom.test.ts} exercises component creation and parent-child links:
+  	texttt{src/\_\_tests\_\_/mount-dom.test.ts} exercises component creation and parent-child links:
 
 \begin{itemize}
   \item \texttt{mount a component with props}: shows that props are passed in and the instance is stored.
@@ -269,6 +410,25 @@ HRBR nodes are mounted by allocating a dedicated host container element:
 
 The comment in \texttt{src/mount-dom.ts} is worth repeating: \textbf{VDOM owns the host container, not the host's first child.} Patch logic later locates nodes by \texttt{oldVdom.el}; if \texttt{el} pointed inside HRBR output, replacement/removal would get the wrong DOM index.
 
+\subsection*{Code: HRBR host container rationale as an explicit comment}
+The implementation makes this policy explicit:
+
+\begin{lstlisting}[language=JavaScript]
+function createHrbrNode(vdom, parentEl, index) {
+  const host = document.createElement('span')
+  host.dataset.hrbr = '1'
+  vdom.host = host
+  insert(host, parentEl, index)
+
+  const instance = vdom.mount(host)
+  vdom.instance = instance
+
+  // IMPORTANT: `vdom.el` must point at the actual DOM node the VDOM owns.
+  // For HRBR we own the host container, not the host's first child.
+  vdom.el = host
+}
+\end{lstlisting}
+
 \subsection*{What the tests prove}
 While the mounting tests live in \texttt{mount-dom.test.ts}, HRBR mounting is exercised via integration tests in \texttt{src/\_\_tests\_\_/hrbr-integration.test.ts}.
 Those tests treat HRBR blocks as ``just another vnode type'' and assert:
@@ -290,6 +450,31 @@ Everything ultimately goes through \texttt{insert()}, which implements four rule
 \end{itemize}
 
 The tests include a negative-index case (throws) and several index-sensitive fragment suites.
+
+\subsection*{Code: \texttt{insert()} encodes your DOM insertion policy}
+This helper is the "last mile" for every vnode type:
+
+\begin{lstlisting}[language=JavaScript]
+function insert(el, parentEl, index) {
+  if (index == null) {
+    parentEl.append(el)
+    return
+  }
+
+  if (index < 0) {
+    throw new Error(`Index must be a positive integer, got ${index}`)
+  }
+
+  const children = parentEl.childNodes
+  if (index >= children.length) {
+    parentEl.append(el)
+  } else {
+    parentEl.insertBefore(el, children[index] ?? null)
+  }
+}
+\end{lstlisting}
+
+If you ever see a renderer bug where nodes show up in the wrong order, \texttt{insert()} and fragment indexing are the first two places I look.
 
 \section{Mini-exercises}
 \begin{enumerate}

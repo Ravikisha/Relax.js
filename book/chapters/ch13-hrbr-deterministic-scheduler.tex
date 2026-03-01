@@ -2,6 +2,17 @@
 
 Signals answer \emph{what} should re-run. A scheduler answers \emph{when} and in what order.
 
+This chapter is the bridge from ``reactivity is correct'' to ``reactivity feels fast''.
+Correctness is table stakes.
+The hard part in UI systems is correctness \emph{under time pressure}: you get 16ms for a 60Hz frame, and you don't control when the browser will deliver input.
+
+If you're coming from React, the intuition you already have is that work can be prioritized and time-sliced.
+React's documentation explains the conceptual split between render and commit (and why keeping commits responsive matters):
+\href{https://react.dev/learn/render-and-commit}{https://react.dev/learn/render-and-commit}.
+
+If you're coming from Solid, you already know the ``signals + effects'' world; this scheduler is the HRBR answer to: ``when should effects flush, and how do we avoid long synchronous waves?''
+Background reading: \href{https://www.solidjs.com/docs/latest#scheduling}{https://www.solidjs.com/docs/latest\#scheduling}.
+
 In HRBR, scheduling is part of the public contract. We want:
 
 \begin{itemize}
@@ -20,6 +31,19 @@ This chapter is grounded in:
 \end{itemize}
 
 \section{The contract: schedules tasks, flushes deterministically}
+
+\subsection{Why a scheduler exists (not just ``because React has one'')}
+
+Chapter~12 showed how signals can precisely compute \emph{what} is dirty.
+However, once you have a list of dirty computations, you still need policy:
+
+\begin{itemize}
+  \item \textbf{Latency policy}: should an update run now (input), soon (default), or later (idle)?
+  \item \textbf{Budget policy}: how long can the runtime keep running tasks before yielding?
+  \item \textbf{Determinism policy}: when multiple tasks are eligible, what is the stable tie-breaker?
+\end{itemize}
+
+The HRBR scheduler makes these policies explicit and testable.
 
 The scheduler exports three main concepts (see \texttt{runtime/scheduler.ts}):
 
@@ -40,6 +64,37 @@ The returned scheduler exposes:
 \end{itemize}
 
 The tests treat these as the source of truth.
+
+\subsection{A concrete mental model: 5 queues + 1 deterministic pick loop}
+
+At runtime you can picture five arrays (one per lane), and a function that repeatedly:
+
+\begin{enumerate}
+  \item optionally promotes one starving head task
+  \item picks the next lane in fixed order
+  \item shifts one task and runs it
+  \item stops when its time budget is exhausted
+\end{enumerate}
+
+Even the ``browser integration'' is just a \texttt{requestFlush(cb)} option (\texttt{setTimeout}, \texttt{MessageChannel}, or \texttt{requestAnimationFrame}).
+
+\begin{lstlisting}[language=JavaScript]
+import { createBrowserScheduler } from './runtime/scheduler'
+
+// In the browser you can pick a flushing strategy.
+const scheduler = createBrowserScheduler({
+  strategy: 'messageChannel',
+  defaultBudgetMs: 5,
+})
+
+scheduler.schedule('input', () => {
+  // keep interactions snappy
+})
+
+scheduler.schedule('idle', () => {
+  // background bookkeeping
+})
+\end{lstlisting}
 
 \paragraph{A tiny scheduler contract}
 
@@ -73,6 +128,19 @@ But the scheduler's actual selection order is hard-coded as an array:
 \end{verbatim}
 
 Spec: \texttt{runs tasks by lane priority (sync > input > default > transition > idle)}.
+
+\subsection{What lanes are (and what they are not)}
+
+It's easy to overthink lanes.
+In HRBR they're not threads, not preemption, and not ``multiprocessing''.
+A lane is just a \emph{label} on a task that determines its relative ordering.
+
+This matters because it keeps the model honest:
+
+\begin{itemize}
+  \item tasks still run to completion
+  \item the only question is: which task runs \emph{next} and when do we continue later?
+\end{itemize}
 
 \subsection*{Diagram: lane priority at a glance}
 
@@ -195,6 +263,20 @@ deadline = timestamp + budgetMs
 So tasks with smaller budgets naturally get earlier deadlines and bubble forward within their lane.
 This is a useful ``do small things first'' heuristic that is still deterministic.
 
+\subsection{Three tie-breakers, one guarantee (and why we need all three)}
+
+It’s tempting to think only deadlines matter, but the scheduler needs a \emph{total} ordering to avoid accidental nondeterminism.
+Inside a single lane, two tasks can easily share a deadline (same budget) and timestamp (scheduled in the same tick).
+The created \texttt{id} is the final ``stable sort'' key.
+
+The guarantee we want is:
+
+\begin{quote}
+If you schedule the same tasks in the same order, you will flush them in the same order.
+\end{quote}
+
+This is why the implementation stores \texttt{id} and sorts by \texttt{(deadline, timestamp, id)}.
+
 \section{Budgets: splitting work over multiple flushes}
 
 There are two different "budget" knobs:
@@ -266,6 +348,84 @@ Instead:
 
 The test suite focuses on flush budgets because those directly affect responsiveness.
 
+\subsection{Walkthrough: tight budget slicing (mapping a test to code)}
+
+Read the spec named \texttt{budget enforcement: flush splits work across multiple flush calls when budget is tight}.
+It schedules three tasks; each task increments a manual clock by 3ms.
+Then it runs two flush calls with \texttt{budgetMs = 5}.
+
+The implementation in \texttt{runtime/scheduler.ts} does exactly this:
+
+\begin{enumerate}
+  \item stores \texttt{start = now()}
+  \item runs one task at a time
+  \item recomputes \texttt{elapsed = now() - start}
+  \item stops once \texttt{elapsed >= budgetMs}
+\end{enumerate}
+
+So with 3ms per task:
+
+\begin{itemize}
+  \item task 1 leaves us at 3ms (still under 5ms)
+  \item task 2 leaves us at 6ms (over budget) \textrightarrow stop and continue later
+  \item task 3 remains queued for the next flush
+\end{itemize}
+
+This is "cooperative scheduling": tasks cooperate by being small and letting the runtime yield.
+If you want more intuition about why we care, the web performance RAIL model is a good framing for latency budgets:
+\href{https://web.dev/rail/}{https://web.dev/rail/}.
+
+\subsection{Timeline example: lane priority, aging, and budget all at once}
+
+The trickiest behavior is when \emph{multiple policies apply}: lane order, promotion, and a flush budget.
+Let's walk a concrete timeline using the same concepts as \texttt{makeManualScheduler()} in the tests.
+
+Assume:
+
+\begin{itemize}
+  \item \texttt{AGING\_MS = 250}
+  \item \texttt{frameBudgetMs = 5}
+  \item each task costs \texttt{3ms} (it advances the manual clock)
+\end{itemize}
+
+We schedule:
+
+\begin{lstlisting}[language=JavaScript]
+// T = 0
+scheduler.schedule('idle', () => tick(3))
+
+// time passes; the idle head is now "old"
+tick(300)
+
+// scheduling default work ensures a flush is scheduled
+scheduler.schedule('default', () => tick(3))
+\end{lstlisting}
+
+Now what happens during \texttt{flush()}?
+
+\begin{enumerate}
+  \item \textbf{Promotion step}: before lane selection, the scheduler checks the idle head.
+        It has aged, so it is promoted to \texttt{transition}.
+  \item \textbf{Lane selection}: the scheduler picks the highest-priority non-empty lane.
+        At this point we have \texttt{default} (new) and \texttt{transition} (promoted).
+        The lane order says \texttt{default} wins.
+  \item \textbf{But why do tests show idle can run first?} Because the implementation promotes by \emph{moving the task to a higher-priority lane} before selection.
+        Across repeated picks (and depending on the exact mix in queues), promotion can change which lane is "non-empty" at the top.
+\end{enumerate}
+
+The important lesson isn't the specific interleaving---it's that the promotion rule is deterministic and testable.
+When you change the policy, the tests will immediately surface the new ordering.
+
+\subsection{Edge cases to keep in mind}
+
+When you build APIs on top of this scheduler (signals, blocks), three edge cases matter:
+
+\begin{itemize}
+  \item \textbf{Re-entrancy}: a running task may schedule more tasks. Determinism requires those tasks get consistent timestamps/ids.
+  \item \textbf{Budget 0}: \texttt{setFrameBudget(0)} makes scheduled flushes yield aggressively. That's allowed, but it can create many continuation flushes.
+  \item \textbf{Clock source}: using \texttt{performance.now()} in production versus a manual clock in tests is fine, but it means ``timestamp equality'' is common only in tests.
+\end{itemize}
+
 \section{Deadlines and aging: starvation prevention via promotion}
 
 HRBR's scheduler includes an aging/promotion mechanism.
@@ -334,6 +494,18 @@ That has two benefits:
   \item it stays deterministic (the head is a deterministic choice)
 \end{itemize}
 
+\subsection{Why promotion checks only queue heads}
+
+The promotion policy is intentionally restricted to heads:
+
+\begin{itemize}
+  \item It's \textbf{predictable}: given the same inputs and the same clock, you'll promote the same tasks.
+  \item It's \textbf{O(1)} per lane: no scanning and no ``who is most starving'' heuristics.
+  \item It preserves within-lane ordering as much as possible.
+\end{itemize}
+
+This is a classic engineering trade-off: accept a slightly simplified fairness model to buy determinism and low overhead.
+
 \section{withBudget(): bridging user work and scheduler work}
 
 Real apps do work outside of the scheduler too (rendering, event handlers, parsing).
@@ -347,6 +519,23 @@ Real apps do work outside of the scheduler too (rendering, event handlers, parsi
 Spec: \texttt{withBudget schedules continuation when user code exhausts budget and tasks remain}.
 
 This is the "be nice to the main thread" glue between imperative work and queued reactive work.
+
+\subsection{A practical use case: big event handler + pending effects}
+
+Imagine an event handler that does some synchronous work (parsing, filtering, sorting) and also triggers signal writes.
+Those writes schedule computations, but you still want control: if your handler took too long, queue a flush continuation.
+
+\begin{lstlisting}[language=JavaScript]
+import { withBudget } from './runtime'
+
+withBudget(4, () => {
+  // expensive user work
+  // ... parse, compute, validate ...
+  // signals may schedule effects while we do this
+})
+// if the 4ms budget was exceeded and work is pending,
+// the scheduler will ensure another flush is scheduled.
+\end{lstlisting}
 
 \subsection{Global helpers in \texttt{runtime/index.ts}}
 
@@ -374,6 +563,18 @@ Signals also emit \texttt{scheduleComputation} events when a computation is sche
 
 (We’ll use these counters later when measuring block update costs.)
 
+\subsection{Why ``events + counters'' is a good runtime pattern}
+
+Two competing goals exist:
+
+\begin{itemize}
+  \item keep the runtime fast (no heavy logging)
+  \item make the runtime observable (so you can measure and debug)
+\end{itemize}
+
+The implementation in \texttt{runtime/devtools.ts} uses a tiny event stream plus aggregated counters.
+That means you can do ``always-on'' cheap counting (flush count/time) and keep deeper instrumentation behind a toggle.
+
 \section{Walking the tests: what they prove}
 
 The runtime scheduler suite is unusually readable because it uses a manual clock and a manual flush queue.
@@ -393,6 +594,18 @@ That makes time and continuation behavior deterministic.
   \item[createRequestFlush(messageChannel/raf)] Proves strategy selection uses platform APIs when present.
   \item[createBrowserScheduler smoke] Proves wiring strategy into \texttt{requestFlush}.
 \end{description}
+
+\subsection{How to read these tests like a spec}
+
+The tests are valuable because they remove nondeterminism from time.
+The helper \texttt{makeManualScheduler()} provides:
+
+\begin{itemize}
+  \item a manual clock: \texttt{tick(ms)}
+  \item a list of pending flush callbacks: \texttt{runNextFlush()} / \texttt{runAllFlushes()}
+\end{itemize}
+
+So when you see an assertion like \texttt{expect(order).toEqual([...])}, you're basically reading the scheduler's language definition.
 
 \section{Online resources}
 

@@ -1,41 +1,48 @@
 \chapter{Events and the Command Dispatcher}
 
-Relax has two different mechanisms that people often describe with the same word: ``events''.
+In Chapter~6 we learned how props become DOM configuration.
+Now we hit the other half of interactivity: \textbf{input flowing back into the system}.
+
+Relax uses the word ``event'' in two different senses, and it helps to separate them in your head:
 
 \begin{itemize}
-  \item \textbf{DOM events} (\texttt{click}, \texttt{input}, \texttt{change}, \dots): created by the browser (or by \texttt{jsdom} in tests) and delivered to listeners attached to real elements.
-  \item \textbf{Commands} (named messages with payloads): dispatched programmatically through a tiny in-memory bus.
+  \item \textbf{DOM events}: \texttt{click}, \texttt{input}, \texttt{change}, \dots created by the browser and delivered to listeners on real elements.
+  \item \textbf{Commands}: named messages with payloads delivered through an in-memory bus.
 \end{itemize}
 
-In the repo they live in two small modules:
+These are implemented as two tiny modules:
 
 \begin{itemize}
-  \item \texttt{src/events.ts}: turns Relax's event props into real DOM listeners, with consistent \texttt{this}-binding.
-  \item \texttt{src/dispatcher.ts}: a deterministic pub/sub for named commands.
+  \item \texttt{src/events.ts} --- converts Relax's \texttt{props.on} map into real DOM listeners with predictable binding.
+  \item \texttt{src/dispatcher.ts} --- a deterministic pub/sub for named commands.
 \end{itemize}
 
-And both are covered by focused tests:
+And, as usual in Relax, the real contract is pinned down by tests:
 
 \begin{itemize}
   \item \texttt{src/\_\_tests\_\_/events.test.ts}
   \item \texttt{src/\_\_tests\_\_/dispatcher.test.ts}
 \end{itemize}
 
-\section{The practical problem: handler identity and \texttt{this}-binding}
-If a UI library wants to support code like this:
+\section{DOM events: the two problems every renderer must solve}
 
-\begin{verbatim}
+If a UI library wants to support authoring like:
+
+\begin{lstlisting}[language=JavaScript]
 <button onClick={this.onClick}>Hit</button>
-\end{verbatim}
+\end{lstlisting}
 
-it has to solve two problems:
+it has to solve two very unglamorous problems:
 
 \begin{enumerate}
-  \item \textbf{Binding:} when the event fires, should \texttt{this} inside \texttt{onClick} be the component instance?
-  \item \textbf{Removal:} if the tree updates or unmounts, the library must remove listeners using the \emph{exact same function object} that was added.
+  \item \textbf{Binding:} when the browser calls the handler, what should \texttt{this} be?
+  \item \textbf{Removal by identity:} when the tree unmounts (or events update), can we remove exactly what we added?
 \end{enumerate}
 
-Relax's answer is to always register a wrapper listener and return it to the caller.
+The second one is the bigger deal in practice.
+The DOM removes listeners by \emph{function identity}, not by comparing source code or ``equivalent'' functions.
+
+Relax's answer is: \textbf{always register a wrapper listener}. The wrapper is what gets stored and later removed.
 
 \subsection*{Diagram: why wrapper identity matters for removal}
 \begin{center}
@@ -82,22 +89,33 @@ The central helper is:
     \end{itemize}
 \end{itemize}
 
-Returning the registered listener is not a convenience. it's required for correctness. The DOM only removes listeners by identity.
+Returning the registered listener is not a convenience; it's required for correctness.
 
-\subsection{Implementation: the wrapper listener}
-	exttt{src/events.ts} always creates a wrapper:
+\subsection{Implementation: the wrapper listener (real code)}
+This is the actual implementation from \texttt{src/events.ts}. Notice the wrapper chooses between \texttt{handler.call(hostComponent, event)} and \texttt{handler(event)}:
 
-\begin{verbatim}
-const listener = (event: Event) => {
-  if (hostComponent) {
-    handler.call(hostComponent, event)
-  } else {
-    handler(event)
+\begin{lstlisting}[language=JavaScript]
+export function addEventListener(
+  eventName: string,
+  handler: (payload: unknown) => void,
+  el: Element,
+  hostComponent: any = null
+) {
+  const listener = (event: Event) => {
+    if (hostComponent) {
+      handler.call(hostComponent, event)
+    } else {
+      handler(event)
+    }
   }
-}
-\end{verbatim}
 
-Then it registers \texttt{listener} and returns it.
+  el.addEventListener(eventName, listener)
+  return listener
+}
+\end{lstlisting}
+
+This is one of those renderer tricks that's simple but non-negotiable.
+If you ever ``refactor'' this into returning \texttt{handler} directly, unmount will leak listeners.
 
 This immediately gives Relax three desirable properties:
 
@@ -133,7 +151,7 @@ Even if patch-time logic changes, notice the invariant: destroy always removes \
 Mounting and patching usually deal with an event map (a record of event name to handler). Relax provides a convenience:
 
 \begin{quote}
-	exttt{addEventListeners(events, el, hostComponent)}
+    exttt{addEventListeners(events, el, hostComponent)}
 \end{quote}
 
 Implementation is straightforward:
@@ -149,16 +167,16 @@ The important artifact is the returned \texttt{listeners} map. In \texttt{mount-
 \subsection{Cleanup symmetry: \texttt{removeEventListeners(listeners, el)}}
 Removal is the mirror image:
 
-\begin{verbatim}
+\begin{lstlisting}[language=JavaScript]
 Object.entries(listeners).forEach(([eventName, listener]) => {
   el.removeEventListener(eventName, listener)
 })
-\end{verbatim}
+\end{lstlisting}
 
 Note what's \emph{not} present: the original user handlers. Only wrappers can be removed.
 
 \section{Tests for DOM event semantics (\texttt{src/\_\_tests\_\_/events.test.ts})}
-The tests are small but they lock down two critical invariants.
+The tests are small, but they lock down the two things that tend to regress when you wrap handlers.
 
 \subsection{Invariant 1: wrappers don't break sync or async handlers}
 	exttt{events.test.ts} contains:
@@ -192,10 +210,11 @@ Both assert:
   \item the handler argument is an \texttt{Event}
 \end{itemize}
 
-If you remember only one idea from this part of the codebase, make it this: \textbf{binding and cleanup depend on the existence of a wrapper listener.}
+If you remember only one idea from this chapter, make it this: \textbf{binding and cleanup are owned by the wrapper function.}
 
 \section{The command dispatcher (\texttt{src/dispatcher.ts})}
-Where \texttt{events.ts} is about DOM integration, \texttt{Dispatcher} is a tiny in-process pub/sub.
+Where \texttt{events.ts} is about \emph{browser integration}, \texttt{Dispatcher} is an internal message bus.
+I use it for things like devtools hooks, app-level commands, and decoupled communication that doesn't want to bounce through the DOM.
 
 \subsection*{Diagram: dispatcher data structures and dispatch flow}
 \begin{center}
@@ -276,6 +295,13 @@ Notice how these tests avoid implementation details (maps, arrays, indices) and 
   \item \textbf{Dedupe is per-function identity.} If you pass a new \texttt{() => ...} lambda each time, the dispatcher will treat it as a different handler.
   \item \textbf{Dispatcher is synchronous.} If a handler throws, that throw will propagate from \texttt{dispatch()}.
 \end{itemize}
+
+\section{Mini-exercises}
+\begin{enumerate}
+  \item In \texttt{src/events.ts}, add a new helper \texttt{updateEventListeners(old, next, el, hostComponent)} that returns the new wrappers map without leaking old listeners. (Don't implement it here; design the contract and write the tests first.)
+  \item Extend \texttt{dispatcher.test.ts} with a test that proves after-handlers run even when there are \emph{no} command handlers for a dispatch.
+  \item Thought exercise: should \texttt{Dispatcher.subscribe()} remove the command entry from \texttt{\#subs} when the last handler unsubscribes? What trade-offs does that create?
+\end{enumerate}
 
 \section{Where this plugs into the renderer}
 You've already seen the integration point in Chapter~5:

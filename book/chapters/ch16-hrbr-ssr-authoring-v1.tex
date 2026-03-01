@@ -1,9 +1,42 @@
 \chapter{SSR Authoring (v1): Rendering Blocks to HTML Strings}
 
-Server-side rendering (SSR) is how you produce initial HTML on the server so the browser can show an app quickly.
+Server-side rendering (SSR) is the process of producing HTML \emph{before} your client JavaScript boots.
+In practical terms, SSR answers one very specific question:
 
-In HRBR v1, SSR is intentionally simple and primarily exists to support tests and examples.
-The important property is not performance; it’s \textbf{compatibility} with hydration.
+\begin{quote}
+What HTML should the server send so the client can \emph{attach} to it without rewriting?
+\end{quote}
+
+In HRBR v1, SSR is intentionally minimal.
+It primarily exists to make hydration testable and to provide a predictable authoring workflow.
+The key property is not raw server performance; it’s \textbf{compatibility} with hydration.
+
+\section{What you’ll build}
+
+By the end of this chapter you’ll be able to:
+
+\begin{itemize}
+  \item render a \texttt{BlockDef} to a string via \texttt{renderBlockToString}
+  \item understand why SSR v1 is implemented as \emph{mount into a detached host $\rightarrow$ serialize}
+  \item reason about what breaks hydration, and how the SSR/hydration tests detect those breaks
+\end{itemize}
+
+\section{What you’ll learn}
+
+\begin{itemize}
+  \item the “ABI” idea: \texttt{templateHTML} is a stable structure shared by server render and client hydrate
+  \item why HRBR treats SSR as a special case of the same slot-write machinery used on the client
+  \item what SSR v1 explicitly does \emph{not} attempt (DOM-free HTML emission, streaming, partial hydration)
+\end{itemize}
+
+\section{Prerequisites}
+
+This chapter builds on:
+
+\begin{itemize}
+  \item Chapter 14 (blocks: \texttt{templateHTML}, slots, and stable paths)
+  \item Chapter 15 (hydration: validate + attach, else bailout/remount)
+\end{itemize}
 
 \begin{center}
 \begin{tikzpicture}[
@@ -29,6 +62,17 @@ This chapter is grounded in:
   \item \texttt{runtime/\_\_tests\_\_/ssr.test.ts}
   \item and the follow-on behavior in \texttt{runtime/hydration.ts} (Chapter 15).
 \end{itemize}
+
+\section{Why SSR exists in HRBR}
+
+If hydration is “attach to existing DOM”, SSR is “produce DOM that is safe to attach to”.
+So SSR in this runtime is less about doing rendering on the server in the abstract, and more about enforcing a strong invariant:
+
+\begin{quote}
+The server must output markup whose structure matches what \texttt{mountBlock()} would create.
+\end{quote}
+
+This is why SSR v1 reuses the block runtime: it reduces the number of places where HTML/slot semantics can diverge.
 
 \section{A tiny contract (what SSR v1 guarantees)}
 
@@ -67,6 +111,49 @@ A block update is just a map \texttt{\{ [slotKey]: value \}}.
 \end{quote}
 
 SSR is simply the "apply values, then serialize" version of that idea.
+
+\subsection{A minimal end-to-end usage (SSR $\rightarrow$ hydrate $\rightarrow$ update)}
+
+The fastest way to internalize SSR v1 is to look at how it composes with hydration.
+The test suite models this exact authoring loop:
+
+\begin{lstlisting}[language=JavaScript]
+import { defineBlock, mountCompiledBlock } from 'relaxjs/runtime/block'
+import { renderBlockToString } from 'relaxjs/runtime/ssr'
+import { hydrateBlock } from 'relaxjs/runtime/hydration'
+
+const Counter = defineBlock({
+  templateHTML: `<div class="c"><button id="inc">+</button><span id="t"> </span></div>`,
+  slots: {
+    value: { kind: 'text', path: [1, 0] },
+  },
+})
+
+// "Server" side: first paint
+const html = renderBlockToString(Counter, { initialValues: { value: 'A' } })
+
+// "Client" side: insert + attach
+const host = document.getElementById('host')
+host.innerHTML = html
+const hydrated = hydrateBlock(Counter, host)
+
+// Later: incremental updates can happen via hydration...
+hydrated.update({ value: 'B' })
+
+// ...or via compiled slots (Chapter 14/15 composition story)
+const mounted = mountCompiledBlock(Counter, host, [{ key: 'value', read: () => 'C' }])
+mounted.update({ value: 'C' })
+
+mounted.dispose()
+hydrated.destroy()
+\end{lstlisting}
+
+Two important observations:
+
+\begin{itemize}
+  \item SSR returns \emph{just a string}. The correctness part is whether the client can attach without rewriting.
+  \item Both hydration and compiled mounts boil down to the same contract: \texttt{update(\{ [slotKey]: value \})}.
+\end{itemize}
 
 One way to think about it:
 
@@ -140,6 +227,25 @@ So correctness comes for free.
 There’s also a subtle lifecycle advantage: because SSR uses \texttt{mountBlock}, tearing down is just \texttt{mounted.destroy()}.
 That ensures listeners are removed and the temporary root is cleaned up, even in a test environment.
 
+\subsection{The implementation is short on purpose}
+
+SSR v1 is deliberately a thin adapter.
+The actual code in \texttt{runtime/ssr.ts} is essentially:
+
+\begin{lstlisting}[language=JavaScript]
+export function renderBlockToString(def, options = {}) {
+  const host = document.createElement('div')
+  const mounted = mountBlock(def, host, options.initialValues ?? {})
+  const html = host.innerHTML
+  mounted.destroy()
+  return html
+}
+\end{lstlisting}
+
+This design matters because it centralizes correctness.
+Instead of re-implementing HTML escaping, boolean attributes, SVG namespaces, and slot kinds in a second renderer,
+SSR simply uses the same mount/update semantics as the client.
+
 \section{SSR must round-trip with hydration}
 
 SSR isn't useful unless the client can hydrate it.
@@ -167,6 +273,20 @@ If you change \texttt{templateHTML} shape, you must change both server render an
 
 You should treat \texttt{templateHTML} as a stable ABI between server and client.
 
+\subsection{Authoring rule: structure changes are breaking changes}
+
+Hydration v1 validates aggressively and bails out if anything looks unfamiliar.
+That implies a simple rule of thumb:
+
+\begin{itemize}
+  \item Changing slot \emph{values} is safe.
+  \item Changing \texttt{templateHTML} \emph{structure} is a breaking change for hydration.
+\end{itemize}
+
+One subtle (and common) structural foot-gun: paths are \texttt{childNodes}-based.
+Whitespace can introduce text nodes and shift indices.
+So “just add formatting” in the HTML string can become a breaking change if it changes the node tree.
+
 \section{The end-to-end spec: render \(\rightarrow\) hydrate \(\rightarrow\) update}
 
 The key test is \texttt{runtime/\_\_tests\_\_/ssr.test.ts}:
@@ -191,11 +311,25 @@ One implementation-level nuance in the test is worth calling out.
 After updating the signal with \texttt{setCount('B')}, it also calls:
 
 \begin{quote}
-	exttt{mounted.update(\{ value: 'B' \})}
+	texttt{mounted.update(\{ value: 'B' \})}
 \end{quote}
 
 That makes the assertion deterministic and keeps the test independent of scheduler timing.
 It’s modeling the fact that \texttt{mountCompiledBlock} can schedule work, and test environments often differ in how timers/microtasks flush.
+
+\subsection{Why the test checks identity, not just text}
+
+It’s easy to write a system that “hydrates” by discarding server HTML and remounting.
+But HRBR’s hydration story is explicitly about preserving DOM identity when markup matches.
+So the test stores references like:
+
+\begin{itemize}
+  \item \texttt{rootBefore = host.firstElementChild}
+  \item \texttt{textBefore = host.querySelector('\#t')?.firstChild}
+\end{itemize}
+
+and asserts they’re the same after \texttt{hydrateBlock()}.
+That’s the heart of the v1 contract: \emph{attach without rewriting, or remount fully}.
 
 \section{Limitations and the intended direction}
 
@@ -252,6 +386,29 @@ The test \texttt{renders a block to HTML string, hydrates it, and updates via mo
 \end{itemize}
 
 Because this file touches SSR, hydration, signals, and compiled blocks, it acts as a integration-level "safety rail" for the whole pipeline.
+
+\section{Common pitfalls}
+
+\begin{itemize}
+  \item \textbf{Thinking SSR is string concatenation:} in HRBR, correctness is driven by slot semantics (attr vs prop vs SVG namespaces).
+  \item \textbf{Forgetting paths are \texttt{childNodes}-based:} whitespace and formatting can change indices.
+  \item \textbf{Assuming partial hydration:} v1 is conservative; mismatch triggers remount.
+  \item \textbf{Forgetting cleanup in examples/tests:} SSR cleans up its own temporary mount; hydration/compiled mounts still require explicit \texttt{destroy()/dispose()}.
+\end{itemize}
+
+\section{Mini-exercise}
+
+Extend the SSR test scenario conceptually by adding an attribute slot and updating it after hydration.
+
+\begin{enumerate}
+  \item Add a \texttt{hidden} \texttt{attr} slot on the \texttt{<button id="inc">}.
+  \item SSR render with \texttt{hidden: false} (should not emit the attribute).
+  \item Hydrate without rewriting.
+  \item Update with \texttt{hidden: true} and verify the attribute exists.
+\end{enumerate}
+
+This exercise forces you to connect all three layers:
+slot semantics (Chapter 14), hydration attach rules (Chapter 15), and SSR reuse of mount semantics (this chapter).
 
 \section{Online resources}
 

@@ -26,7 +26,7 @@ Before reading any helper functions, keep this diagram in mind. It summarizes th
   \node[box, below=of start] (eq) {\textbf{Decision:} \texttt{areNodesEqual(oldVdom, newVdom)}?};
 
   \node[box, below left=of eq, xshift=14mm] (replace) {\textbf{Replace path}\\
-  	exttt{index = findIndexInParent(old.el)}\\
+  	exttt{index = findIndexInParent(parentEl, old.el)}\\
   	exttt{destroyDOM(old)}\\
   	exttt{mountDOM(new, parentEl, index, hostComponent)}};
 
@@ -54,7 +54,7 @@ This picture also explains why Chapter~4's invariant (children are always VNodes
 The public entry point is:
 
 \begin{quote}
-	exttt{patchDOM(oldVdom, newVdom, parentEl, hostComponent?)}
+    exttt{patchDOM(oldVdom, newVdom, parentEl, hostComponent?)}
 \end{quote}
 
 It lives in \texttt{src/patch-dom.ts}.
@@ -112,6 +112,25 @@ Virtual DOM patching is always a trade-off between reuse and correctness. Relax 
 
 In other words, \texttt{areNodesEqual} isn't about "deep equality". It's a \emph{safety gate} that defends the patcher.
 
+\paragraph{A renderer mental model: identity answers ``can I mutate in place?''}
+When I say two VNodes are ``equal'' in Relax, I don't mean their props match.
+I mean something narrower and more operational:
+
+\begin{quote}
+If I keep the existing DOM node, do I still have the right \emph{kind} of DOM node to mutate into the new node?
+\end{quote}
+
+That’s why:
+
+\begin{itemize}
+  \item TEXT nodes are always patchable (you can always update \texttt{nodeValue}).
+  \item ELEMENT nodes require the same \texttt{tag} and the same \texttt{key}.
+  \item COMPONENT nodes require the same component function identity (\texttt{tag}) and the same \texttt{key}.
+\end{itemize}
+
+That strictness is what keeps the rest of the patcher simple.
+When identity says ``yes'', every per-type patch function can assume it's operating on the right DOM shape.
+
 If nodes are not equal, \texttt{patchDOM} does a replacement:
 
 \begin{enumerate}
@@ -131,9 +150,9 @@ This behavior is covered early in \texttt{src/\_\_tests\_\_/patch-dom.test.ts} b
 
 If nodes are equal, patching starts by reusing the DOM reference:
 
-\begin{verbatim}
+\begin{lstlisting}[language=JavaScript]
 newVdom.el = oldVdom.el
-\end{verbatim}
+\end{lstlisting}
 
 This is asserted by tests like \texttt{no change} and \texttt{sets the el in the new vdom}.
 
@@ -160,10 +179,10 @@ Test: \texttt{patch text}.
 
 Implementation detail: it destructures props like:
 
-\begin{verbatim}
+\begin{lstlisting}[language=JavaScript]
 const { class: oldClass, style: oldStyle, on: oldEvents, ...oldAttrs } = oldVdom.props
 const { class: newClass, style: newStyle, on: newEvents, ...newAttrs } = newVdom.props
-\end{verbatim}
+\end{lstlisting}
 
 and then applies targeted patchers:
 
@@ -236,6 +255,26 @@ Test group: \texttt{patch style}.
 Why detach+attach for \emph{updated}?
 Because the wrapper listener function identity changes when the handler changes.
 
+\paragraph{Why this detail matters so much}
+When people build their first patcher, they often try to "update" an event handler by doing nothing:
+``the new handler is different, but the event name is the same, so surely the browser will call the new one.''
+
+That doesn't work.
+In the DOM, \texttt{addEventListener} doesn't register "an event called click".
+It registers a \emph{pair}: \texttt{(eventName, functionObject)}.
+Removal uses the same pair.
+
+Relax solves this with the wrapper identity trick from Chapter~7, and the patcher follows the same rule:
+
+\begin{itemize}
+  \item if a handler is removed or updated, remove the old wrapper function
+  \item if a handler is added or updated, add a fresh wrapper function
+  \item store the wrapper map on the vnode (\texttt{vdom.listeners}) so destroy can remove correctly
+\end{itemize}
+
+If you look at the real implementation in \texttt{src/patch-dom.ts}, the important part is the ordering:
+we remove first, then add. That prevents accidental double-binding during an update.
+
 \paragraph{Diagram: event patching as identity management}
 This is the subtle part: the browser removes listeners by the \emph{exact function object} you originally passed.
 
@@ -294,7 +333,7 @@ This is how Relax achieves the "component instance is preserved" semantics teste
 You will notice a second patch entry point inside \texttt{src/patch-dom.ts}:
 
 \begin{quote}
-	exttt{patchDOMSameElement(oldVdom, newVdom, hostComponent?)}
+    exttt{patchDOMSameElement(oldVdom, newVdom, hostComponent?)}
 \end{quote}
 
 It is identical to \texttt{patchDOM} except it \emph{skips the replacement path} and therefore does not need \texttt{parentEl}.
@@ -321,9 +360,9 @@ This behavior matches the spec tests in \texttt{src/\_\_tests\_\_/hrbr-integrati
 
 After patching the node itself, Relax patches children with:
 
-\begin{verbatim}
+\begin{lstlisting}[language=JavaScript]
 patchChildren(oldVdom, newVdom, hostComponent)
-\end{verbatim}
+\end{lstlisting}
 
 This is where most performance work lives, and \texttt{src/patch-dom.ts} contains several layered strategies.
 
@@ -437,6 +476,8 @@ If none of the fast paths apply, Relax computes an edit script:
 const diffSeq = arraysDiffSequence(oldChildren, newChildren, areNodesEqual)
 \end{verbatim}
 
+
+
 	exttt{arraysDiffSequence} is a general-purpose utility in \texttt{src/utils/arrays.ts}. It's worth reading because it is one of the algorithmic cores of Relax.
 
 It has extensive unit tests in:
@@ -448,6 +489,31 @@ It has extensive unit tests in:
 
 It produces operations of types \texttt{ADD}, \texttt{REMOVE}, \texttt{MOVE}, \texttt{NOOP} (see \texttt{ARRAY\_DIFF\_OP}).
 
+\subsubsection*{How to read the diff algorithm (from scratch)}
+
+
+	exttt{arraysDiffSequence(oldArr, newArr, equals)} returns an \emph{edit script}.
+An edit script is just a list of operations that, when applied left-to-right, transforms \texttt{oldArr} into \texttt{newArr}.
+
+Relax's implementation in \texttt{src/utils/arrays.ts} is practical, not academic:
+
+\begin{itemize}
+  \item It walks \texttt{newArr} from left to right.
+  \item At each index it decides whether the current old item must be removed, can stay (NOOP), needs to be added (ADD), or needs to be moved (MOVE).
+  \item It tracks \emph{original indices} so tests can assert stable semantics even as the working array mutates.
+\end{itemize}
+
+This is exactly the kind of algorithm that's easy to get "mostly working" and still be wrong in edge cases.
+That's why Relax has both:
+
+\begin{itemize}
+  \item exact expected sequences in \texttt{diff-sequence.test.ts}, and
+  \item randomized fuzz tests in \texttt{diff-sequence.fuzzy.test.ts}.
+\end{itemize}
+
+I recommend reading one fuzzy test before you touch the diff logic.
+It teaches you what you're \emph{actually} allowed to change.
+
 Then \texttt{patchChildren} executes them:
 
 \begin{itemize}
@@ -456,6 +522,129 @@ Then \texttt{patchChildren} executes them:
   \item \textbf{MOVE}: move DOM nodes (component = multiple elements) and patch the moved subtree
   \item \textbf{NOOP}: patch the subtree in place
 \end{itemize}
+
+\subsubsection*{How Relax executes the edit script (the part people usually hand-wave)}
+
+This is the section that makes the whole chapter ``click''.
+
+At this point we have:
+
+\begin{itemize}
+  \item a concrete \texttt{parentEl} (the real DOM element we will mutate),
+  \item \texttt{oldChildren} (already mounted; each node has \texttt{.el} pointers),
+  \item \texttt{newChildren} (fresh objects from render; \texttt{.el} mostly unset), and
+  \item \texttt{diffSeq}, a list of ops that converts old \textrightarrow{} new.
+\end{itemize}
+
+The important subtlety is this: \textbf{the DOM has one truthy linear order, but our algorithm temporarily has two competing linear orders}.
+As we apply operations, \texttt{oldChildren} is being mutated (conceptually) and the DOM is being mutated (physically).
+That is why \texttt{patchChildren} needs an \texttt{offset}.
+
+\paragraph{What is \texttt{offset}?}
+
+Think of \texttt{index} in the edit script as an index in the \emph{new} children list.
+But when we insert or remove DOM nodes, the ``current DOM index we should insert at'' shifts relative to that new index.
+
+Relax models that shift with:
+
+\begin{itemize}
+  \item \texttt{offset += 1} when it mounts an item (the DOM got longer than the old list),
+  \item \texttt{offset -= 1} when it destroys an item (the DOM got shorter than the old list).
+\end{itemize}
+
+So the effective DOM insertion index becomes \texttt{index + offset}.
+
+\subsubsection*{Operation semantics in detail}
+
+Below is a readable version of what the real code is doing (names simplified; still faithful to intent):
+
+\begin{lstlisting}[language=JavaScript]
+let offset = 0
+
+for (const op of diffSeq) {
+  const { type, index, item, from } = op
+
+  if (type === 'ADD') {
+    // Insert a brand-new subtree.
+    mountDOM(item, parentEl, index + offset, hostComponent)
+    offset += 1
+    continue
+  }
+
+  if (type === 'REMOVE') {
+    // Tear down a mounted subtree (also unbinds events).
+    destroyDOM(item)
+    offset -= 1
+    continue
+  }
+
+  if (type === 'MOVE') {
+    // 1) Move DOM nodes to the new position
+    // 2) Then patch the subtree in place (so props/events update)
+    // (MOVE is not just reorder; it implies we still need to patch.)
+    const oldChild = oldChildren[from]
+    const newChild = item
+
+    moveDomForVNode(oldChild, parentEl, index + offset)
+    patchDOMSameElement(oldChild, newChild, hostComponent)
+    continue
+  }
+
+  // NOOP: same identity at this position, but props may differ.
+  patchDOMSameElement(item.old, item.new, hostComponent)
+}
+\end{lstlisting}
+
+This is also why Relax is strict about \texttt{areNodesEqual}: if a node is ``equal'', we assume we can move/patch it without changing its fundamental DOM shape.
+
+\paragraph{MOVE for components (multi-element reality)}
+
+Moving an \emph{element vnode} means moving one DOM element.
+Moving a \emph{component vnode} often means moving \textbf{multiple} DOM siblings, because a component can render "fragment-like" output.
+
+That is why the implementation builds the move list like:
+
+\begin{lstlisting}[language=JavaScript]
+const elementsToMove = isComponent(oldChild)
+  ? oldChild.component.elements
+  : [oldChild.el]
+\end{lstlisting}
+
+Then it inserts each element in order at the target position.
+If you only moved \texttt{component.firstElement} and forgot the rest, you'd silently corrupt the DOM order.
+
+\subsubsection*{A concrete mental simulation}
+
+Here is a small sequence you can replay by hand:
+
+\begin{itemize}
+  \item old keys: \texttt{[A, B, C]}
+  \item new keys: \texttt{[B, D, A]}
+\end{itemize}
+
+A sensible edit script is:
+
+\begin{itemize}
+  \item MOVE \texttt{B} to index 0
+  \item ADD \texttt{D} at index 1
+  \item MOVE \texttt{A} to index 2
+  \item REMOVE \texttt{C}
+\end{itemize}
+
+As soon as \texttt{D} is added, the DOM becomes longer than the original, so the correct target indices for later operations must account for that. That's exactly what \texttt{offset} encodes.
+
+\subsection{What the patch-children tests specify (without running them)}
+
+The tests in \texttt{src/\_\_tests\_\_/patch-dom.test.ts} are effectively a spec for these semantics. In particular, they lock down:
+
+\begin{itemize}
+  \item \textbf{No-op patching still updates}: even when the vnode identity matches, prop diffs still apply.
+  \item \textbf{Moves preserve identity but update content}: moved nodes keep their DOM element(s), but still get patched.
+  \item \textbf{Component move moves all owned elements}: multi-element components reorder correctly.
+  \item \textbf{Index stability}: when replacing the root, new nodes mount into the same parent index.
+\end{itemize}
+
+If you ever change \texttt{patchChildren}, read those tests first. They tell you what behavior is intentional and what behavior would be a breaking change.
 
 \paragraph{Component moves}
 
@@ -516,5 +705,6 @@ If you want to understand Relax patch semantics quickly, scan these groups in \t
   \item React keys and list rendering (conceptual background; implementation differs): \href{https://react.dev/learn/rendering-lists}{https://react.dev/learn/rendering-lists}
   \item Longest Increasing Subsequence (LIS) algorithm overview: \href{https://en.wikipedia.org/wiki/Longest\_increasing\_subsequence}{https://en.wikipedia.org/wiki/Longest\_increasing\_subsequence}
   \item DOM operations cost model (MDN on \texttt{Node.insertBefore} / \texttt{Node.removeChild}): \href{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}{https://developer.mozilla.org/en-US/docs/Web/API/Node/insertBefore}
+  \item DOM tree mutation semantics (MDN on \texttt{Node.replaceChild}): \href{https://developer.mozilla.org/en-US/docs/Web/API/Node/replaceChild}{https://developer.mozilla.org/en-US/docs/Web/API/Node/replaceChild}
   \item Virtual DOM diffing background reading (generic): \href{https://increment.com/frontend/a-deep-dive-into-virtual-dom/}{https://increment.com/frontend/a-deep-dive-into-virtual-dom/}
 \end{itemize}

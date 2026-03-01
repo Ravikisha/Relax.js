@@ -1,8 +1,54 @@
 \chapter{What we're building (and why)}
 
-\section{The elevator pitch}
+\section{What you'll build}
+In this chapter, you will build a mental model for the whole project:
+
+\begin{itemize}
+  \item A crisp definition of what a UI runtime must do (model \textrightarrow mount \textrightarrow patch \textrightarrow destroy).
+  \item The two execution paths in Relax.js (VDOM baseline and HRBR compiled fast path).
+  \item A practical reading workflow: tests are the spec.
+\end{itemize}
+
+\section{What you'll learn}
+\begin{itemize}
+  \item Why UI libraries exist: the DOM is an output device, not a state container.
+  \item The minimum set of concepts you need to build a correct renderer.
+  \item How to interpret benchmark results without lying to yourself (preview).
+\end{itemize}
+
+\section{Prereqs}
+No JavaScript/TypeScript tricks are required.
+I only assume you can read code, and you understand that DOM nodes are mutable objects.
+
+\section{Start from first principles (not from frameworks)}
+I want to start from a logical place, not from a JS API.
+Here is the problem statement that led me to build Relax:
+
+\begin{quote}
+We want a deterministic way to turn \emph{state} into \emph{DOM}, and then update that DOM efficiently as state changes.
+\end{quote}
+
+This gives us four responsibilities.
+If you understand these, you understand 80\% of any UI runtime:
+
+\begin{enumerate}
+  \item \textbf{Model}: represent desired UI in memory.
+  \item \textbf{Mount}: turn the model into DOM for the first time.
+  \item \textbf{Patch}: update DOM when the model changes.
+  \item \textbf{Destroy}: cleanup (remove nodes, listeners, and references).
+\end{enumerate}
+
+Relax.js is my implementation of those responsibilities, with strong emphasis on:
+
+\begin{itemize}
+  \item \textbf{Correctness} (tests as a spec)
+  \item \textbf{Performance} (avoid unnecessary DOM work)
+  \item \textbf{Predictability} (clear scheduling and lifecycle boundaries)
+\end{itemize}
+
+\section{The elevator pitch (Relax in one minute)}
 Relax.js is a small frontend library built around a Virtual DOM (VDOM) and a component model.
-What makes this repository interesting is that it contains \emph{two} rendering strategies:
+What makes this repository especially interesting is that it contains \emph{two} rendering strategies:
 
 \begin{enumerate}
   \item A traditional VDOM runtime under \texttt{src/}.
@@ -208,8 +254,17 @@ That gives you two superpowers as a reader:
   \item You can reproduce bugs by writing a tiny test first.
 \end{itemize}
 
-\section{Walkthrough: the smallest end-to-end loop (with real code)}
-Let's walk through the smallest app lifecycle you can observe in one sitting.
+\section{Build-along: the smallest end-to-end loop (with real code)}
+Let's walk through the smallest app lifecycle you can understand in one sitting.
+This is the loop I use when I sanity-check any renderer:
+
+\begin{enumerate}
+  \item Build a model of UI (VNode tree).
+  \item Mount it into a host element.
+  \item Change state by producing a new model.
+  \item Patch the DOM to match.
+  \item Destroy and ensure cleanup is complete.
+\end{enumerate}
 
 \subsection{createApp(): mount and unmount}
 The application API is defined in \texttt{src/app.ts}.
@@ -238,6 +293,31 @@ When you unmount:
 This is a small but important architectural choice: \emph{the App owns the root VNode}.
 That makes ``unmount'' a reliable cleanup boundary.
 
+\subsection{A small snippet you should internalize}
+When you strip away everything else, most UI libraries are some version of this:
+
+\begin{lstlisting}[style=relax,language=JavaScript]
+let oldTree = null
+
+function render(nextTree, host) {
+  if (oldTree == null) {
+    mountDOM(nextTree, host)
+  } else {
+    patchDOM(oldTree, nextTree, host)
+  }
+  oldTree = nextTree
+}
+
+function dispose() {
+  if (oldTree != null) destroyDOM(oldTree)
+  oldTree = null
+}
+\end{lstlisting}
+
+	extbf{Why this matters:}
+if you can reason about this loop, you can reason about the entire Relax VDOM runtime.
+All the complexity is in the details: fragments, keyed reorders, events, components, and scheduling.
+
 \subsection{The test that proves it works}
 Open \texttt{src/\_\_tests\_\_/app.test.ts}.
 It reads like a story:
@@ -251,6 +331,41 @@ It reads like a story:
 
 Notice the discipline here: the tests make DOM updates predictable by explicitly awaiting \texttt{nextTick()}.
 That foreshadows Chapter~10, where we explain why scheduling exists and how it interacts with DOM patching.
+
+\section{Why this book is written the way it is (my bias as the author)}
+I built Relax by insisting on a few simple rules:
+
+\begin{itemize}
+  \item \textbf{Small surface area}: if it's not essential, it stays internal.
+  \item \textbf{Contracts before cleverness}: tests come first, performance work comes second.
+  \item \textbf{Measure what users feel}: tail latency and dropped frames matter more than averages.
+\end{itemize}
+
+This book follows the same rules.
+You'll see me repeat the same pattern constantly: define the contract, show the smallest implementation, then harden it against edge cases.
+
+\section{Common pitfalls (what usually goes wrong)}
+When you build a UI runtime, these are the mistakes that create the nastiest bugs:
+
+\begin{itemize}
+  \item Confusing \textbf{attributes} with \textbf{properties} (it works for \texttt{div}, fails for \texttt{input}).
+  \item Forgetting to remove event listeners on destroy (leaks + ghost behavior).
+  \item Replacing DOM nodes on update instead of reusing identity when structure matches.
+  \item Using only averages to judge performance (p95 and drops are the real story).
+  \item Letting scheduling semantics become implicit (tests get flaky, bugs become nondeterministic).
+\end{itemize}
+
+\section{Mini-exercise}
+Pick one of the test files below and write a one-paragraph ``contract'' description for it:
+
+\begin{itemize}
+  \item \texttt{src/\_\_tests\_\_/mount-dom.test.ts}
+  \item \texttt{src/\_\_tests\_\_/patch-dom.test.ts}
+  \item \texttt{src/\_\_tests\_\_/destroy-dom.test.ts}
+\end{itemize}
+
+Your goal isn't to understand every line.
+Your goal is to extract the invariants: what must always be true after mount/patch/destroy.
 
 \section{Online resources}
 These sources are helpful for orienting yourself before diving into implementation details:
@@ -312,7 +427,3 @@ These are references you can read alongside chapters; they are not prerequisites
     \href{https://vitest.dev/guide/}{Vitest Guide},
     \href{https://github.com/jsdom/jsdom}{jsdom}. 
 \end{itemize}
-
-If you'd like, we can make these ``real'' citations later by adding a bibliography system (BibTeX or biblatex) to \texttt{book/main.tex}.
-
-% (Mini-exercise moved earlier and expanded.)

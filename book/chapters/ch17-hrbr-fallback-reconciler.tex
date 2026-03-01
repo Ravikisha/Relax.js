@@ -39,6 +39,64 @@ This chapter is grounded in:
   \item \texttt{runtime/\_\_tests\_\_/reconciler.fuzz.test.ts}
 \end{itemize}
 
+\section{What you’ll build}
+
+You’re going to build a correct mental model for HRBR’s “dynamic structure” pipeline.
+By the end, you should be able to:
+
+\begin{itemize}
+  \item represent a dynamic list as an array of \texttt{ReconcileItem} specs
+  \item predict exactly when HRBR preserves DOM identity (keyed) vs when it can’t (unkeyed)
+  \item understand why \texttt{ReconcileRange} exists (one logical item $\rightarrow$ multiple DOM nodes)
+  \item use \texttt{mountFallback(host, render)} to wire a signal-driven list to DOM updates
+\end{itemize}
+
+\section{What you’ll learn}
+
+\begin{itemize}
+  \item why fallback exists in a compiler-first renderer: not a failure, a deliberate escape hatch
+  \item the direct-children-only contract (the reconciler patches a list; each item owns its subtree)
+  \item keyed reconciliation mechanics: range metadata, old-index sequence, LIS to minimize moves
+  \item the relationship between fallback and the scheduler (updates are scheduled, not always immediate)
+\end{itemize}
+
+\section{Prerequisites}
+
+This chapter assumes you’ve read:
+
+\begin{itemize}
+  \item Chapter 14 (compiled blocks: stable template + slot writes)
+  \item Chapter 15 (hydration: preserving node identity is the whole point)
+  \item Chapter 16 (SSR: markup must round-trip with client attachment)
+\end{itemize}
+
+If you’re new to keyed list rendering concepts, React’s “why keys matter” background is useful context
+(even though HRBR’s implementation is different):
+\href{https://react.dev/learn/rendering-lists}{https://react.dev/learn/rendering-lists}.
+
+\section{Why fallback exists (the honest reason)}
+
+The HRBR block model is intentionally strict: structure must be stable.
+That gives you very cheap updates (slot writes) and very strong guarantees (paths must resolve, node types must match).
+
+But real UI code contains \emph{structural} changes:
+
+\begin{itemize}
+  \item conditionals toggle subtrees
+  \item loops add/remove/reorder items
+  \item fragments and multi-root components produce multiple siblings
+\end{itemize}
+
+Trying to force all of that into a single stable \texttt{templateHTML} would either:
+
+\begin{itemize}
+  \item explode the template into a huge “unrolled” superset, or
+  \item require a second structural patcher anyway.
+\end{itemize}
+
+So fallback is not “blocks didn’t work”.
+Fallback is the explicit boundary where HRBR chooses correctness and generality over the block fast-path.
+
 \section{A tiny contract (what fallback + reconciler promise)}
 
 The fallback reconciler is the HRBR answer to “dynamic structure”:
@@ -57,7 +115,7 @@ The contract is intentionally narrow:
   \item In keyed mode, DOM identity is preserved by key when possible; the algorithm minimizes moves, but \emph{correctness} is the first goal.
 \end{enumerate}
 
-	exttt{mountFallback(host, render)} is the reactive wrapper:
+        \texttt{mountFallback(host, render)} is the reactive wrapper:
 
 \begin{itemize}
   \item \texttt{render()} can read signals.
@@ -95,6 +153,38 @@ Each item supports:
   \item \texttt{patch(existing)} to patch in place
   \item optional \texttt{destroy(existing)} to cleanup when removed
 \end{itemize}
+
+\subsection{From scratch: what is a \texttt{ReconcileItem}?}
+
+When you use \texttt{reconcileChildren(host, next)}, you aren’t passing DOM nodes.
+You’re passing \emph{instructions} for how to create or patch them:
+
+\begin{itemize}
+  \item \textbf{Create:} how to build the DOM the first time.
+  \item \textbf{Patch:} how to update an existing DOM node (or nodes) when re-rendering.
+  \item \textbf{Destroy (optional):} cleanup hooks for removed items.
+\end{itemize}
+
+The smallest useful example is a keyed text node spec:
+
+\begin{lstlisting}[language=JavaScript]
+function keyedText(key, text) {
+  return {
+    key,
+    create() {
+      const el = document.createElement('span')
+      el.textContent = text
+      return el
+    },
+    patch(node) {
+      node.textContent = text
+    },
+  }
+}
+\end{lstlisting}
+
+Now strengthening this idea: the reconciler doesn’t know (or care) if this \texttt{span} represents a component, a list item, or a compiled block.
+It only cares about mapping “logical items” to DOM children.
 
 \subsection{Keyed vs unkeyed mode}
 
@@ -166,6 +256,34 @@ The helper \texttt{buildCurrentRanges(host)} reads \texttt{childNodes} and group
 This is also why correctness requires normalization when items change shape (node \(\leftrightarrow\) range).
 
 Spec: \texttt{keyed: supports range items (logical item => multiple DOM nodes)}.
+
+\subsection{Range authoring example (fragment-like output)}
+
+If one logical thing needs to output two siblings, model it directly:
+
+\begin{lstlisting}[language=JavaScript]
+function keyedRange(key, aText, bText) {
+  return {
+    kind: 'range',
+    key,
+    create() {
+      const a = document.createElement('span')
+      a.textContent = aText
+      const b = document.createElement('span')
+      b.textContent = bText
+      return [a, b]
+    },
+    patch(nodes) {
+      nodes[0].textContent = aText
+      nodes[1].textContent = bText
+    },
+  }
+}
+\end{lstlisting}
+
+Internally, HRBR tags the first DOM node so it can re-discover logical items later:
+  	\texttt{\_\_hrbrKey} stores the logical key and \texttt{\_\_hrbrRangeLen} stores the range length.
+That’s how a flat DOM child list becomes a list of logical items again.
 
 \section{Unkeyed reconciliation: simple and predictable}
 
@@ -248,6 +366,66 @@ Why LIS?
   \item The implementation uses \texttt{lisIndices(seq)} over old indices, ignoring \texttt{-1} (new items).
 \end{itemize}
 
+\subsection{Why keyed mode still needs dev diagnostics}
+
+Keyed algorithms only work when the keys are meaningful.
+That’s why \texttt{reconcileChildren(..., \{ dev: true \})} warns in two important cases
+(see \texttt{runtime/\_\_tests\_\_/reconciler.test.ts}):
+
+\begin{itemize}
+  \item \textbf{Mixed keyed and unkeyed siblings:} unkeyed nodes will be treated as unstable.
+  \item \textbf{No overlap between previous and next keys:} often indicates unstable keys (like array index).
+\end{itemize}
+
+This is a practical “foot-gun detector”.
+The runtime can’t fix unstable keys for you, but it can tell you when your list semantics are likely wrong.
+
+\section{Fallback mount: wiring reconciliation to reactivity}
+
+The reconciler itself is just a pure patcher: you call it when you want.
+
+	\texttt{mountFallback()} is the bridge from signals (Chapter 12) to structural patches:
+
+\begin{itemize}
+  \item your \texttt{render()} reads signals
+  \item an effect tracks those reads
+  \item when signals change, the fallback schedules a reconcile pass via the scheduler
+\end{itemize}
+
+The key detail in \texttt{runtime/fallback.ts}: updates are \emph{scheduled}.
+So tests use a tick (\texttt{setTimeout(0)}) to wait for the scheduled reconcile.
+
+\subsection{Fallback example (mirrors the integration test)}
+
+This is essentially \texttt{runtime/\_\_tests\_\_/fallback.test.ts}, expressed as a teaching example:
+
+\begin{lstlisting}[language=JavaScript]
+const host = document.createElement('div')
+const [items, setItems] = createSignal(['a', 'b', 'c'])
+
+const mounted = mountFallback(host, () => {
+  const children = items().map((k) => keyedText(k, k.toUpperCase()))
+  return { children }
+})
+
+// Initial paint is immediate
+host.textContent // => "ABC"
+
+// Reorder + insert
+setItems(['c', 'a', 'b', 'd'])
+// ... later (scheduled)
+host.textContent // => "CABD"
+
+mounted.dispose()
+\end{lstlisting}
+
+Notice what this proves:
+
+\begin{itemize}
+  \item structural change is handled (reorder, insert, remove)
+  \item DOM identity is preserved by key (the test asserts the same nodes moved)
+\end{itemize}
+
 Implementation cues:
 
 \begin{itemize}
@@ -277,7 +455,7 @@ It also asserts that keys are unique among siblings.
 That uniqueness assertion is a hard error, not a warning:
 
 \begin{quote}
-	exttt{assert(!seen.has(k), '[hrbr/reconciler] duplicate key ...')}
+	texttt{assert(!seen.has(k), '[hrbr/reconciler] duplicate key ...')}
 \end{quote}
 
 This is intentional: duplicate keys make identity preservation ill-defined.

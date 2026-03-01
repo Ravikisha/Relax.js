@@ -1,8 +1,8 @@
-\chapter{TypeScript + JSX prerequisites}
+\chapter{TSX/JSX: an authoring layer on top of \texttt{h()}}
 
 \section{The goal}
 Relax.js supports writing UI in TSX/JSX with a React-like syntax.
-But remember: JSX is only syntax.
+But I want to demystify it immediately: JSX is only \emph{syntax}.
 It becomes function calls (or, in TypeScript's modern mode, calls to a small ``JSX runtime'' module).
 
 In Relax, the important function is still \texttt{h()} from \texttt{src/h.ts}.
@@ -18,11 +18,11 @@ This chapter answers four practical questions:
 \end{enumerate}
 
 \section{How TSX works in this repository (TypeScript configuration)}
-The TSX behavior in this repo is primarily defined in \texttt{tsconfig.json}:
+The TSX behavior in this repo is defined in \texttt{tsconfig.json}:
 
 \begin{itemize}
-  \item \texttt{jsx: "react-jsx"}
-  \item \texttt{jsxImportSource: "relax-jsx"}
+  \item \texttt{"jsx": "react-jsx"}
+  \item \texttt{"jsxImportSource": "relax-jsx"}
 \end{itemize}
 
 This combination means:
@@ -59,26 +59,26 @@ So the contract becomes very clean:
 
 When TSX ``works'' in this repo, it means the right-hand side of this diagram produces the same VNode shapes as writing \texttt{h()} manually.
 
-\section{Two JSX styles you'll see}
+\section{Two authoring styles you'll see}
 
-\subsection{Direct VDOM authoring}
+\subsection{Direct VDOM authoring (manual \texttt{h()})}
 You can write VNodes manually:
 
-\begin{verbatim}
+\begin{lstlisting}[language=JavaScript]
 import { h, hFragment } from 'relax.js'
 
 const view = hFragment([
   h('h1', {}, ['Hello']),
   h('button', { on: { click: () => console.log('clicked') } }, ['Click'])
 ])
-\end{verbatim}
+\end{lstlisting}
 
-\subsection{React-like TSX authoring}
+\subsection{React-like TSX authoring (compiled via a JSX runtime)}
 TypeScript can compile TSX into calls to a configured JSX runtime.
 This repo uses a React-like authoring style where:
 
 \begin{itemize}
-  \item \texttt{className} maps to Relax's \texttt{class}.
+  \item \texttt{className} maps to Relax's \texttt{class} prop.
   \item \texttt{onClick} maps to Relax's event prop form (internally becomes \texttt{on: \{ click: fn \}}).
   \item Fragments (\texttt{<>...</>}) are supported.
 \end{itemize}
@@ -86,7 +86,7 @@ This repo uses a React-like authoring style where:
 There's an important nuance here:
 
 \begin{quote}
-Relax supports both ``native'' Relax props (like \texttt{class} and \texttt{on: \{ click: ... \}}) \emph{and} React-like compatibility props (like \texttt{className} and \texttt{onClick}).
+Relax supports both ``native'' Relax props (like \texttt{class} and \texttt{on: \{ click: \ldots \}}) \emph{and} React-like compatibility props (like \texttt{className} and \texttt{onClick}).
 \end{quote}
 
 This design keeps the underlying runtime simple (it only needs to understand one internal prop shape) while letting TSX authoring feel familiar.
@@ -102,7 +102,7 @@ At a high level it does four jobs:
   \item Applies React-like prop compatibility:
     \begin{itemize}
       \item \texttt{className -> class}
-      \item \texttt{onClick/onInput/... -> on: \{ click/input/... \}}
+  \item \texttt{onClick/onInput/\ldots\ \textrightarrow\ on: \{ click/input/\ldots \}}
     \end{itemize}
   \item Threads the optional \texttt{key} through into Relax props.
   \item Delegates to Relax's real VDOM constructors:
@@ -122,11 +122,11 @@ That makes fragment VNodes indistinguishable from ones created explicitly via \t
 
 \subsection{Dev runtime: jsxDEV}
 Tooling sometimes emits \texttt{jsxDEV} calls in development builds.
-This repo includes \texttt{relax-jsx/jsx-dev-runtime.ts}, which simply re-exports \texttt{Fragment}, \texttt{jsx}, and \texttt{jsxs}, and provides \texttt{jsxDEV(...)} as an alias to \texttt{jsx(...)}.
+This repo includes \texttt{relax-jsx/jsx-dev-runtime.ts}, which simply re-exports \texttt{Fragment}, \texttt{jsx}, and \texttt{jsxs}, and provides \texttt{jsxDEV(\ldots)} as an alias to \texttt{jsx(\ldots)}.
 
 This is not a performance hack; it's a compatibility bridge so Vite/Vitest can run TSX code in different modes.
 
-\section{Tests as spec}
+\section{Tests as spec (the subset is intentional)}
 The definitive spec for supported TSX/JSX features lives in:
 
 \begin{itemize}

@@ -202,7 +202,7 @@ Percentiles are computed on sorted samples with a simple index selection.
 This is good enough for stable comparisons at the harness scale.
 
 The harness computes p95 with:\\
-	exttt{idx = floor(p * (n - 1))} (clamped).
+	texttt{idx = floor(p * (n - 1))} (clamped).
 This is a simple deterministic estimator, which is a feature here: the same sample list always produces the same percentile.
 
 \section{Profiles and seeded runs}
@@ -244,18 +244,18 @@ The runner prints the profile and seed at the top of the output.
 Example:
 
 \begin{quote}
-	exttt{Running...\newline profile: default\newline seed: 12345}
+	texttt{Running...\newline profile: default\newline seed: 12345}
 \end{quote}
 
 Typical URLs:
 
 \begin{itemize}
 \item Quick sanity pass:\\
-	exttt{benchmarks/index.html?profile=quick\&seed=1}
+	texttt{benchmarks/index.html?profile=quick\&seed=1}
 \item Longer run that makes tail latency clearer:\\
-	exttt{benchmarks/index.html?profile=stress\&seed=42\&budget=16.7}
+	texttt{benchmarks/index.html?profile=stress\&seed=42\&budget=16.7}
 \item Debugging a suspicious regression by increasing sample size:\\
-	exttt{benchmarks/index.html?profile=default\&frames=600\&seed=12345}
+	texttt{benchmarks/index.html?profile=default\&frames=600\&seed=12345}
 \end{itemize}
 
 Defaults are intentionally ``reasonable and stable'' for local runs.
@@ -349,7 +349,7 @@ This isn't a ``real app'' workload, but it is an excellent microbenchmark for me
 
 \subsection{What should you expect from \texttt{text-1m}?}
 
-	exttt{text-1m} is a microbenchmark.
+	texttt{text-1m} is a microbenchmark.
 It largely measures:
 
 \begin{itemize}
@@ -387,7 +387,7 @@ This is where HRBR often wins: it can apply targeted DOM mutations without re-di
 
 \subsection{Case study: \texttt{widgets-200}}
 
-	exttt{widgets-200} is a component-shape workload:
+	texttt{widgets-200} is a component-shape workload:
 
 \begin{itemize}
 \item many small independent widgets
@@ -447,7 +447,7 @@ The benchmark bundles are built through two rollup configs:
 \end{itemize}
 
 Both use \texttt{@rollup/plugin-replace} to inject:\\
-	exttt{process.env.NODE\_ENV = 'production'} by default.
+	texttt{process.env.NODE\_ENV = 'production'} by default.
 
 This matters for fairness because some libraries (notably React) perform extra checks and different scheduling policies in development builds.
 
@@ -546,7 +546,7 @@ It includes enough context to be reproducible (profile + seed + case names).
 Here is a condensed example pattern (taken from a typical run):
 
 \begin{quote}
-	exttt{\# list-10k-1pct:relax-hrbr\newline frames: 120\newline avg: 1.333 ms\newline p95: 4.000 ms\newline drops: 0}
+	texttt{\# list-10k-1pct:relax-hrbr\newline frames: 120\newline avg: 1.333 ms\newline p95: 4.000 ms\newline drops: 0}
 \end{quote}
 
 How to read it:
@@ -560,7 +560,7 @@ How to read it:
 And compare to the same case in VDOM mode:
 
 \begin{quote}
-	exttt{\# list-10k-1pct:relax-vdom\newline frames: 120\newline avg: 62.558 ms\newline p95: 94.000 ms\newline drops: 120}
+	texttt{\# list-10k-1pct:relax-vdom\newline frames: 120\newline avg: 62.558 ms\newline p95: 94.000 ms\newline drops: 120}
 \end{quote}
 
 This is a very different story:

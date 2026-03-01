@@ -1,10 +1,62 @@
 \chapter{Hydration: Attaching HRBR to Server HTML}
 
+\section*{What you'll build}
+
+In this chapter I’ll build a mental model for v1 hydration in Relax, and you’ll learn how to reason about it by reading the real runtime code.
+Concretely, you’ll be able to:
+
+\begin{itemize}
+  \item take an HTML string that was produced from a BlockDef, insert it into the DOM, and \emph{attach} a live HRBR block to it without rewriting nodes
+  \item explain why Relax’s v1 hydration is strict and why that strictness is a feature (not a limitation)
+\end{itemize}
+
+\section*{What you'll learn}
+
+\begin{itemize}
+  \item The hydration contract: what must match between server HTML and \texttt{templateHTML}
+  \item The two safety rails: \texttt{root tag check} and \texttt{slot-path validation}
+  \item The cost model: why hydration is cheap when it succeeds, and cheap to bail out when it must
+  \item How v1 hydration handles DOM updates (same slot kinds as Chapter~14) and where it differs (events)
+\end{itemize}
+
+\section*{Prereqs}
+
+\begin{itemize}
+  \item Chapter~14: Blocks, templates, and slots (slot kinds + path addressing)
+  \item Chapter~12: Effects and dependency tracking (why \texttt{mountCompiledBlock} works)
+\end{itemize}
+
+\section{Why hydration exists (from scratch)}
+
+Hydration is the bridge between two worlds:
+
+\begin{itemize}
+  \item The \textbf{server} produced HTML as a string. That’s great for first paint and SEO.
+  \item The \textbf{client} needs live behavior: event handlers, reactive updates, and cleanup.
+\end{itemize}
+
+If you don’t hydrate, you have only two choices on the client:
+
+\begin{itemize}
+  \item \textbf{Remount by recreating DOM} from scratch, which throws away the server’s nodes (and can introduce a visible flash), or
+  \item \textbf{Try to patch your way into the server DOM} with a general reconciler, which is powerful but hard to make airtight.
+\end{itemize}
+
+Relax HRBR v1 chooses a third option:
+
+\begin{quote}
+	extbf{Attach by validating structure and resolving slot node references.} If validation fails, remount.
+\end{quote}
+
+This conservative posture is intentional. It makes hydration predictable: the moment we say “hydrated”, we’re also saying the block’s template ABI matches the DOM we’re about to mutate.
+
+\section{The big picture: where hydration sits in HRBR}
+
 A block runtime has a natural relationship with server rendering:
 
 \begin{itemize}
   \item The compiler produces a stable template shape (\texttt{templateHTML}).
-  \item The server can render that template to HTML.
+  \item The server can render the template to HTML.
   \item The client can \emph{attach} to the existing DOM instead of rebuilding it.
 \end{itemize}
 
@@ -58,6 +110,61 @@ You can treat \texttt{hydrateBlock(def, host, initialValues)} as enforcing this 
 \end{enumerate}
 
 The headline design choice is: \textbf{when in doubt, remount}. That makes correctness obvious at the cost of being less clever than incremental/partial hydration systems.
+
+\section{Build it: a minimal end-to-end hydration loop}
+
+I like to teach hydration as a 3-step loop: \textbf{render} \(\rightarrow\) \textbf{attach} \(\rightarrow\) \textbf{update}.
+
+In Relax, the pieces are:
+
+\begin{itemize}
+  \item \texttt{renderBlockToString(def, \{ initialValues \})} (SSR helper)
+  \item \texttt{host.innerHTML = html}
+  \item \texttt{hydrateBlock(def, host, initialValues)} (attach)
+  \item optionally: \texttt{mountCompiledBlock(def, host, compiledSlots)} to wire signals/effects (Chapter~14)
+\end{itemize}
+
+Here’s the smallest "looks runnable" snippet that matches what the tests demonstrate.
+
+\begin{lstlisting}[language=JavaScript, caption={SSR + hydration + update: the smallest end-to-end loop}]
+import { defineBlock, mountCompiledBlock } from './runtime/block'
+import { hydrateBlock } from './runtime/hydration'
+import { createSignal } from './runtime/signals'
+import { renderBlockToString } from './runtime/ssr'
+
+const Counter = defineBlock({
+  templateHTML: `<div class="c"><button id="inc">+</button><span id="t"> </span></div>`,
+  slots: { value: { kind: 'text', path: [1, 0] } },
+})
+
+// "Server" side
+const html = renderBlockToString(Counter, { initialValues: { value: 'A' } })
+
+// "Client" side
+const host = document.getElementById('host')
+host.innerHTML = html
+
+// Attach to existing nodes (no rewrite if markup matches)
+const hydrated = hydrateBlock(Counter, host)
+
+// Wire reactive updates on top (optional, but this is the HRBR story)
+const [value, setValue] = createSignal('A')
+const mounted = mountCompiledBlock(Counter, host, [{ key: 'value', read: () => value() }])
+
+setValue('B')
+mounted.update({ value: 'B' })
+
+mounted.dispose()
+hydrated.destroy()
+\end{lstlisting}
+
+\subsection{Why these steps matter}
+
+\begin{itemize}
+  \item \textbf{SSR produces a shape:} If SSR and the template disagree, hydration must not "half attach".
+  \item \textbf{Hydration creates references:} the essential output is \texttt{slotNodes[key] = Node}.
+  \item \textbf{Updates are the same contract:} a call to \texttt{update(\{ key: value \})} still means “write into slot nodes”.
+\end{itemize}
 
 \section{Hydration contract (v1)}
 
@@ -204,6 +311,35 @@ If any assertion fails, hydration catches and bails out with client remount.
 
 Spec: \texttt{slot path element mismatch triggers bailout remount (conservative)}.
 
+\section{Why this design? (tradeoffs, alternatives, and invariants)}
+
+Hydration is an area where it’s easy to ship something that works on your demo and breaks in production.
+So I made a deliberate v1 choice: \textbf{strict validation + bailout}.
+
+Here are the tradeoffs I’m optimizing for:
+
+\begin{itemize}
+  \item \textbf{Invariant: “hydrated means safe to update.”}
+  If hydration returns successfully, the slots you’ll write to later have been validated against the template.
+
+  \item \textbf{Low implementation risk.}
+  Partial hydration systems can be correct, but they require more state and more surface area for mismatches.
+
+  \item \textbf{Predictable failure mode.}
+  When something is off (wrong tag, wrong path, wrong slot kind), we don’t keep walking a tightrope.
+  We clear and remount.
+\end{itemize}
+
+Alternatives (all valid, just not v1 Relax):
+
+\begin{itemize}
+  \item \textbf{Deep tree diff during hydrate:} robust but expensive and complex.
+  \item \textbf{Marker-based hydration:} embed explicit markers in HTML (comment anchors / data attributes). This is a common approach, and it’s likely the direction for a more advanced Relax hydration.
+  \item \textbf{Island / partial hydration:} hydrate only interactive regions. Great UX story, more tooling.
+\end{itemize}
+
+For a framework-agnostic overview of hydration strategies and tradeoffs, see \href{https://web.dev/rendering-on-the-web/}{https://web.dev/rendering-on-the-web/}.
+
 The test intentionally renders:\\
 \texttt{<div><em>X</em></div>}\\
 but the template expects:\\
@@ -271,6 +407,13 @@ You can see this directly in \texttt{runtime/hydration.ts}:
 \end{itemize}
 
 This is not as optimal as the bind-once approach in \texttt{mountBlock}, but it is still correct and easy to reason about.
+
+Two important correctness notes (easy to miss):
+
+\begin{itemize}
+  \item \textbf{Redundant writes matter more with this strategy.} If you didn’t skip redundant writes, a repeated \texttt{update()} could churn listeners (remove+add) even when the handler didn’t change.
+  \item \textbf{Destroy must remove hydrated listeners.} Otherwise the host subtree could be detached but still reachable through listener closures.
+\end{itemize}
 
 \begin{center}
 \begin{tikzpicture}[
@@ -396,3 +539,25 @@ The key idea being demonstrated is: \emph{hydration produces a block-shaped surf
   \item A broader hydration overview (framework-agnostic):
   \href{https://web.dev/rendering-on-the-web/}{web.dev: Rendering on the Web}.
 \end{itemize}
+
+\section{Common pitfalls}
+
+These are the mistakes I see most often when people attempt hydration systems (or when I debug my own early versions):
+
+\begin{itemize}
+  \item \textbf{Treating whitespace as "not real DOM".} Paths are over \texttt{childNodes}, so whitespace text nodes count.
+  \item \textbf{Hydrating when the template changed.} If \texttt{templateHTML} is an ABI, you must deploy server+client together.
+  \item \textbf{Forgetting idempotence.} Hydration is often retried; cleanup must be safe even if called twice.
+  \item \textbf{Listener leaks.} If you attach listeners during hydration, \texttt{destroy()} must remove them.
+\end{itemize}
+
+\section{Mini-exercise}
+
+Open \texttt{runtime/hydration.ts} and make the mismatch error messages more actionable.
+
+\begin{itemize}
+  \item Add the slot key and the path (like \texttt{[2,0]}) in the "invalid path" assertion.
+  \item Ensure the tests in \texttt{runtime/\_\_tests\_\_/hydration.test.ts} would still pass conceptually.
+\end{itemize}
+
+The goal is to practice the key engineering habit for hydration: when things go wrong, logs must tell you \emph{exactly} what structural assumption failed.

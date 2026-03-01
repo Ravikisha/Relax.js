@@ -172,7 +172,7 @@ This prevents needless event objects from being allocated on the hot path.
 Notice the early return:
 
 \begin{quote}
-	exttt{if (!enabled \&\& !hook) return}
+	texttt{if (!enabled \&\& !hook) return}
 \end{quote}
 
 This means there are three distinct operating modes:
@@ -203,7 +203,7 @@ This provides a cheap ``what changed'' signal even without full DOM diffing.
 In \texttt{runtime/block.ts}, every slot application includes:
 
 \begin{quote}
-	exttt{emitDevtoolsEvent(\{ type: 'slotWrite', slotKind: slot.kind, slotKey: key \})}
+	texttt{emitDevtoolsEvent(\{ type: 'slotWrite', slotKind: slot.kind, slotKey: key \})}
 \end{quote}
 
 This is intentionally emitted even when the runtime later decides to skip a DOM write (for example when values are \texttt{Object.is} equal). That makes slotWrites a measure of "reactive updates attempted" rather than "DOM updates performed".
@@ -284,6 +284,149 @@ This suite locks in the \emph{gating} behavior:
 This is a very important behavioral line for performance: many hot paths call \texttt{emitDomOp()} all the time, and the test documents that these calls must not inflate counters unless instrumentation is explicitly enabled.
 
 \section{How you might use this in practice}
+
+\subsection{From scratch: what problem are we solving?}
+
+When people say ``devtools'' they often mean a glossy UI.
+But the hard part comes first: you need a \emph{stable and cheap} stream of runtime facts.
+In this repo, the HRBR runtime is fast specifically because it avoids whole-tree diffing; that also means you don't get a built-in ``diff'' you can inspect.
+
+So the question becomes:
+
+\begin{quote}
+\emph{If the runtime doesn't diff a tree, what do we observe to debug performance and correctness?}
+\end{quote}
+
+The devtools layer answers that by emitting \emph{small, well-timed events}:
+
+\begin{itemize}
+\item A slot write attempt tells you ``reactivity wanted to change something.''
+\item A DOM op tells you ``we actually touched the DOM'' (when instrumentation is enabled).
+\item Scheduler flush boundaries tell you ``work was batched and committed now.''
+\end{itemize}
+
+Why it matters: these events let you debug the two hardest classes of UI problems:
+
+\begin{itemize}
+\item \textbf{Too much work:} you are doing redundant updates, thrashing the DOM, or flushing too often.
+\item \textbf{Work at the wrong time:} you are flushing in a tight loop or starving lower-priority work.
+\end{itemize}
+
+The design is intentionally minimal so it stays truthful: a few counters and an event hook are much harder to accidentally ``lie'' with than a large, stateful instrumentation system.
+
+\subsection{A tiny devtools ``panel'' in 50 lines (hook + DOM)}
+
+The runtime doesn't ship a UI, but it gives you everything you need to build one.
+Here's a minimal pattern you can paste into a demo page: install a hook, aggregate in userland, and render a tiny dashboard.
+
+\begin{lstlisting}[language=JavaScript]
+import {
+	setDevtoolsHook,
+	getDevtoolsCounters,
+	resetDevtoolsCounters,
+	setInstrumentationEnabled,
+} from 'relax/hrbr'
+
+export function installHrbrDevtoolsPanel(hostEl) {
+	// Optional: enable expensive counters.
+	setInstrumentationEnabled(true)
+	resetDevtoolsCounters()
+
+	const state = {
+		domOpsByKind: Object.create(null),
+		lastFlushDurationMs: 0,
+	}
+
+	setDevtoolsHook((e) => {
+		if (e.type === 'domOp') {
+			state.domOpsByKind[e.op] = (state.domOpsByKind[e.op] ?? 0) + 1
+		}
+		if (e.type === 'flushEnd') {
+			state.lastFlushDurationMs = e.durationMs
+		}
+	})
+
+	function render() {
+		const c = getDevtoolsCounters()
+		hostEl.innerHTML = `
+			<pre>
+slotWrites: ${c.slotWrites}
+scheduledComputations: ${c.scheduledComputations}
+flushes: ${c.flushes}
+flushTimeMs: ${c.flushTimeMs}
+domOps: ${c.domOps}
+allocs: ${c.allocs}
+
+lastFlushDurationMs: ${state.lastFlushDurationMs}
+domOpsByKind: ${JSON.stringify(state.domOpsByKind, null, 2)}
+			</pre>
+		`
+		requestAnimationFrame(render)
+	}
+
+	render()
+	return () => setDevtoolsHook(null)
+}
+\end{lstlisting}
+
+Two important details in this example are grounded in \texttt{runtime/devtools.ts}:
+
+\begin{itemize}
+\item The hook sees \emph{every} event, even if expensive counters are disabled.
+\item If you don't install a hook \emph{and} you keep instrumentation disabled, hot-path emitters are designed to become no-ops.
+\end{itemize}
+
+This is why the API is split into both counters and a hook: you can build UIs without forcing the runtime to count every single thing.
+
+\subsection{How to interpret the counters (and common misreads)}
+
+Counters are not correctness.
+They are an intentionally blunt instrument.
+Here are the interpretations that match the tests:
+
+\begin{itemize}
+\item \textbf{\texttt{slotWrites}}: how many slot updates were \emph{attempted} by the block runtime.
+	This includes cases where the runtime decides a DOM write is unnecessary.
+\item \textbf{\texttt{domOps}}: how many DOM mutations were observed \emph{when instrumentation is enabled}.
+	The instrumentation tests lock in that this must stay at 0 by default.
+\item \textbf{\texttt{scheduledComputations}}: how often signals scheduled work (not necessarily how often it ran).
+\item \textbf{\texttt{flushes}} and \textbf{\texttt{flushTimeMs}}: coarse scheduler batch metrics.
+\end{itemize}
+
+Common misread: ``slotWrites went up, therefore DOM changed.''
+Not necessarily.
+In this runtime, slotWrites measure how often reactivity \emph{wanted} to update; domOps measure how often the runtime actually mutated the DOM (and only when the expensive counters are enabled).
+
+\subsection{A tiny contract you can build tooling around}
+
+If you want to build real tooling (like a profiler timeline), define your own minimal contract on top of the hook:
+
+\begin{itemize}
+\item Treat \texttt{flushStart} / \texttt{flushEnd} as a bracket for ``commit work''.
+\item Count \texttt{domOp} events inside that bracket to get ``DOM work per flush''.
+\item Group \texttt{scheduleComputation} by lane to visualize priority.
+\end{itemize}
+
+This is deliberately similar to the idea of tracing spans, but implemented with a tiny custom event union.
+If you want the conceptual background, see OpenTelemetry's overview:
+\href{https://opentelemetry.io/docs/what-is-opentelemetry/}{https://opentelemetry.io/docs/what-is-opentelemetry/}.
+
+\section{Exercises (tests-first)}
+
+\begin{enumerate}
+\item \textbf{Write a test that proves the ``streaming mode'' behavior:}
+			install a hook, keep instrumentation disabled, trigger a block update, and assert that you receive \texttt{domOp} events while \texttt{getDevtoolsCounters().domOps} remains 0.
+			(Hint: this should be an addition to \texttt{runtime/\_\_tests\_\_/instrumentation.test.ts}.)
+
+\item \textbf{Build a per-op counter:}
+			implement a tiny helper \texttt{createDomOpsHistogram()} that installs a hook and keeps a histogram \texttt{\{ [op]: count \}}.
+			Prove in a test that \texttt{setText} happens during a text slot update.
+
+\item \textbf{Add a new event type (safely):}
+			add an optional \texttt{flushBudgetMs} field to \texttt{flushStart} (or introduce a new event) and thread it from the scheduler.
+			Update the tests to lock in the behavior.
+			If you can't update all call sites cleanly, you're changing the contract too aggressively.
+\end{enumerate}
 
 Two common patterns:
 

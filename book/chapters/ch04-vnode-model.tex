@@ -1,14 +1,54 @@
-\chapter{The VNode model (\texttt{src/h.ts})}
+\chapter{The VNode model (what the renderer \emph{really} consumes)}
 
-This chapter is the ``data model'' chapter of Relax's renderer: before we can mount virtual UI into the DOM, we need a shape that can represent ``text'', ``an element with attributes'', ``a component instance'', and a few special cases (fragments, slots, and HRBR blocks).
+In Chapter~3 we treated TSX as ``just syntax'' that boils down to calling \texttt{h()} and \texttt{hFragment()}.
+This chapter is where I make that concrete.
 
-Relax keeps this model intentionally small, and then makes the rest of the runtime depend on a single invariant:
+If you strip Relax down to its bones, the renderer is a pair of functions:
+
+\begin{itemize}
+  \item \texttt{mountDOM(vdom, host)}: allocate DOM for a VNode tree.
+  \item \texttt{patchDOM(oldVdom, newVdom, host)}: reconcile two VNode trees (reuse DOM).
+\end{itemize}
+
+Both functions only work if their input has a stable, predictable data shape.
+That data shape is the \textbf{VNode model} in \texttt{src/h.ts}.
+
+I like to describe \texttt{src/h.ts} as ``the type-level constitution of the renderer''.
+If you understand the invariants enforced here, every later chapter gets easier.
+
+\section{What you will build in your head}
+By the end of this chapter you should be able to do these three things confidently:
+
+\begin{enumerate}
+  \item Read a random VNode object in a debugger and know what it means.
+  \item Predict what \texttt{h('div', \{\}, ['x'])} returns (including text node normalization).
+  \item Explain why \texttt{areNodesEqual()} is written the way it is and how it drives patching.
+\end{enumerate}
+
+\section{The one invariant I defend everywhere}
+Relax keeps the VNode model intentionally small, and then makes the runtime depend on one invariant:
 
 \begin{quote}
-  \noindent\textbf{Invariant:} after creation, every child in \texttt{VNode.children} is a VNode (not a primitive) and every node has a stable \texttt{type} drawn from \texttt{DOM\_TYPES}.
+  \noindent\textbf{Invariant:} after creation, every value inside \texttt{VNode.children} is already a VNode.
+  No raw strings, no raw numbers, no \texttt{null}, no \texttt{undefined}.
 \end{quote}
 
-You can think of \texttt{src/h.ts} as the factory layer that enforces this invariant.
+This is not a ``nice-to-have''.
+It's the thing that keeps \texttt{mountDOM()} and \texttt{patchDOM()} from degenerating into dozens of slow type checks.
+
+\section{Why we need VNodes in the first place}
+The DOM is mutable state.
+The renderer's job is to move a lot of mutable state toward a desired UI with minimal work.
+
+So we need a representation of ``desired UI'' that is:
+
+\begin{itemize}
+  \item \textbf{Pure data:} can be created without touching the DOM.
+  \item \textbf{Stable:} has explicit node kinds and predictable fields.
+  \item \textbf{Diffable:} can be compared against a previous version.
+\end{itemize}
+
+In Relax, that's the VNode.
 
 \section{Why VNodes exist}
 A virtual DOM implementation needs a stable, serializable representation of UI. In Relax, that representation is the \textbf{VNode}. The renderer can then be split into three big phases:
@@ -70,6 +110,42 @@ Two details are worth calling out because they influence the rest of the runtime
 \section{Contract: \texttt{h(tag, props, children)}}
 Relax's primary constructor is \texttt{h()} (\texttt{src/h.ts}). It's intentionally close to ``hyperscript'' functions found in other VDOM systems.
 
+When I'm writing a renderer, I want the constructors to be boring.
+``Boring'' here means: strongly asserted inputs, aggressively normalized children, minimal implicit behavior.
+Relax follows that.
+
+\subsection*{Code: the actual \texttt{h()} contract in \texttt{src/h.ts}}
+The implementation is short enough that you should read it end-to-end at least once:
+
+\begin{lstlisting}[language=JavaScript]
+export function h(tag: string | unknown, props: Record<string, unknown> = {}, children: unknown[] = []): ElementVNode | ComponentVNode {
+  const type = typeof tag === 'string' ? DOM_TYPES.ELEMENT : DOM_TYPES.COMPONENT
+
+  assert(
+    typeof props === 'object' && !Array.isArray(props),
+    '[vdom] h() expects an object as props (2nd argument)'
+  )
+  assert(
+    Array.isArray(children),
+    `[vdom] h() expects an array of children (3rd argument), but got '${typeof children}'`
+  )
+
+  return {
+    tag: tag as any,
+    props: props as ElementVNodeProps,
+    type,
+    children: mapTextNodes(withoutNulls(children as any[])) as VNode[],
+  } as any
+}
+\end{lstlisting}
+
+Two things to notice:
+
+\begin{itemize}
+  \item \textbf{Fast fail:} \texttt{assert(...)} catches incorrect usage immediately.
+  \item \textbf{Normalization happens right here:} \texttt{withoutNulls(...)} and \texttt{mapTextNodes(...)} enforce the children invariant.
+\end{itemize}
+
 \subsection*{Inputs}
 \begin{itemize}
   \item \texttt{tag}: either a string (intrinsic element like \texttt{div}) or a component constructor/function.
@@ -117,6 +193,20 @@ Fragments represent ``multiple siblings'' and are heavily used by TSX fragment s
 \subsection*{Constructing fragments}
 	exttt{hFragment(vNodes)} asserts the input is an array, filters nullish children, and maps primitives to text nodes (exactly like \texttt{h()}).
 
+\subsection*{Code: fragment constructor}
+This is the whole function (again: boring on purpose):
+
+\begin{lstlisting}[language=JavaScript]
+export function hFragment(vNodes: unknown[]): FragmentVNode {
+  assert(Array.isArray(vNodes), '[vdom] hFragment() expects an array of vNodes')
+
+  return {
+    type: DOM_TYPES.FRAGMENT,
+    children: mapTextNodes(withoutNulls(vNodes as any[])) as VNode[],
+  }
+}
+\end{lstlisting}
+
 \subsection*{Flattening fragments}
 Later, other parts of the runtime sometimes need to treat ``a tree that may contain fragments'' as a flat list (for example, when calculating insertion positions).
 	exttt{extractChildren(vdom)} provides that flattening:
@@ -127,6 +217,34 @@ Later, other parts of the runtime sometimes need to treat ``a tree that may cont
 \end{itemize}
 
 The unit test \texttt{extract children from a tree with fragments} in \texttt{src/\_\_tests\_\_/h.test.ts} is your executable spec for this behavior.
+
+\subsection*{Code: the spec is literally an object equality}
+This is a good example of what I mean by ``tests as documentation'':
+
+\begin{lstlisting}[language=JavaScript]
+test('extract children from a tree with fragments', () => {
+  const vNode = h('div', {}, [
+    'A',
+    hFragment([
+      hFragment([hString('B')]),
+      hString('C'),
+      hFragment([hString('D')]),
+    ]),
+    'E',
+  ])
+  const children = extractChildren(vNode)
+
+  expect(children).toEqual([
+    { type: DOM_TYPES.TEXT, value: 'A' },
+    { type: DOM_TYPES.TEXT, value: 'B' },
+    { type: DOM_TYPES.TEXT, value: 'C' },
+    { type: DOM_TYPES.TEXT, value: 'D' },
+    { type: DOM_TYPES.TEXT, value: 'E' },
+  ])
+})
+\end{lstlisting}
+
+Notice what this test gives us: a guarantee that fragments behave like ``transparent containers'' for the purposes of child lists.
 
 \section{Slots: \texttt{hSlot(children)} as a component-level placeholder}
 Slots are how Relax expresses ``children passed into a component'' without forcing the component to take opaque \texttt{children} and do manual array plumbing.
@@ -197,6 +315,51 @@ This is a great example of the book's theme: treat tests as executable documenta
 \section{VNode identity and diffing: a preview}
 This chapter is about creation, but VNode shape is designed with patching in mind. The function \texttt{areNodesEqual()} (\texttt{src/nodes-equal.ts}) shows you the identity rules Relax uses later:
 
+\subsection*{Code: \texttt{areNodesEqual()} is tiny, but it's a design statement}
+Read this function carefully.
+Everything in patching depends on this decision about identity:
+
+\begin{lstlisting}[language=JavaScript]
+export function areNodesEqual(oldNode: any, newNode: any) {
+  if (oldNode.type !== newNode.type) {
+    return false
+  }
+
+  if (oldNode.type === DOM_TYPES.HRBR) {
+    return oldNode.mount === newNode.mount
+  }
+
+  if (oldNode.type === DOM_TYPES.TEXT) {
+    return true
+  }
+
+  if (oldNode.type === DOM_TYPES.ELEMENT) {
+    return oldNode.tag === newNode.tag && oldNode.props?.key === newNode.props?.key
+  }
+
+  if (oldNode.type === DOM_TYPES.COMPONENT) {
+    return oldNode.tag === newNode.tag && oldNode.props?.key === newNode.props?.key
+  }
+
+  return true
+}
+\end{lstlisting}
+
+From a systems perspective, this is the policy wall between ``update in place'' and ``destroy + remount''.
+If \texttt{areNodesEqual(old, next)} returns \texttt{false}, patching treats it as a different logical node and re-creates DOM / component instances.
+
+\subsection*{Tests as spec: identity rules are enumerated}
+The tests in \texttt{src/\_\_tests\_\_/node-equals.test.ts} are effectively a checklist:
+
+\begin{itemize}
+  \item Text nodes: always equal (value patches, identity doesn't change).
+  \item Fragments: always equal.
+  \item Elements: equal if tag matches, and key matches when present.
+  \item Components: equal if constructor matches, and key matches when present.
+\end{itemize}
+
+This is why I keep the function small: it's easier to reason about and easier to lock down with tests.
+
 \begin{itemize}
   \item text nodes: always equal (Relax patches text by updating value rather than replacing node type)
   \item fragments: always equal
@@ -211,6 +374,7 @@ The tests in \texttt{src/\_\_tests\_\_/node-equals.test.ts} enumerate these case
 \begin{enumerate}
   \item \textbf{Read like a maintainer:} In \texttt{src/\_\_tests\_\_/h.test.ts}, locate the test named \texttt{"h() maps 'number', 'boolean', 'bigint', and 'symbol' values to text vNodes"}. Explain (to yourself) why \texttt{Symbol(5)} becomes the string \texttt{"Symbol(5)"}.
   \item \textbf{Write a new invariant test:} Add a small test that asserts \texttt{h('div', {}, [null, undefined, 'x']).children.length === 1}. (This should already be true, but the test helps lock the behavior down.)
+  \item \textbf{Identity thought experiment:} Why do you think Relax treats text nodes as ``always equal''? What does that allow \texttt{patchDOM()} to do as an optimization?
 \end{enumerate}
 
 \section{Online resources}
