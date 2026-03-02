@@ -20,9 +20,55 @@
 \usepackage{xurl}
 \usepackage{tcolorbox}
 \usepackage[breaklinks=true]{hyperref}
+\usepackage{eso-pic}
 
 \geometry{margin=1in}
 \setlength{\headheight}{14pt}
+
+\newcommand{\FrontPageBackground}{%
+  \AddToShipoutPictureBG*{%
+    \AtPageLowerLeft{%
+      \includegraphics[
+        width=\paperwidth,
+        height=\paperheight,
+        keepaspectratio=false % Ensures it fills the sheet regardless of image ratio
+      ]{docs/bg.jpeg}%
+    }%
+  }%
+}
+
+
+% --- GLOBAL WRAPPING & BREAKING SETTINGS ---
+
+% 1. Hyperlinks and URLs
+\usepackage{xurl} % Allows URLs to break at any letter or symbol
+\hypersetup{breaklinks=true} % Ensures hyperref respects those breaks
+
+% 2. Micro-typography (The "Secret Sauce")
+% This improves character protrusion and expansion, making it easier 
+% for LaTeX to find valid break points in tight spaces.
+\usepackage{microtype}
+
+% 3. Force breaks in filenames and long strings
+% This allows breaks after underscores, dots, and slashes globally
+\usepackage[T1]{fontenc} % Better hyphenation for words with symbols
+\newcommand{\breakpath}[1]{\path{#1}} % Use \path{} from url package for filenames
+
+% 4. The "Emergency" Layout Settings
+\sloppy % Relaxes the spacing requirements to prevent text from entering the margin
+\setlength{\emergencystretch}{3em} % Gives LaTeX an extra "buffer" to find breaks
+\hfuzz=2pt % Don't complain about overlaps smaller than 2pt
+
+% 5. Global TikZ scaling (since you asked for all diagrams)
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta}
+\tikzset{
+  every picture/.style={
+    scale=0.7, 
+    transform shape, 
+    every node/.append style={align=center}
+  }
+}
 
 % --- Color palette ---
 \definecolor{RelaxBlue}{HTML}{2563EB}
@@ -113,23 +159,29 @@
 
 % --- Title-page background (image only) ---
 % Keep it per-page so it doesn’t bleed into TOC/body pages.
-\newcommand{\FrontPageBackground}{%
-  \backgroundsetup{%
-    scale=1,
-    color=black,
-    opacity=1,
-    angle=0,
-  contents={\includegraphics[width=\paperwidth,height=\paperheight,keepaspectratio=false]{docs/bg.jpeg}}%
-  }%
-  \BgThispage
-}
+% \newcommand{\FrontPageBackground}{%
+%   \backgroundsetup{%
+%     scale=1,
+%     color=black,
+%     opacity=1,
+%     angle=0,
+%   contents={\includegraphics[width=\paperwidth,height=\paperheight,keepaspectratio=false]{docs/bg.jpeg}}%
+%   }%
+%   \BgThispage
+% }
+
+% Replace your \newcommand{\FrontPageBackground} with this:
+
 
 \begin{document}
+
+
 
 \frontmatter
 \begin{titlepage}
 \thispagestyle{empty}
 \FrontPageBackground
+% \includegraphics[width=\paperwidth,height=\paperheight,keepaspectratio=false]{docs/bg.jpeg}
 \centering
 \vspace*{1.6cm}
 
