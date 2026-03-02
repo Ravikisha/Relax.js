@@ -1,4 +1,5 @@
 \chapter{Patching and Diffing: Updating the DOM Efficiently}
+\label{ch:patching-diffing}
 
 Mounting is the ``first render'' story. But real apps are dominated by \emph{updates}: state changes, input events, list reorders, and component re-renders.
 
@@ -48,7 +49,7 @@ Before reading any helper functions, keep this diagram in mind. It summarizes th
 \end{tikzpicture}
 \end{center}
 
-This picture also explains why Chapter~4's invariant (children are always VNodes) matters: it makes the \texttt{switch} and its helper patchers tractable.
+This picture also explains why Chapter~\ref{ch:vnode-model}'s invariant (children are always VNodes) matters: it makes the \texttt{switch} and its helper patchers tractable.
 
 \section{\texttt{patchDOM}: the top-level operation}
 The public entry point is:
@@ -217,7 +218,7 @@ It then:
   \item adds/updates: \texttt{setAttribute(el, name, value)}
 \end{itemize}
 
-Important: \texttt{setAttribute} and \texttt{removeAttribute} are the same helpers discussed in Chapter 6 (\texttt{src/attributes.ts}), including the property-vs-attribute rules.
+Important: \texttt{setAttribute} and \texttt{removeAttribute} are the same helpers discussed in Chapter~\ref{ch:attributes-props} (\texttt{src/attributes.ts}), including the property-vs-attribute rules.
 
 \subsection{Classes: patchClasses uses arraysDiff}
 
@@ -264,7 +265,7 @@ In the DOM, \texttt{addEventListener} doesn't register "an event called click".
 It registers a \emph{pair}: \texttt{(eventName, functionObject)}.
 Removal uses the same pair.
 
-Relax solves this with the wrapper identity trick from Chapter~7, and the patcher follows the same rule:
+Relax solves this with the wrapper identity trick from Chapter~\ref{ch:events-dispatcher}, and the patcher follows the same rule:
 
 \begin{itemize}
   \item if a handler is removed or updated, remove the old wrapper function
@@ -489,7 +490,7 @@ It has extensive unit tests in:
 
 It produces operations of types \texttt{ADD}, \texttt{REMOVE}, \texttt{MOVE}, \texttt{NOOP} (see \texttt{ARRAY\_DIFF\_OP}).
 
-\subsubsection*{How to read the diff algorithm (from scratch)}
+\subsubsection*{How to read the diff algorithm (mental model)}
 
 
 	exttt{arraysDiffSequence(oldArr, newArr, equals)} returns an \emph{edit script}.

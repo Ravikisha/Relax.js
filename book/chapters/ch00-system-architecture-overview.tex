@@ -1,0 +1,89 @@
+\chapter{System architecture overview}
+\label{ch:system-architecture}
+
+This book is about deterministic UI runtimes.
+So we start the way systems work starts: with architecture.
+
+Before we zoom into code, this chapter gives you the whole machine:
+what subsystems exist, what contracts bind them, and how \emph{time} and \emph{state} move through the system.
+
+You should walk away with one mental model:
+	extbf{state marks things dirty, the scheduler orders work, and the renderer commits DOM writes.}
+
+\section{The subsystems}
+
+Relax.js is best understood as a set of cooperating subsystems with explicit contracts:
+
+\begin{itemize}
+  \item \textbf{VDOM runtime} (implementation in \texttt{src/*}): general-case rendering and components.
+  \item \textbf{Scheduler} (\texttt{src/scheduler.ts} and \texttt{runtime/scheduler.ts}): deterministic work ordering and fairness.
+  \item \textbf{Signals/reactive graph} (\texttt{runtime/signals.ts}): fine-grained invalidation and effect scheduling.
+  \item \textbf{HRBR runtime} (\texttt{runtime/*}): compiled blocks (template + slots), hydration, fallback reconciliation.
+  \item \textbf{Compiler/transform} (\texttt{compiler/*}): optional TSX/JSX transform that emits HRBR blocks or routes to fallback.
+\end{itemize}
+
+The important design choice is separation of concerns:
+	extbf{reactivity} decides \emph{what} changed, \textbf{scheduling} decides \emph{when} to apply changes, and \textbf{rendering} decides \emph{how} to write to the DOM.
+
+\section{Diagram: end-to-end data flow (authoring \textrightarrow DOM)}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 14mm,
+  box/.style={draw, rounded corners, align=left, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (state) {State\\(signals / component state)};
+\node[box, right=of state] (render) {Render\\(TSX/JSX or \texttt{h()})};
+\node[box, right=of render] (model) {Model\\VNode tree \emph{or} HRBR vnode};
+\node[box, right=of model] (commit) {Commit\\DOM writes};
+\node[box, below=of commit] (dom) {Real DOM\\(browser/jsdom)};
+
+\draw[arrow] (state) -- node[midway, above] {change} (render);
+\draw[arrow] (render) -- node[midway, above] {produces} (model);
+\draw[arrow] (model) -- node[midway, above] {mount/patch} (commit);
+\draw[arrow] (commit) -- (dom);
+\end{tikzpicture}
+\end{center}
+
+This entire book is an exploration of the \emph{commit} box: how to make DOM writes correct, deterministic, and efficient.
+
+\section{VDOM flow (general case)}
+
+VDOM is the baseline engine.
+It is optimized for flexibility and correctness:
+
+\begin{itemize}
+  \item \textbf{Model}: build a VNode tree (plain objects).
+  \item \textbf{Mount}: turn it into DOM (store back-references).
+  \item \textbf{Patch}: reconcile old/new trees (reuse identity when safe).
+  \item \textbf{Destroy}: remove nodes and listeners, release references.
+\end{itemize}
+
+\section{HRBR flow (compiler-assisted fast path)}
+
+HRBR is a fast path for stable structure.
+It replaces repeated discovery work with precomputed write locations.
+
+\begin{itemize}
+  \item The compiler extracts a stable \textbf{template} (HTML).
+  \item Dynamic values become \textbf{slots} with precomputed DOM paths.
+  \item Updates become direct slot writes scheduled deterministically.
+\end{itemize}
+
+\section{Scheduler + signals integration (where determinism comes from)}
+
+Relax leans into deterministic runtime engineering:
+
+\begin{itemize}
+  \item \textbf{Signals} compute \emph{what} is dirty (fine-grained invalidation).
+  \item \textbf{Schedulers} decide \emph{when} to commit DOM updates (lanes, fairness, budgets).
+\end{itemize}
+
+The important contract: reactivity does not "touch the DOM" directly.
+It schedules work; the runtime commits batched updates with predictable ordering.
+
+\section{Where to go next}
+
+Chapter~\ref{ch:what-and-why} gives the first-principles renderer contract.
+Chapter~\ref{ch:hrbr-motivation} justifies HRBR as an architecture choice.

@@ -1,4 +1,4 @@
-\chapter{Repo tour \& project constraints}
+\chapter{Implementation map \& constraints}
 
 \section{What you'll build}
 By the end of this chapter, you will have:
@@ -11,13 +11,13 @@ By the end of this chapter, you will have:
 
 \section{What you'll learn}
 \begin{itemize}
-  \item How I split this repo into three cooperating products (VDOM runtime, HRBR runtime, compiler).
+  \item How the system splits into three cooperating subsystems (VDOM runtime, HRBR runtime, compiler).
   \item Why jsdom constraints make the runtime \emph{more} deterministic and teachable.
   \item The smallest set of files you should read to understand an end-to-end update.
 \end{itemize}
 
 \section{Prereqs}
-Read Chapter~1.
+Read Chapters~1--2.
 You should be comfortable with the idea that DOM nodes have identity and can be mutated.
 
 \section{Concept: read the system before you read the code}
@@ -34,10 +34,10 @@ Instead, I want you to start with two maps:
 This chapter gives you both.
 
 \section{What you're looking at}
-This repository is intentionally small, but it isn't a single ``runtime''.
+This codebase is intentionally small, but it isn't a single module.
 It is a collection of cooperating subsystems, each with its own contract and its own tests.
 
-At a high level, you should think of Relax.js as three products living in one repo:
+At a high level, think of Relax.js as three subsystems that share a single correctness story:
 
 \begin{enumerate}
   \item \textbf{Relax VDOM runtime} (the teaching-friendly baseline) under \texttt{src/}.
@@ -74,7 +74,7 @@ The key idea: tests are the stable external contract, while the implementation i
 Everything else exists to support one of these (docs, benchmarks, build tooling).
 
 \subsection{Directory map (first pass)}
-This repository is split into a few major areas:
+The codebase is split into a few major areas:
 
 \begin{itemize}
   \item \texttt{src/}: the Relax.js Virtual DOM runtime.
@@ -280,7 +280,7 @@ This test file shows a full mount-to-interaction flow:
 
 That single test is a great ``reading harness'' for learning how Relax wires components + events + patching.
 
-\section{Tests as specs (my rule for this repo)}
+\section{Behavioral contract (how to read tests)}
 If you only remember one workflow from this chapter, make it this:
 
 \begin{enumerate}

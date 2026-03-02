@@ -59,7 +59,7 @@ We'll use a tight contract so you can re-derive the implementation from the test
 
 That last bullet is important: removing DOM nodes is easy---cleaning the runtime state is the hard part.
 
-\subsection{Two different things you must destroy (from scratch)}
+\subsection{Contract clarification: the two things you must destroy}
 
 When people say \emph{``unmount''} or \emph{``destroy''}, they're often mixing two separate jobs:
 
@@ -278,7 +278,7 @@ Component teardown is deliberately split into "structural cleanup now" and "user
 
 This pattern matches mount-side semantics too (\texttt{onMounted} is also scheduled). The intent is: the renderer finishes DOM surgery first, then user hooks run without re-entrancy hazards.
 
-\subsubsection{From scratch: why is \texttt{onUnmounted} scheduled?}
+\subsubsection{Rationale: why is \texttt{onUnmounted} scheduled?}
 
 Scheduling isn't just an implementation detail; it's an API promise.
 If user hooks ran inline during\ \texttt{destroyDOM()}:
@@ -347,7 +347,7 @@ The separation between (1) and (2) is the same architectural split as earlier ch
 \paragraph{Why unsubscribe in \texttt{unmount()} and not in \texttt{destroyDOM()}?}
 
 Because subscriptions are a property of the component instance, not a property of the rendered VDOM nodes.
-    exttt{destroyDOM()} is intentionally ``VNode-centric''; \texttt{unmount()} is ``component-centric''.
+	exttt{destroyDOM()} is intentionally ``VNode-centric''; \texttt{unmount()} is ``component-centric''.
 
 \section{HRBR nodes: dispose, destroy, and remove host}
 
@@ -362,7 +362,7 @@ In \texttt{removeHrbrNode(vdom)} (\texttt{src/destroy-dom.ts}):
   \item Finally, it deletes \texttt{vdom.instance} and \texttt{vdom.host}.
 \end{itemize}
 
-\subsection{From scratch: HRBR is about \emph{ownership boundaries}}
+\subsection{Mental model: HRBR is about \emph{ownership boundaries}}
 
 HRBR nodes exist for one reason: sometimes the thing you're mounting isn't a Relax VNode subtree.
 It might be a compiled template block, a micro-framework widget, or a third-party imperative library.

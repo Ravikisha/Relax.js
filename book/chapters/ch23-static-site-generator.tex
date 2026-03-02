@@ -23,10 +23,10 @@ By the end of this chapter, you will have:
 You should have read:
 
 \begin{itemize}
-  \item Chapter~4 (VNode model)
-  \item Chapter~5 (Mounting)
-  \item Chapter~8 (Patching / diffing) --- not because the SSG diffs DOM, but because it explains identity and escaping.
-  \item Chapter~23 (Release-quality discipline) helps for the "tests as specs" mindset.
+  \item Chapter~\ref{ch:vnode-model} (VNode model)
+  \item Chapter~\ref{ch:mounting} (Mounting)
+  \item Chapter~\ref{ch:patching-diffing} (Patching / diffing) --- not because the SSG diffs DOM, but because it explains identity and escaping.
+  \item Chapter~\ref{ch:release-quality} (Release-quality discipline) helps for the verification-contract mindset.
 \end{itemize}
 
 \section{Concept: what an SSG really is}
@@ -95,7 +95,7 @@ It is a sequencing of small, testable parts:
   \item \texttt{renderSitemapXml()} emits \texttt{sitemap.xml} if you provide a base URL.
 \end{enumerate}
 
-\section{Build it from scratch: the smallest pipeline}
+\section{Minimal pipeline: the smallest version that works}
 Let's build the pipeline conceptually in four steps.
 I'll show simplified code first, then point you at the real implementation.
 
@@ -574,7 +574,7 @@ relax.ssg.config.js
  </nav>
 \end{verbatim}
 
-\section{Tests as specs (SSG correctness)}
+\section{Correctness contract (SSG)}
 The SSG is small enough that tests are its documentation.
 There are two layers:
 

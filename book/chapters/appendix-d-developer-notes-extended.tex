@@ -12,7 +12,7 @@ A compiler forces you to state what is safe.
 The starting point for my learning journey was the book:
 
 \begin{quote}
-\textit{Build a Frontend Web Framework (From Scratch)}\\
+	extit{Build a Frontend Web Framework (From First Principles)}\\
 \textsc{ÁNGEL SOLA ORBAICETA}
 \end{quote}
 
@@ -23,7 +23,7 @@ I used it to bootstrap the baseline mental model, then I iterated.
 An approach that works well:
 
 \begin{enumerate}
-  \item Implement the baseline renderer and component model from \textit{Build a Frontend Web Framework (From Scratch)}.
+  \item Implement the baseline renderer and component model from \textit{Build a Frontend Web Framework (From First Principles)}.
   \item Then open this repository and locate the matching unit tests under \texttt{src/\_\_tests\_\_/}.
   \item Port those tests to your own project.
   \item Only then start optimizing (diffing, scheduling, HRBR), keeping the tests unchanged.
@@ -44,7 +44,7 @@ Tests do three jobs simultaneously:
 For example, lifecycle timing is not obvious when you have async scheduling.
 It only becomes obvious when a test waits for \texttt{nextTick()} and asserts an effect has run exactly once.
 
-\paragraph{Tests as specs, not as afterthoughts}
+\paragraph{Verification discipline (tests are not an afterthought)}
 When this book says \textquotedblleft tests are executable specifications\textquotedblright, it means:
 
 \begin{itemize}

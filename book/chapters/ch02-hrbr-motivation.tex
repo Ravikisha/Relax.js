@@ -1,0 +1,98 @@
+\chapter{HRBR motivation \& design space}
+\label{ch:hrbr-motivation}
+
+HRBR (\textbf{H}ybrid \textbf{R}untime with \textbf{B}locks and \textbf{R}eactivity) is the unique differentiator in this codebase.
+This chapter exists to justify it as an architecture choice, not as a curiosity.
+
+\section{The problem HRBR is trying to solve}
+
+In the general case, UI rendering has two competing needs:
+
+\begin{itemize}
+  \item \textbf{Flexibility:} allow dynamic structure---lists, conditionals, composition, and arbitrary components.
+  \item \textbf{Efficiency:} keep updates close to the DOM writes that actually change.
+\end{itemize}
+
+Classic Virtual DOM (VDOM) rendering primarily optimizes for flexibility:
+we rerender a tree, diff it, then patch the DOM.
+That model is incredibly productive.
+But it has a recurring cost: \emph{interpretation work} (walk/diff/discover write locations) even when the subtree structure is stable.
+
+HRBR is motivated by a very specific observation:
+
+\begin{quote}
+Many real UIs have large subtrees whose \emph{structure} is stable across updates; only values change.
+\end{quote}
+
+When structure is stable, paying discovery cost on every update is overhead.
+
+\section{A crisp goal (what would success look like?)}
+
+For stable structure, we want updates to trend toward:
+
+\begin{itemize}
+  \item \textbf{Work proportional to changed values} (text/attr/prop/class/style/event), not proportional to subtree size.
+\end{itemize}
+
+This is a design goal, not a promise that every benchmark will be faster.
+It tells you what HRBR buys when it applies.
+
+\section{Two execution paths, one semantic result}
+
+Relax.js keeps a VDOM baseline for the general case.
+HRBR is an optional fast path when the compiler can prove the DOM shape is stable.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=10mm and 14mm,
+  box/.style={draw, rounded corners, align=center, inner sep=6pt, fill=RelaxLight},
+  arrow/.style={-Latex, thick}
+]
+\node[box] (author) {Authoring\\TSX/JSX or \texttt{h()}};
+\node[box, below left=of author] (vdom) {VDOM runtime\\diff + patch\\general case};
+\node[box, below right=of author] (compile) {Compiler\\(optional)};
+\node[box, below=of compile] (hrbr) {HRBR runtime\\template + slots\\fast path};
+\node[box, below=of author, yshift=-34mm] (dom) {Real DOM\\(same observable result)};
+
+\draw[arrow] (author) -- node[midway,left]{dynamic structure} (vdom);
+\draw[arrow] (author) -- node[midway,right]{stable structure} (compile);
+\draw[arrow] (compile) -- (hrbr);
+\draw[arrow] (vdom) -- (dom);
+\draw[arrow] (hrbr) -- (dom);
+\end{tikzpicture}
+\end{center}
+
+The key point: this book will treat HRBR as an optimization path with a strict boundary.
+If the shape isn't stable, HRBR must not guess; it must route to fallback.
+
+\section{Design space: where HRBR sits relative to React/Vue/Solid}
+
+This book focuses on one codebase, but you need a quick coordinate system.
+At a grossly simplified level:
+
+\begin{itemize}
+  \item \textbf{React:} VDOM reconciliation; great generality; pays update interpretation cost.
+  \item \textbf{Vue:} template compiler; reduces work by compiling templates into efficient update code.
+  \item \textbf{Solid:} fine-grained reactivity; avoids rerender traversal by tracking dependencies; still needs concrete DOM write sites.
+  \item \textbf{Relax HRBR:} stable templates + explicit slot write locations + deterministic scheduling; routes to fallback when structure is dynamic.
+\end{itemize}
+
+If you remember one sentence:
+
+\begin{quote}
+HRBR trades compiler complexity for fewer categories of runtime work on stable UI structure.
+\end{quote}
+
+\section{What you'll see later in the book}
+
+This chapter is motivation.
+The rest of the book makes it concrete:
+
+\begin{itemize}
+  \item \textbf{Blocks and slots:} what a compiled block is and how slot writes work (Chapter~\ref{ch:hrbr-blocks-template-slots}).
+  \item \textbf{Fallback reconciliation:} what happens when structure is dynamic (Chapter~\ref{ch:hrbr-fallback-reconciler}).
+  \item \textbf{Compiler boundary:} how we decide block vs fallback, and what the compiler must output (Chapter~\ref{ch:compiler-architecture}).
+  \item \textbf{Benchmarks methodology:} how to measure without fooling yourself (Chapter~\ref{ch:benchmarks-methodology}).
+\end{itemize}
+
+By the time you reach the compiler chapters, HRBR should feel inevitable: it is a response to a specific performance-shaped problem, with a safety valve for correctness.

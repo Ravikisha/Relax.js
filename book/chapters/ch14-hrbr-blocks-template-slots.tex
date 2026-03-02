@@ -1,4 +1,5 @@
 \chapter{HRBR Blocks: Template + Slots (the Compiled Fast Path)}
+\label{ch:hrbr-blocks-template-slots}
 
 Chapters 12 and 13 gave us two halves of a reactive UI runtime:
 
@@ -78,7 +79,7 @@ This is the same general idea behind other compiler-first frameworks.
 Svelte has a well-known write-up for the intuition (even if you disagree with the framing, the mental model is useful):
 \href{https://svelte.dev/blog/virtual-dom-is-pure-overhead}{https://svelte.dev/blog/virtual-dom-is-pure-overhead}.
 
-\section{A minimal block from scratch (end-to-end)}
+\section{Minimal block (end-to-end)}
 
 Let's build the smallest meaningful block: a greeting with a dynamic name and a click handler.
 This is not pseudo-code; it matches the contracts in \texttt{runtime/block.ts}.

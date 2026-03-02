@@ -1,12 +1,13 @@
 \chapter{What we're building (and why)}
+\label{ch:what-and-why}
 
 \section{What you'll build}
-In this chapter, you will build a mental model for the whole project:
+In this chapter, you will build the top-level contract for a deterministic UI runtime:
 
 \begin{itemize}
   \item A crisp definition of what a UI runtime must do (model \textrightarrow mount \textrightarrow patch \textrightarrow destroy).
-  \item The two execution paths in Relax.js (VDOM baseline and HRBR compiled fast path).
-  \item A practical reading workflow: tests are the spec.
+  \item The two execution paths used in this book (VDOM baseline and HRBR compiler-assisted fast path).
+  \item A practical workflow for connecting claims to evidence (verification contracts encoded as tests).
 \end{itemize}
 
 \section{What you'll learn}
@@ -21,8 +22,8 @@ No JavaScript/TypeScript tricks are required.
 I only assume you can read code, and you understand that DOM nodes are mutable objects.
 
 \section{Start from first principles (not from frameworks)}
-I want to start from a logical place, not from a JS API.
-Here is the problem statement that led me to build Relax:
+We start from a logical contract, not from an API surface.
+Here is the problem statement that drives the architecture:
 
 \begin{quote}
 We want a deterministic way to turn \emph{state} into \emph{DOM}, and then update that DOM efficiently as state changes.
@@ -38,28 +39,30 @@ If you understand these, you understand 80\% of any UI runtime:
   \item \textbf{Destroy}: cleanup (remove nodes, listeners, and references).
 \end{enumerate}
 
-Relax.js is my implementation of those responsibilities, with strong emphasis on:
+Relax.js is one concrete implementation of those responsibilities.
+Throughout the book, we will judge every design decision against three runtime properties:
 
 \begin{itemize}
-  \item \textbf{Correctness} (tests as a spec)
-  \item \textbf{Performance} (avoid unnecessary DOM work)
-  \item \textbf{Predictability} (clear scheduling and lifecycle boundaries)
+  \item \textbf{Correctness}: stable invariants, validated by tests.
+  \item \textbf{Performance}: minimize avoidable DOM work and repeated discovery.
+  \item \textbf{Predictability}: explicit scheduling and lifecycle boundaries.
 \end{itemize}
 
 \section{The elevator pitch (Relax in one minute)}
-Relax.js is a small frontend library built around a Virtual DOM (VDOM) and a component model.
-What makes this repository especially interesting is that it contains \emph{two} rendering strategies:
+Relax.js is a small UI runtime built around a Virtual DOM (VDOM) and a component model.
+What makes it a useful systems case study is that it contains \emph{two} execution paths:
 
 \begin{enumerate}
-  \item A traditional VDOM runtime under \texttt{src/}.
-  \item An experimental compiler-assisted runtime (HRBR) designed to update the DOM through precomputed \textbf{slots}.
+  \item A traditional VDOM runtime under \texttt{src/} (general case).
+  \item A compiler-assisted runtime (HRBR) that updates the DOM through precomputed \textbf{slots} (fast path for stable structure).
 \end{enumerate}
 
-The goal of this book is not only to show \emph{how to use} Relax.js, but to explain \emph{how to build it}.
-We'll read the real source code, map it to a mental model, and connect every important concept to tests.
+The goal of this book is not to teach a framework API.
+It is to teach a buildable architecture: contracts, invariants, and failure modes.
+We will still read real source code, but the emphasis is on transferable design.
 
 This isn't a conceptual ``frameworks 101'' book.
-It's a guided reverse-engineering and rebuild:
+It's a guided runtime engineering walk-through:
 
 \begin{itemize}
   \item You will learn the smallest set of abstractions needed to describe UI.
@@ -69,7 +72,7 @@ It's a guided reverse-engineering and rebuild:
   \item You will use the test suite as the specification that locks behavior in place.
 \end{itemize}
 
-By the end, you should be able to (1) understand every important subsystem in this repository, and (2) rebuild something similar with confidence.
+By the end, you should be able to (1) understand the architecture end-to-end, and (2) rebuild a similar deterministic runtime with confidence.
 
 \section{A tiny contract: what does Relax.js promise?}
 At a high level, Relax.js promises:
@@ -164,38 +167,90 @@ This tells you the learning order:
   \item \texttt{nextTick()} (async scheduling in the VDOM runtime)
 \end{enumerate}
 
-\section{Why a second runtime? (HRBR in one paragraph)}
-The VDOM approach is flexible, but it has overhead: you allocate VNodes, diff lists, and interpret the tree every update.
-HRBR is the opposite trade-off:
+\section{Why a second runtime? HRBR as a justified architecture choice}
+
+HRBR is the unique differentiator in this repository.
+If it isn't justified early, it looks like a random experiment.
+So let's state the motivation clearly and formally.
+
+\subsection{Problem statement}
+
+We want a UI runtime that is simultaneously:
 
 \begin{itemize}
-  \item The compiler extracts a stable template (static HTML) once.
-  \item Dynamic values become \textbf{slots} with stored DOM paths.
-  \item Updates become \emph{direct writes} to known nodes.
+  \item \textbf{Correct by construction}: updates are deterministic and testable.
+  \item \textbf{Ergonomic to author}: JSX/TSX stays readable and composable.
+  \item \textbf{Fast for stable subtrees}: when a subtree's structure is stable, updates should avoid repeated interpretation work.
 \end{itemize}
 
-You'll see HRBR show up in VDOM code via \texttt{DOM\_TYPES.HRBR} and \texttt{hBlock()} in \texttt{src/h.ts}.
+A classic VDOM runtime solves the first two nicely, but it pays a recurring per-update cost:
+allocate VNodes, traverse them, and interpret/diff structure to discover \emph{where} to write.
 
-\subsection{What problem does HRBR try to solve?}
-If a UI subtree is structurally stable (same elements in the same shape, only values change), a classic VDOM update does extra work:
+HRBR (\textbf{H}ybrid \textbf{R}untime with \textbf{B}locks and \textbf{R}eactivity) is the opposite trade-off:
+it moves some work earlier (compile/transform time) so the runtime can update a stable subtree through precomputed writes.
+
+\subsection{The HRBR idea (one sentence)}
+
+If the DOM \emph{shape} is stable, we can compile it into a stable template and update it by writing only the changing values (\emph{slots}).
+
+\subsection{How HRBR works (contract-level view)}
+
+HRBR has two core artifacts:
 
 \begin{itemize}
-  \item allocate and traverse VNodes on every update
-  \item interpret the tree to find where to write
-  \item diff children arrays (sometimes expensive)
+  \item A \textbf{template} (static HTML) that is parsed once.
+  \item A set of \textbf{slots} that specify \emph{what} to write (text/attr/prop/class/style/event) and \emph{where} to write it (a DOM path).
 \end{itemize}
 
-HRBR moves some of that cost earlier (``compile time''):
+At runtime, an update becomes: \emph{evaluate value} \textrightarrow \emph{write value} to known nodes.
+
+You'll see HRBR show up in VDOM code via \texttt{DOM\_TYPES.HRBR} and \texttt{hBlock()} in \texttt{src/h.ts},
+and then fully defined in the HRBR runtime chapters (template + slots, fallback, hydration).
+
+\subsection{Why not just optimize the VDOM?}
+
+You can (and we do), but there are two costs VDOM can't fully erase:
 
 \begin{itemize}
-  \item build a static DOM template once
-  \item record paths to dynamic locations (slots)
-  \item update by writing directly to those DOM nodes
+  \item \textbf{Discovery cost:} you must discover where to write by walking/diffing the tree.
+  \item \textbf{Allocation cost:} you repeatedly allocate VNodes/arrays/closures as part of rendering.
 \end{itemize}
 
-That doesn't make VDOM obsolete.
-It creates a spectrum:
-VDOM is the flexible general case; HRBR is an optimized fast path when the structure is known.
+For structurally stable subtrees, those costs are overhead.
+HRBR exists to provide a fast path when the shape is known.
+
+\subsection{Comparison (where HRBR sits relative to React/Vue/Solid)}
+
+This book isn't a framework survey, but you do need a mental coordinate system:
+
+\begin{itemize}
+  \item \textbf{React (VDOM + reconciliation):} very flexible, pays an interpretation cost each update.
+  \item \textbf{Vue (template compiler + runtime):} compiles templates to reduce work; still maintains a runtime update system.
+  \item \textbf{Solid (fine-grained reactivity):} reduces re-render traversal by tracking dependencies; still needs DOM update sites.
+  \item \textbf{Relax HRBR:} compiles stable templates into \emph{blocks} with explicit slot write locations, then drives updates through deterministic scheduling.
+\end{itemize}
+
+The punchline: HRBR is not ``better VDOM''.
+It's a different point in the design space: pay compilation complexity to reduce runtime interpretation work for stable structure.
+
+\subsection{Performance rationale (what HRBR is trying to buy)}
+
+HRBR is motivated by a measurable goal:
+
+\begin{itemize}
+  \item When structure is stable, updates should trend toward \textbf{O(number of changed values)} rather than \textbf{O(size of subtree)}.
+\end{itemize}
+
+This does not make benchmarks magically faster in every case.
+It is an architecture that can remove categories of overhead (tree traversal, diff discovery) when the compiler can guarantee the structure.
+
+\subsection{Safety valve: fallback when structure isn't stable}
+
+Compilers only work when the structure is predictable.
+So the HRBR system includes a built-in safety valve:
+when structure is dynamic (conditionals/lists/fragments with variable shape), compiled output routes to a fallback runtime.
+
+That decision and boundary are explained later in Chapter~\ref{ch:compiler-architecture}.
 
 \subsection*{Diagram: when HRBR is a good fit (static structure, dynamic data)}
 This isn't a binary choice; think of HRBR as a selective optimization for subtrees that are structurally stable.
@@ -234,7 +289,7 @@ Examples:
   \item HRBR block runtime: \texttt{runtime/\_\_tests\_\_/block.test.ts}
 \end{itemize}
 
-\subsection{What ``tests as spec'' means in this repository}
+\subsection{What ``verification contract'' means in this codebase}
 You should treat tests here as \emph{contracts}.
 When you change runtime behavior, you don't just ``fix failing tests''---you decide whether the contract changed.
 
@@ -330,7 +385,7 @@ It reads like a story:
 \end{itemize}
 
 Notice the discipline here: the tests make DOM updates predictable by explicitly awaiting \texttt{nextTick()}.
-That foreshadows Chapter~10, where we explain why scheduling exists and how it interacts with DOM patching.
+That foreshadows Chapter~\ref{ch:scheduling}, where we explain why scheduling exists and how it interacts with DOM patching.
 
 \section{Why this book is written the way it is (my bias as the author)}
 I built Relax by insisting on a few simple rules:

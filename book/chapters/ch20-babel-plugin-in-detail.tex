@@ -261,9 +261,9 @@ In block mode, the transformer supports:
 \end{itemize}
 
 So far this chapter has described the transform like a black box.
-Now we\'ll build the mental model from scratch: how a Babel plugin works, which AST nodes it sees, and how this particular scaffold chooses to represent output.
+Now we\'ll build the mental model: how a Babel plugin works, which AST nodes it sees, and how this scaffold chooses to represent output.
 
-\section{Babel plugins from scratch: the minimum you need to know}
+\section{Mental model: Babel plugins (the minimum you need to know)}
 
 If you\'ve never written a Babel plugin, the key idea is simple:
 
@@ -438,7 +438,7 @@ const App = () => (
 Even though the child expression is ``text-like'' at runtime, it\'s a \texttt{ConditionalExpression}, and the current heuristic treats that as structural.
 So the plugin emits \texttt{mountFallback} and the test asserts that updates are reactive and do not throw.
 
-\subsection{From scratch: what the fallback compiler is building}
+\subsection{Mechanics: what the fallback compiler is building}
 
 The fallback compiler doesn\'t build a vdom tree.
 It builds a tiny \emph{reconciliation spec} object with two operations:

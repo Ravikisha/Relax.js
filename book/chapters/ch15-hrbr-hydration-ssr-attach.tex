@@ -26,7 +26,7 @@ Concretely, you’ll be able to:
   \item Chapter~12: Effects and dependency tracking (why \texttt{mountCompiledBlock} works)
 \end{itemize}
 
-\section{Why hydration exists (from scratch)}
+\section{Rationale: why hydration exists}
 
 Hydration is the bridge between two worlds:
 
@@ -38,7 +38,7 @@ Hydration is the bridge between two worlds:
 If you don’t hydrate, you have only two choices on the client:
 
 \begin{itemize}
-  \item \textbf{Remount by recreating DOM} from scratch, which throws away the server’s nodes (and can introduce a visible flash), or
+  \item \textbf{Remount by recreating DOM}, which throws away the server’s nodes (and can introduce a visible flash), or
   \item \textbf{Try to patch your way into the server DOM} with a general reconciler, which is powerful but hard to make airtight.
 \end{itemize}
 

@@ -1,6 +1,7 @@
 \chapter{The VNode model (what the renderer \emph{really} consumes)}
+\label{ch:vnode-model}
 
-In Chapter~3 we treated TSX as ``just syntax'' that boils down to calling \texttt{h()} and \texttt{hFragment()}.
+In the previous chapter we treated TSX as ``just syntax'' that boils down to calling \texttt{h()} and \texttt{hFragment()}.
 This chapter is where I make that concrete.
 
 If you strip Relax down to its bones, the renderer is a pair of functions:
@@ -54,7 +55,7 @@ In Relax, that's the VNode.
 A virtual DOM implementation needs a stable, serializable representation of UI. In Relax, that representation is the \textbf{VNode}. The renderer can then be split into three big phases:
 
 \begin{enumerate}
-  \item \textbf{Create}: build a VNode tree (usually by calling \texttt{h()} directly, or indirectly via TSX as described in Chapter~3).
+  \item \textbf{Create}: build a VNode tree (usually by calling \texttt{h()} directly, or indirectly via TSX as described earlier).
   \item \textbf{Mount}: allocate real DOM nodes for that tree (\texttt{src/mount-dom.ts}).
   \item \textbf{Patch}: reconcile an ``old tree'' with a ``new tree'' (\texttt{src/patch-dom.ts}), reusing as much DOM as possible.
 \end{enumerate}
@@ -348,7 +349,7 @@ export function areNodesEqual(oldNode: any, newNode: any) {
 From a systems perspective, this is the policy wall between ``update in place'' and ``destroy + remount''.
 If \texttt{areNodesEqual(old, next)} returns \texttt{false}, patching treats it as a different logical node and re-creates DOM / component instances.
 
-\subsection*{Tests as spec: identity rules are enumerated}
+\subsection*{Invariant checklist: identity rules}
 The tests in \texttt{src/\_\_tests\_\_/node-equals.test.ts} are effectively a checklist:
 
 \begin{itemize}

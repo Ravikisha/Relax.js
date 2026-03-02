@@ -1,6 +1,7 @@
 \chapter{Events and the Command Dispatcher}
+\label{ch:events-dispatcher}
 
-In Chapter~6 we learned how props become DOM configuration.
+In Chapter~\ref{ch:attributes-props} we learned how props become DOM configuration.
 Now we hit the other half of interactivity: \textbf{input flowing back into the system}.
 
 Relax uses the word ``event'' in two different senses, and it helps to separate them in your head:
@@ -304,7 +305,7 @@ Notice how these tests avoid implementation details (maps, arrays, indices) and 
 \end{enumerate}
 
 \section{Where this plugs into the renderer}
-You've already seen the integration point in Chapter~5:
+You've already seen the integration point in Chapter~\ref{ch:mounting}:
 
 \begin{itemize}
   \item element vnodes store \texttt{props.on} (after TSX mapping)

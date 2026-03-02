@@ -36,9 +36,9 @@
   urlcolor=RelaxBlue,
   citecolor=RelaxBlue,
   pdfauthor={Ravi Kishan},
-  pdftitle={Relax.js: A Deep Build Guide},
-  pdfsubject={Relax.js internals, VDOM rendering, compiler-assisted rendering (HRBR)},
-  pdfkeywords={Relax.js, virtual DOM, VDOM, compiler, HRBR, signals, scheduler, TypeScript, JSX}
+  pdftitle={Building a Deterministic UI Runtime (with Relax.js)},
+  pdfsubject={Deterministic UI runtimes: VDOM rendering, scheduling, signals, and compiler-assisted rendering (HRBR)},
+  pdfkeywords={Relax.js, deterministic UI runtime, virtual DOM, scheduler, signals, compiler, HRBR, performance, TypeScript, JSX}
 }
 
 \lstset{
@@ -98,11 +98,9 @@
   style=relax
 }
 
-\title{Relax.js: A Deep Build Guide}
+\title{Building a Deterministic UI Runtime (with Relax.js)}
 \author{Ravi Kishan}
 \date{\today}
-
-% --- Lightweight custom title page ---
 \pretitle{\begin{center}\Huge\bfseries\color{RelaxGray}}
 \posttitle{\par\end{center}\vspace{0.6em}}
 \preauthor{\begin{center}\large\color{RelaxGray}}
@@ -164,7 +162,7 @@
       {\Huge\bfseries\color{RelaxGray} Relax.js\par}
       
       \vspace{0.2cm}
-      {\Large\fontfamily{lmss}\selectfont\color{RelaxGray} A Deep Build Guide\par}
+  {\Large\fontfamily{lmss}\selectfont\color{RelaxGray} Building a Deterministic UI Runtime from First Principles\par}
       
       \vspace{0.55cm}
       {\normalsize\color{RelaxGray!90} Ravi Kishan\par}
@@ -172,8 +170,8 @@
       {\small\color{RelaxGray!95}
           \begin{minipage}{0.92\textwidth}
               \centering
-              A practical, test-driven walk through Relax.js internals---VDOM rendering,
-              diffing/patching, scheduling, and compiler-assisted rendering (HRBR).
+              A practical, engineering-focused walk through deterministic runtime design:
+              VDOM rendering, diffing/patching, scheduling lanes, signals, and compiler-assisted blocks (HRBR).
           \end{minipage}\par
       }
     \end{center}
@@ -201,35 +199,49 @@
 
 \mainmatter
 
+% --- Chapter 0 ---
+\input{book/chapters/ch00-system-architecture-overview}
+
 % --- Part I ---
+\part{VDOM runtime (the general case)}
 \input{book/chapters/ch01-what-and-why}
 \input{book/chapters/ch02-repo-tour}
 \input{book/chapters/ch03-tsx-jsx}
-
-% --- Part II (start) ---
 \input{book/chapters/ch04-vnode-model}
 \input{book/chapters/ch05-mounting-dom}
 \input{book/chapters/ch06-attributes-props}
 \input{book/chapters/ch07-events-dispatcher}
 \input{book/chapters/ch08-patching-diffing}
 \input{book/chapters/ch09-destroy-unmount}
-\input{book/chapters/ch10-scheduling-nexttick}
 \input{book/chapters/ch11-slots-content-projection}
-\input{book/chapters/ch12-hrbr-signals}
+
+% --- Part II ---
+\part{Scheduling \& determinism}
+\input{book/chapters/ch10-scheduling-nexttick}
 \input{book/chapters/ch13-hrbr-deterministic-scheduler}
+
+% --- Part III ---
+\part{Reactive graph}
+\input{book/chapters/ch12-hrbr-signals}
+
+% --- Part IV ---
+\part{HRBR: compiler-assisted runtime}
+\input{book/chapters/ch02-hrbr-motivation}
 \input{book/chapters/ch14-hrbr-blocks-template-slots}
 \input{book/chapters/ch15-hrbr-hydration-ssr-attach}
 \input{book/chapters/ch16-hrbr-ssr-authoring-v1}
 \input{book/chapters/ch17-hrbr-fallback-reconciler}
-
-% Part IV
 \input{book/chapters/ch18-vdom-hrbr-interop}
 \input{book/chapters/ch19-compiler-architecture-overview}
 \input{book/chapters/ch20-babel-plugin-in-detail}
+
+% --- Part V ---
+\part{Packaging, tooling, and production discipline}
 \input{book/chapters/ch21-devtools-instrumentation}
 \input{book/chapters/ch22-benchmarks-methodology}
 \input{book/chapters/ch23-static-site-generator}
 \input{book/chapters/ch24-release-quality-discipline}
+\input{book/chapters/ch25-production-failure-modes}
 
 \backmatter
 
@@ -282,6 +294,185 @@ Accessed 2026-03-01.
 Babel.
 \emph{Babel Plugin Handbook}.
 \url{https://github.com/jamiebuilds/babel-handbook/blob/master/translations/en/plugin-handbook.md}.
+Accessed 2026-03-01.
+
+\bibitem{mdn_dom}
+MDN Web Docs.
+\emph{Document Object Model (DOM)}.
+\url{https://developer.mozilla.org/en-US/docs/Web/API/Document_Object_Model}.
+Accessed 2026-03-01.
+
+\bibitem{mdn_dom_event_loop}
+MDN Web Docs.
+\emph{Event loop}.
+\url{https://developer.mozilla.org/en-US/docs/Web/JavaScript/Event_loop}.
+Accessed 2026-03-01.
+
+\bibitem{whatwg_dom}
+WHATWG.
+\emph{DOM Standard}.
+\url{https://dom.spec.whatwg.org/}.
+Accessed 2026-03-01.
+
+\bibitem{whatwg_html}
+WHATWG.
+\emph{HTML Standard}.
+\url{https://html.spec.whatwg.org/}.
+Accessed 2026-03-01.
+
+\bibitem{ecma262}
+Ecma International.
+\emph{ECMAScript\textsuperscript{\textregistered} 2024 Language Specification (ECMA-262)}.
+\url{https://tc39.es/ecma262/}.
+Accessed 2026-03-01.
+
+\bibitem{node_event_loop}
+Node.js Documentation.
+\emph{Timers and the event loop}.
+\url{https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick}.
+Accessed 2026-03-01.
+
+\bibitem{react_reconciliation}
+React Documentation.
+\emph{Reconciliation}.
+\url{https://legacy.reactjs.org/docs/reconciliation.html}.
+Accessed 2026-03-01.
+
+\bibitem{react_fiber_architecture}
+Andrew Clark.
+\emph{React Fiber Architecture}.
+\url{https://github.com/acdlite/react-fiber-architecture}.
+Accessed 2026-03-01.
+
+\bibitem{react_concurrent_ui}
+React Documentation.
+\emph{Concurrent UI Patterns}.
+\url{https://react.dev/blog/2022/03/29/react-v18}.
+Accessed 2026-03-01.
+
+\bibitem{solid_signals}
+SolidJS Documentation.
+\emph{Signals and reactivity}.
+\url{https://www.solidjs.com/docs/latest#signals}.
+Accessed 2026-03-01.
+
+\bibitem{svelte_compiler}
+Svelte Documentation.
+\emph{Svelte Compiler}.
+\url{https://svelte.dev/docs/svelte-compiler}.
+Accessed 2026-03-01.
+
+\bibitem{vue_reactivity}
+Vue.js Documentation.
+\emph{Reactivity in depth}.
+\url{https://vuejs.org/guide/extras/reactivity-in-depth.html}.
+Accessed 2026-03-01.
+
+\bibitem{jquery}
+John Resig.
+\emph{jQuery}.
+\url{https://jquery.com/}.
+Accessed 2026-03-01.
+
+\bibitem{babel_your_code_transformed}
+Babel.
+\emph{What is Babel?}.
+\url{https://babeljs.io/docs/}.
+Accessed 2026-03-01.
+
+\bibitem{orbaiceta_build_framework}
+	extsc{Ángel Sola Orbaiceta}.
+\emph{Build a Frontend Web Framework (From First Principles)}.
+Independent publication.
+Accessed 2026-03-01.
+
+\bibitem{okasaki_purely_functional_data_structures}
+Chris Okasaki.
+\emph{Purely Functional Data Structures}.
+Cambridge University Press, 1998.
+
+\bibitem{kleppmann_ddia}
+Martin Kleppmann.
+\emph{Designing Data-Intensive Applications}.
+O\'Reilly Media, 2017.
+
+\bibitem{tanenbaum_modern_os}
+Andrew S. Tanenbaum and Herbert Bos.
+\emph{Modern Operating Systems} (4th ed.).
+Pearson, 2014.
+
+\bibitem{knuth_taocp}
+Donald E. Knuth.
+\emph{The Art of Computer Programming, Volume 3: Sorting and Searching}.
+Addison-Wesley, 1998.
+
+\bibitem{cormen_clrs}
+Thomas H. Cormen, Charles E. Leiserson, Ronald L. Rivest, and Clifford Stein.
+\emph{Introduction to Algorithms} (3rd ed.).
+MIT Press, 2009.
+
+\bibitem{gray_reuter_transaction_processing}
+Jim Gray and Andreas Reuter.
+\emph{Transaction Processing: Concepts and Techniques}.
+Morgan Kaufmann, 1993.
+
+\bibitem{lamport_time_clocks_ordering}
+Leslie Lamport.
+\emph{Time, Clocks, and the Ordering of Events in a Distributed System}.
+\emph{Communications of the ACM}, 21(7), 1978.
+
+\bibitem{abadi_lampson_liskov_security_paper}
+Mart\'in Abadi, Butler Lampson, and Jean-Jacques Liskov.
+\emph{A Calculus for Access Control in Distributed Systems}.
+\emph{ACM Transactions on Programming Languages and Systems}, 15(4), 1993.
+
+\bibitem{prokopec_perf_js}
+Vlatko Prokopec.
+\emph{Testing and Benchmarking JavaScript Performance}.
+Online notes.
+\url{https://github.com/vlats/perf}.
+Accessed 2026-03-01.
+
+\bibitem{google_web_vitals}
+Google.
+\emph{Web Vitals}.
+\url{https://web.dev/vitals/}.
+Accessed 2026-03-01.
+
+\bibitem{w3c_performance_timeline}
+W3C.
+\emph{Performance Timeline}.
+\url{https://w3c.github.io/performance-timeline/}.
+Accessed 2026-03-01.
+
+\bibitem{w3c_resource_timing}
+W3C.
+\emph{Resource Timing}.
+\url{https://www.w3.org/TR/resource-timing-2/}.
+Accessed 2026-03-01.
+
+\bibitem{jsdom}
+jsdom.
+\emph{jsdom: A JavaScript implementation of the DOM and HTML standards}.
+\url{https://github.com/jsdom/jsdom}.
+Accessed 2026-03-01.
+
+\bibitem{vitest}
+Vitest.
+\emph{Vitest documentation}.
+\url{https://vitest.dev/}.
+Accessed 2026-03-01.
+
+\bibitem{rollup}
+Rollup.
+\emph{Rollup documentation}.
+\url{https://rollupjs.org/}.
+Accessed 2026-03-01.
+
+\bibitem{semver}
+Tom Preston-Werner.
+\emph{Semantic Versioning 2.0.0}.
+\url{https://semver.org/}.
 Accessed 2026-03-01.
 
 \end{thebibliography}

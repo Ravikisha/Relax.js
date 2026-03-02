@@ -1,21 +1,63 @@
 \chapter*{Preface}
 \addcontentsline{toc}{chapter}{Preface}
 
-This book exists for a simple reason: modern front-end frameworks feel like magic until you build one.
-A virtual DOM, a renderer, a scheduler, a diff algorithm, a component model, a compiler-assisted fast path---these are not mystical.
-They are engineering trade-offs.
+Modern UI frameworks can feel like magic because they hide the two hard things:
+\emph{time} (scheduling) and \emph{state} (reactivity).
+This book is about making both explicit.
 
-Relax.js is the vehicle for this tour.
-It is intentionally small enough to read, but ambitious enough to teach real-world concepts:
+It is written from a systems perspective.
+We will treat the browser DOM as an output device, treat rendering as a commit protocol, and treat scheduling as part of correctness.
+
+Relax.js is the concrete case study, but the goal is broader:
+to give you a rigorous blueprint for building deterministic UI runtimes.
+
+\section*{What kind of book this is (and is not)}
+\addcontentsline{toc}{section}{What kind of book this is (and is not)}
+
+This is a \textbf{runtime engineering book}.
+It teaches the contracts, invariants, and failure modes of rendering engines.
+You should finish it able to build (and debug) your own small runtime.
+
+It is also an \textbf{architecture reference}.
+Each subsystem is tied to concrete implementations and tests that lock behavior down.
+
+Finally, it is a \textbf{compiler-assisted UI runtime case study}.
+Relax.js contains two execution paths---a general VDOM runtime and an optimized compiled path (HRBR)---and this book explains how they coexist,
+what each path is good at, and what trade-offs they impose.
+
+What it is \emph{not}: a marketing guide, an API cookbook, or a general survey of frameworks.
+It is a deliberate walk through one codebase to teach transferable ideas.
+
+\section*{Reader promise}
+\addcontentsline{toc}{section}{Reader promise}
+
+After finishing this book, you will be able to:
+
+\begin{itemize}
+  \item \textbf{Design your own UI runtime} with clear contracts for model \textrightarrow mount \textrightarrow patch \textrightarrow destroy.
+  \item \textbf{Implement and test deterministic scheduling} (lanes/priority, budgets, and flush boundaries).
+  \item \textbf{Build a compiler-assisted rendering path} based on stable templates and precomputed slot writes (and know when it helps).
+  \item \textbf{Evaluate framework internals critically}: reason about correctness, performance, and maintainability using evidence (tests and measurements).
+  \item \textbf{Debug production failure modes} (infinite update loops, unbounded microtasks, memory retention, DOM ownership bugs) with a checklist mindset.
+\end{itemize}
+
+The goal is not memorization.
+The goal is capability.
+
+\section*{What you'll build, piece by piece}
+\addcontentsline{toc}{section}{What you'll build, piece by piece}
+
+Each chapter corresponds to a subsystem with a contract you can run and verify.
+Relax.js gives us a full stack of runtime mechanisms:
 
 \begin{itemize}
   \item A \textbf{virtual node model} you can reason about.
   \item A \textbf{mount/patch/unmount pipeline} with crisp boundaries.
   \item A \textbf{keyed diff} (including sequence/LIS thinking) good enough to be educational and pragmatic.
-  \item A \textbf{scheduler} that makes asynchrony explicit.
-  \item A \textbf{reactivity layer} (signals) that forces correctness about invalidation.
+  \item A \textbf{scheduler} that makes time explicit: ordering, fairness, and flush boundaries.
+  \item A \textbf{reactivity layer} (signals) that makes invalidation explicit.
   \item A \textbf{compiler-assisted rendering path} (HRBR) that turns stable templates into faster DOM work.
-  \item A serious commitment to \textbf{tests as specification}.
+  \item A serious commitment to \textbf{verification contracts} (tests that lock behavior down).
 \end{itemize}
 
 \section*{Project links}
@@ -38,10 +80,8 @@ If you have built one before, you will still get value from the test-driven appr
 \section*{How to read it}
 \addcontentsline{toc}{section}{How to read it}
 
-This is not a reference manual.
-It is a guided build.
-Each part is grounded in the repository and in the unit tests under \texttt{src/\_\_tests\_\_/}.
-Whenever you see a behavioral claim, you should be able to trace it to code and to an expectation.
+This is a guided build with reference value.
+Whenever you see a behavioral claim, you should be able to trace it to code and to a test expectation.
 
 A practical way to use the book:
 
@@ -59,8 +99,8 @@ External URLs are included in-line for convenience.
 When you need background on browser APIs, MDN is the fastest path to shared vocabulary.
 For example: \href{https://developer.mozilla.org/}{https://developer.mozilla.org/}.
 
-Relax.js began as a build-along inspired by \textit{Build a Frontend Web Framework (From Scratch)} by \textsc{\mbox{\hspace{0.2em}ÁNGEL SOLA ORBAICETA}}.
-This book extends that baseline with a strong emphasis on tests, packaging discipline, and performance instrumentation.
+Relax.js began as a build-along inspired by \textit{Build a Frontend Web Framework (From First Principles)} by \textsc{\mbox{\hspace{0.2em}ÁNGEL SOLA ORBAICETA}}.
+This book pushes further into scheduler design, determinism, failure modes, and compiler-assisted fast paths.
 
 \section*{Versioning}
 \addcontentsline{toc}{section}{Versioning}

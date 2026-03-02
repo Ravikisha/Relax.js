@@ -1,4 +1,5 @@
 \chapter{Fallback Reconciler: Dynamic Structure When Blocks Aren't Enough}
+\label{ch:hrbr-fallback-reconciler}
 
 Blocks are fast because structure is stable: the template doesn’t change, only slot values do.
 
@@ -154,7 +155,7 @@ Each item supports:
   \item optional \texttt{destroy(existing)} to cleanup when removed
 \end{itemize}
 
-\subsection{From scratch: what is a \texttt{ReconcileItem}?}
+\subsection{Mental model: what is a \texttt{ReconcileItem}?}
 
 When you use \texttt{reconcileChildren(host, next)}, you aren’t passing DOM nodes.
 You’re passing \emph{instructions} for how to create or patch them:

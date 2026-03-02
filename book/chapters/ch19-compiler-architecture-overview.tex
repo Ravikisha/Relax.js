@@ -37,7 +37,7 @@ The moment you want both:
 
 you end up building a compiler or transform.
 
-This chapter is deliberately practical: we\'ll treat tests as specs, and we\'ll keep the compiler contract small enough that you can maintain it.
+This chapter is deliberately practical: we\'ll treat tests as executable contracts, and we\'ll keep the compiler/runtime boundary small enough that you can maintain it.
 
 The compiler currently exists in two forms:
 
@@ -598,7 +598,7 @@ Notice what this buys us:
 This is a deliberately small heuristic.
 In later chapters, you'll see how it grows, and how tests keep it honest.
 
-\section{Babel compilation from scratch: how one JSX element becomes a block}
+\section{Babel compilation mechanics: how one JSX element becomes a block}
 
 So far we've looked at the \emph{shape} of the output.
 Now we'll build a mental model for the \emph{mechanics} of how the Babel transform creates that output.
@@ -696,7 +696,7 @@ So the caller doesn't care which one it got.
 For conceptual background on why many UI frameworks separate ``render'' from ``commit'' (build a description then apply it), see:
 \href{https://react.dev/learn/render-and-commit}{https://react.dev/learn/render-and-commit}.
 
-\section{Tests as specs: how to validate compiler changes safely}
+\section{Validation contract: how to change the compiler safely}
 
 Compilers are notoriously easy to break with tiny edits.
 Relax deals with this by treating tests as the spec.
@@ -985,7 +985,7 @@ This approximates how ``real code'' will behave: the compile-time output must wo
 
 \section{Worked example: derive \texttt{templateHTML} and slot paths from the snapshot}
 
-Now we\'ll do the most valuable ``learn it from scratch'' exercise: take the golden snapshot in
+Now we\'ll do the most valuable \emph{derive-it-by-hand} exercise: take the golden snapshot in
 	exttt{compiler/\_\_tests\_\_/babel-transform.test.ts} and derive the template and slot paths by hand.
 If you can do this once, debugging a compiler becomes much less mysterious.
 

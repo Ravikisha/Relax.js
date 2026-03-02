@@ -1,0 +1,112 @@
+\chapter{Production failure modes in UI runtimes}
+\label{ch:failure-modes}
+
+Most UI runtime bugs are not "wrong output" bugs.
+They are \emph{systems} bugs: feedback loops, retained graphs, scheduling pathologies, and ownership confusion.
+
+This chapter collects failure modes that show up across runtimes (VDOM, fine-grained reactive, compiler-assisted).
+The goal is not fear.
+The goal is to give you a checklist you can apply while designing, profiling, and debugging.
+
+\section{Infinite update loops}
+
+\textbf{Symptom:} the runtime never settles; CPU spikes; the UI starves input.
+
+\textbf{Root causes:}
+\begin{itemize}
+  \item an effect writes to a signal it depends on without a guard
+  \item patching triggers synchronous callbacks that enqueue more work
+  \item scheduling policy promotes work aggressively without yielding
+\end{itemize}
+
+\textbf{Mitigations:}
+\begin{itemize}
+  \item enforce a "no self-write" discipline (or require explicit \texttt{untrack})
+  \item guard effects with equality checks
+  \item use budgets + lanes so the runtime yields under load
+\end{itemize}
+
+\section{Zombie effects (effects that outlive their owners)}
+
+\textbf{Symptom:} removed components still react to updates; unexpected DOM writes; memory grows.
+
+\textbf{Root causes:}
+\begin{itemize}
+  \item effect cleanup not called on unmount
+  \item dependency edges not detached on disposal
+  \item shared global scheduler keeps references to disposed computations
+\end{itemize}
+
+\textbf{Mitigations:}
+\begin{itemize}
+  \item make disposal idempotent and test it
+  \item ensure the reactive graph detaches edges on cleanup
+  \item treat "ownership" as a first-class runtime concept
+\end{itemize}
+
+\section{Unbounded microtasks / event loop starvation}
+
+\textbf{Symptom:} UI becomes unresponsive even though each unit of work is small.
+
+\textbf{Root causes:}
+\begin{itemize}
+  \item scheduling uses microtasks for flush and re-enqueues itself repeatedly
+  \item promise chains prevent macrotask yielding
+  \item a flush loop drains all work without a budget
+\end{itemize}
+
+\textbf{Mitigations:}
+\begin{itemize}
+  \item enforce time budgets and chunk work across frames
+  \item promote fairness across lanes (input, sync, transition, idle)
+  \item allow an explicit yield boundary
+\end{itemize}
+
+\section{Memory retention}
+
+\textbf{Symptom:} steady memory growth after navigation or repeated mounts.
+
+\textbf{Typical retention paths:}
+\begin{itemize}
+  \item event listeners not removed
+  \item DOM node references stored in VNodes that stay reachable
+  \item reactive graph edges keep computations alive
+  \item caches (key maps / memo tables) never evict
+\end{itemize}
+
+\textbf{Mitigations:}
+\begin{itemize}
+  \item teardown tests that assert listeners are removed and effects disposed
+  \item strict "owner owns children" rules for cleanup
+  \item instrumentation counters (allocations, live nodes, live effects)
+\end{itemize}
+
+\section{Incorrect DOM ownership}
+
+\textbf{Symptom:} double-removal bugs, detached nodes that still receive writes, hydration mismatches.
+
+\textbf{Root causes:}
+\begin{itemize}
+  \item two subsystems believe they own the same DOM subtree
+  \item compiled blocks are embedded without clear lifecycle boundaries
+  \item hydration attaches to markup that does not match template expectations
+\end{itemize}
+
+\textbf{Mitigations:}
+\begin{itemize}
+  \item make ownership boundaries explicit (mount returns a disposable handle)
+  \item ensure destroy is idempotent and verified by tests
+  \item treat hydration mismatch as a controlled bailout, not undefined behavior
+\end{itemize}
+
+\section{A practical checklist}
+
+When you design or review a runtime subsystem, ask:
+
+\begin{itemize}
+  \item Can work become self-sustaining (infinite loop)?
+  \item When something is removed, does \emph{all} associated work stop?
+  \item Under load, does the runtime yield fairly?
+  \item Can the system prove cleanup (listeners, effects, references)?
+  \item Is DOM ownership unambiguous at every boundary (VDOM \(\leftrightarrow\) HRBR, hydration, fallback)?
+\end{itemize}

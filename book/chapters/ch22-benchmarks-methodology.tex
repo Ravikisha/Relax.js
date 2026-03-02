@@ -1,5 +1,5 @@
 \chapter{Benchmarks methodology (repeatability + fairness)}
-\label{ch:benchmarks}
+\label{ch:benchmarks-methodology}
 
 Benchmarks are where performance stories can go wrong fast.
 It's easy to produce a chart that looks convincing while accidentally measuring something else (layout thrash, dev-mode checks, GC noise, or even the benchmark harness itself).
@@ -99,7 +99,7 @@ This is \emph{not} intended to make Node-based benchmarking ``accurate''. It's t
 
 The core harness is \texttt{benchmarks/harness.ts}.
 
-\subsection{From scratch: the minimal mental model}
+\subsection{Mental model: the minimal contract}
 
 Before looking at the code, anchor the harness in two ideas:
 
@@ -351,7 +351,7 @@ Repeatability relies on standard profiles and seeded randomness.
 
 The profile parser lives in \texttt{benchmarks/profile.ts}.
 
-\subsection{From scratch: why profiles exist at all}
+\subsection{Rationale: why profiles exist at all}
 
 Without profiles, people do this:
 

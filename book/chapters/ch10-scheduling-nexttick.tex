@@ -1,4 +1,5 @@
 \chapter{Scheduling, nextTick, and Deterministic Work}
+\label{ch:scheduling}
 
 Scheduling is one of those topics that every UI developer feels they "kind of" understands
 even while still getting surprised by it weekly.
@@ -47,7 +48,7 @@ Relax has two schedulers because it has two kinds of work with different needs:
 
 Before we read Relax\'s scheduler, we need one shared mental model: \textbf{the JavaScript event loop}.
 
-\subsection{From scratch: one thread, a call stack, and two queues}
+\subsection{Mental model: one thread, a call stack, and two queues}
 
 In a browser (and in many JS environments), your code runs on one main thread.
 Execution is a loop:

@@ -220,7 +220,7 @@ In \texttt{createSignal()}, the reader is:
 
 That means dependencies are collected by running the effect/memo function and letting reads "register".
 
-\subsubsection{From scratch: the global pointer trick}
+\subsubsection{Mechanics: the global pointer trick}
 
 The \texttt{currentComputation} pointer is the entire core of dependency tracking.
 When a computation is running, it sets this global.
@@ -533,7 +533,7 @@ Conceptual reference: Solid's explanation of fine-grained dependency tracking is
 	exttt{unlinkAllSources()} also deliberately nulls out fields on the link objects (with \texttt{@ts-expect-error} comments).
 That’s not required for correctness, but it makes accidental retention less likely in this prototype implementation.
 
-\section{The tests as specs: what behavior is non-negotiable}
+\section{Non-negotiable guarantees (what must remain true)}
 
 If you want to understand signals fast, read the tests first.
 They encode the contract in a way that prevents “almost works” implementations.

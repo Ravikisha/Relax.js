@@ -59,7 +59,7 @@ It helps to think about the pipeline as a function that takes a working tree and
 
 \section{Typecheck: make illegal states unrepresentable}
 
-\subsection{From scratch: why \emph{multiple} gates are non-negotiable}
+\subsection{Rationale: why \emph{multiple} gates are non-negotiable}
 
 When teams skip quality gates, it is rarely because they love bugs.
 It is because they are implicitly betting that one tool (usually tests) will catch everything.
@@ -419,7 +419,7 @@ That is why \texttt{prepack} builds both JS bundles and types before publish.
 
 \section{Release checklist (practical)}
 
-\section{From scratch: package \texttt{exports} is the public API surface}
+\section{Contract surface: \texttt{package.json exports} is the public API}
 
 Frontend library releases often break for reasons that aren't "bugs" in the runtime.
 They break because the published entry points moved.
@@ -546,7 +546,7 @@ This chapter is grounded in real scripts and configs:
 \item TypeScript configs for declaration and rollup builds
 \end{itemize}
 
-In the next section of the book (appendices), we'll turn these practices into a learner-friendly ``build it from scratch'' checklist and a test-reading guide.
+In the next section of the book (appendices), we\'ll turn these practices into a learner-friendly checklist and a test-reading guide.
 
 \section{Online resources}
 

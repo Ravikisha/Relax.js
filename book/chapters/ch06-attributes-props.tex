@@ -1,6 +1,7 @@
 \chapter{Attributes, properties, classes, and styles (\texttt{src/attributes.ts})}
+\label{ch:attributes-props}
 
-In Chapter~5 we learned how to mint DOM nodes. This chapter is about the part that looks boring in demos but dominates correctness in real apps:
+In Chapter~\ref{ch:mounting} we learned how to mint DOM nodes. This chapter is about the part that looks boring in demos but dominates correctness in real apps:
 \emph{wiring props into the DOM in a way that matches how the browser actually works}.
 
 I call this the \textbf{DOM edge}. It's where frameworks either:
@@ -64,7 +65,7 @@ In Relax, element props are written by one function:
 	exttt{setAttributes(el: HTMLElement, attrs: ElementVNodeProps)}
 \end{quote}
 
-You saw calls to this during element mounting in Chapter~5. You'll see it again during patching in Chapter~8.
+You saw calls to this during element mounting in Chapter~\ref{ch:mounting}. You'll see it again during patching in Chapter~\ref{ch:patching-diffing}.
 
 \subsection*{Inputs}
 \begin{itemize}
@@ -157,7 +158,7 @@ There's an important design choice hiding here:
 
 This is why Relax feels predictable: most names you type behave like real DOM fields.
 
-\section{Tests as spec: what does ``property first'' buy us?}
+\section{Contract: what does ``property first'' buy us?}
 
 If you want to understand this module quickly, don't start by reading framework wars on the internet.
 Start by reading the invariants encoded in \texttt{src/\_\_tests\_\_/attributes.test.ts}.
@@ -210,7 +211,7 @@ The tests at the top of \texttt{src/\_\_tests\_\_/attributes.test.ts} act as the
 	exttt{setAttributes()} doesn't know the previous style object.
 So a later call like \texttt{\{ style: \{ backgroundColor: 'blue' \} \}} will \emph{not} remove an earlier \texttt{color} field.
 That's not a bug; that's a design constraint.
-In Chapter~8, you'll see how patching handles this by diffing old vs new props.
+In Chapter~\ref{ch:patching-diffing}, you'll see how patching handles this by diffing old vs new props.
 
 \section{Props vs events: keeping the shape sane}\label{sec:props-vs-events}
 
@@ -233,7 +234,7 @@ export function extractPropsAndEvents(vdom: { props: Record<string, unknown> }) 
 
 Again, note the invariant: \texttt{key} is consumed by the renderer and must never leak into the DOM or component props.
 
-\subsection*{Tests as spec}
+\subsection*{Invariant checklist (props/events split)}
 The tests in \texttt{src/\_\_tests\_\_/props.test.ts} prove five simple facts:
 
 \begin{itemize}
