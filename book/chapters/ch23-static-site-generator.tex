@@ -1,0 +1,715 @@
+\chapter{Static Site Generator (SSG): build a site compiler on top of Relax}
+\label{ch:ssg}
+
+\section{What you'll build}
+By the end of this chapter, you will have:
+
+\begin{itemize}
+  \item A working mental model for how a static site generator works (inputs, pipeline, outputs).
+  \item A minimal \emph{SSG pipeline} you can implement yourself: walk files \textrightarrow parse markdown \textrightarrow render HTML \textrightarrow write to disk.
+  \item A clear understanding of how Relax.js integrates SSG support \emph{without} changing the browser runtime.
+\end{itemize}
+
+\section{What you'll learn}
+\begin{itemize}
+  \item The core contract of an SSG: deterministic build output from deterministic input.
+  \item How Relax's VNode model becomes a server-side HTML renderer (VDOM \textrightarrow string).
+  \item Why frontmatter exists, and how Relax parses a "YAML-ish" subset safely.
+  \item How clean URLs and sitemap generation work (and why they are just path functions).
+  \item How tests act as executable documentation for a build pipeline.
+\end{itemize}
+
+\section{Prereqs}
+You should have read:
+
+\begin{itemize}
+  \item Chapter~4 (VNode model)
+  \item Chapter~5 (Mounting)
+  \item Chapter~8 (Patching / diffing) --- not because the SSG diffs DOM, but because it explains identity and escaping.
+  \item Chapter~23 (Release-quality discipline) helps for the "tests as specs" mindset.
+\end{itemize}
+
+\section{Concept: what an SSG really is}
+A static site generator is a compiler.
+It takes source files (often Markdown) and produces a directory of HTML files.
+
+\subsection{A mental model you can run in your head}
+When people say "SSG", they sometimes mean 10 different things (framework, templating system, router, asset pipeline).
+In this chapter we are deliberately strict:
+
+\begin{quote}
+An SSG is a \textbf{deterministic build pipeline} that turns source content into a folder of deployable files.
+\end{quote}
+
+That gives you a clear contract.
+If you keep this contract, the tool stays reliable and easy to test.
+If you violate it (randomness, time-dependent output, hidden I/O during rendering), you get "works on my machine" builds.
+
+\subsection{The compiler analogy (and why it matters)}
+If you've ever used a language compiler, this will feel familiar:
+
+\begin{itemize}
+  \item Source code \textrightarrow parse 
+  \item AST \textrightarrow transform
+  \item IR \textrightarrow codegen
+  \item Output binaries
+\end{itemize}
+
+An SSG is the same shape:
+
+\begin{itemize}
+  \item Markdown files \textrightarrow parse frontmatter + markdown
+  \item A "page model" (content + metadata) \textrightarrow wrap in layout
+  \item VNodes \textrightarrow HTML string
+  \item Output files (HTML, CSS, assets, sitemap)
+\end{itemize}
+
+This analogy is useful because compilers are traditionally tested with "golden" outputs and end-to-end fixtures.
+That's exactly how we test the Relax SSG.
+
+The useful mental model is:
+
+\begin{quote}
+\textbf{SSG contract:} \emph{(content + templates + config) \textrightarrow deterministic files}\\
+Same inputs should produce the same output bytes.
+\end{quote}
+
+That contract sounds obvious, but it forces good engineering:
+
+\begin{itemize}
+  \item you must have predictable path mapping (``where does this page go?'')
+  \item you must have predictable rendering (``how does Markdown become HTML?'')
+  \item you must have predictable integration points (``how can users customize layout?'')
+\end{itemize}
+
+In Relax.js, the SSG is intentionally minimal.
+It is not a framework.
+It is a sequencing of small, testable parts:
+
+\begin{enumerate}
+  \item \texttt{walkFiles()} enumerates input.
+  \item \texttt{markdownToPage()} parses content + frontmatter.
+  \item \texttt{renderPageToString()} turns VNodes into a full HTML document.
+  \item \texttt{toOutputPath()} decides where each page is written.
+  \item \texttt{copyDir()} copies public assets.
+  \item \texttt{renderSitemapXml()} emits \texttt{sitemap.xml} if you provide a base URL.
+\end{enumerate}
+
+\section{Build it from scratch: the smallest pipeline}
+Let's build the pipeline conceptually in four steps.
+I'll show simplified code first, then point you at the real implementation.
+
+\subsection{Pipeline diagram (map the code before you read it)}
+Before we touch details, here is the whole pipeline in one diagram.
+Keep this as your "table of contents" for the SSG implementation.
+
+\begin{verbatim}
+    (inputDir)
+        |
+        v
+  [ walkFiles() ]  -----------.
+        |                     |
+        v                     |
+      *.md files only               |
+        |                     |
+        v                     |
+     [ markdownToPage() ]           |
+       |             |              |
+       |             '-> frontmatter (title, layout, etc)
+       v
+      VNode (main{ innerHTML: ... })
+        |
+        v
+     [ wrapWithLayout() ]  (optional)
+        |
+        v
+     [ renderPageToString() ]
+        |
+        v
+    HTML string  -----> writeFile(toOutputPath())
+
+   plus:
+   - copyDir(public -> out)
+   - write theme/default.css
+   - renderSitemapXml(baseUrl, pages)
+\end{verbatim}
+
+Every box corresponds to a real function in \texttt{src/ssg/}.
+If you ever want to add a feature, start by deciding \emph{which box it belongs in}.
+
+\subsection{Step 1: walk the input tree}
+\textbf{Goal:} take an input directory and return a list of files.
+
+\textbf{Invariant:} the walker must visit every file exactly once.
+
+The real implementation is in \texttt{src/ssg/site.ts} as \texttt{walkFiles()}.
+Here's the core idea (simplified):
+
+\begin{lstlisting}[style=relax,language=JavaScript,caption={Walking the input directory (simplified).}]
+async function walkFiles(dir) {
+  const entries = await readdir(dir)
+  const out = []
+
+  for (const name of entries) {
+    const abs = join(dir, name)
+    const st = await stat(abs)
+    if (st.isDirectory()) out.push(...(await walkFiles(abs)))
+    else out.push(abs)
+  }
+
+  return out
+}
+\end{lstlisting}
+
+\textbf{Why this exists:}
+SSG is "pure" only if input enumeration is deterministic.
+If you miss files or include temporary build artifacts, rebuilds become unreliable.
+
+\textbf{What breaks if you change it:}
+If the walker accidentally follows output directories, you get exponential growth (page outputs treated as inputs).
+
+\subsection{Determinism note: filesystem order}
+Different filesystems can return directory entries in different orders.
+If you want perfectly stable output ordering (for stable sitemaps, predictable logs, reproducible builds), a common trick is to sort the directory entries.
+Relax's current implementation is intentionally minimal.
+If you extend it, consider adding sorting in \texttt{walkFiles()} and covering it with a unit test.
+
+\subsection{Step 2: Markdown \textrightarrow VNodes (but safely)}
+Relax's SSG uses Markdown as a content authoring format.
+The core pipeline is:
+
+\begin{quote}
+Markdown string \textrightarrow HTML string \textrightarrow VNode with \texttt{innerHTML}
+\end{quote}
+
+The key file is \texttt{src/ssg/markdown.ts}.
+The core function is \texttt{markdownToVNode(markdown)}.
+
+\begin{lstlisting}[style=relax,language=JavaScript,caption={Markdown to VNode uses \texttt{innerHTML} (from \texttt{src/ssg/markdown.ts}).}]
+export async function markdownToVNode(markdown, options = {}) {
+  const wrapperTag = options.wrapperTag ?? 'div'
+  const { marked } = await import('marked')
+  const html = marked.parse(markdown)
+  return h(wrapperTag, { innerHTML: String(html) }, [])
+}
+\end{lstlisting}
+
+\subsubsection{Code walk-through: what \texttt{innerHTML} means in a VNode}
+In the browser runtime, setting \texttt{innerHTML} is a classic foot-gun.
+In an SSG, it's a pragmatic escape hatch.
+
+The important detail is that Relax's string renderer understands this prop.
+In \texttt{src/ssg/render-to-string.ts}, element rendering does:
+
+\begin{itemize}
+  \item if \texttt{props.innerHTML} is a string: emit it verbatim as children
+  \item otherwise: render the VNode children recursively (and escape text nodes)
+\end{itemize}
+
+That separates the two worlds clearly: \emph{"safe by default"} vs \emph{"explicit raw"}.
+
+\textbf{Why this design:}
+I want the SSG to reuse Relax's VNode model as a "template language" without re-implementing an HTML AST.
+The VNode is just a container, and \texttt{innerHTML} carries the rendered markup.
+
+\textbf{Security note:}
+For an SSG, Markdown is trusted input (your repo).
+If you generate pages from untrusted user input, treat Markdown-to-HTML as a sanitizer problem.
+Relax does not attempt to sanitize.
+
+\subsubsection{Practical tip: keep markdown rendering isolated}
+Notice how \texttt{marked} is imported lazily:
+
+\begin{itemize}
+  \item it keeps the core runtime smaller
+  \item it lets consumers of Relax avoid a markdown dependency unless they actually use the SSG
+\end{itemize}
+
+This pattern is common in CLI tools: heavy dependencies live behind feature gates.
+
+\subsection{Step 3: Frontmatter is just structured metadata}
+Frontmatter exists because content needs metadata:
+
+\begin{itemize}
+  \item a title for \texttt{<title>} and headers
+  \item a description
+  \item a layout toggle
+  \item flags like \texttt{draft: true}
+\end{itemize}
+
+Relax parses a tiny subset: a flat list of \texttt{key: value} pairs.
+This is intentional.
+
+\begin{quote}
+\textbf{Design choice:} prefer a small, predictable parser over a "full YAML" dependency.
+\end{quote}
+
+The parser lives in \texttt{splitFrontmatter()} in \texttt{src/ssg/markdown.ts}.
+Here is the essence:
+
+\begin{lstlisting}[style=relax,language=JavaScript,caption={YAML-ish frontmatter parsing (simplified).}]
+function splitFrontmatter(input) {
+  const trimmed = input.replace(/^\ufeff/, '')
+  if (!trimmed.startsWith('---')) return { content: input, data: {} }
+
+  const end = trimmed.indexOf('\n---', 3)
+  if (end === -1) return { content: input, data: {} }
+
+  const fmBlock = trimmed.slice(3, end).trim()
+  const rest = trimmed.slice(end + 4)
+
+  const data = {}
+  for (const line of fmBlock.split(/\r?\n/)) {
+    const m = /^([A-Za-z0-9_\-]+)\s*:\s*(.*)$/.exec(line)
+    if (!m) continue
+    data[m[1]] = parseScalar(m[2])
+  }
+
+  return { content: rest.replace(/^\s*\r?\n/, ''), data }
+}
+\end{lstlisting}
+
+\subsubsection{Reading the real implementation: what it deliberately does \emph{not} do}
+The Relax frontmatter parser is intentionally small.
+When you read \texttt{splitFrontmatter()} in \texttt{src/ssg/markdown.ts}, you should notice:
+
+\begin{itemize}
+  \item It strips a UTF-8 BOM (byte-order mark). This is a real-world paper-cut.
+  \item It only parses lines that look like \texttt{key: value}.
+  \item It parses scalars: \texttt{true/false}, numbers, and strings (including quoted strings).
+  \item It ignores nested YAML, lists, multiline blocks, anchors, and other YAML features.
+\end{itemize}
+
+This is a feature, not a limitation.
+It keeps the parser predictable and reduces surprises in a tutorial.
+
+\subsubsection{Diagram: how a markdown file becomes a \texttt{Page}}
+\begin{verbatim}
+index.md
+  |
+  |  splitFrontmatter()
+  v
+{ data: { title: "Home" }, content: "# Hello" }
+  |
+  |  markdownToVNode()
+  v
+{ vdom: h('main', { innerHTML: "<h1>Hello</h1>" }), data }
+\end{verbatim}
+
+\textbf{Why this exists:}
+Frontmatter is how content communicates with the renderer without having to embed logic in Markdown.
+
+\textbf{What breaks if you remove it:}
+You lose page titles, descriptions, and any ability to make layout decisions at build time.
+
+\subsection{Step 4: VNodes \textrightarrow HTML string (SSR-friendly rendering)}
+To generate HTML files, we need a server-side renderer.
+This is not DOM mount.
+This is pure string rendering.
+
+Relax implements this in \texttt{src/ssg/render-to-string.ts}.
+
+The important contract:
+
+\begin{quote}
+\texttt{renderToString(vdom)} must escape by default, but allow controlled raw HTML for Markdown.
+\end{quote}
+
+The key design is \texttt{innerHTML}:
+
+\begin{itemize}
+  \item normal text children are escaped to prevent accidental tag injection
+  \item \texttt{innerHTML} bypasses escaping because Markdown already produced HTML
+\end{itemize}
+
+You can see this in the element renderer:
+
+\begin{lstlisting}[style=relax,language=JavaScript,caption={\texttt{innerHTML} rendering in \texttt{renderToString()}.}]
+function renderElementToString(vdom) {
+  const tag = vdom.tag
+  const attrs = renderAttrs(vdom.props ?? {})
+
+  const innerHTML = (vdom.props ?? {}).innerHTML
+  const children =
+    typeof innerHTML === 'string'
+      ? innerHTML
+      : (vdom.children ?? []).map(renderToString).join('')
+
+  return `<${tag}${attrs}>${children}</${tag}>`
+}
+\end{lstlisting}
+
+\subsubsection{Deep dive: escaping rules (the two invariants)}
+There are two invariants that make this safe enough for "content from your repo":
+
+\begin{enumerate}
+  \item \textbf{Text nodes are always escaped.} If you render a text child like \texttt{"<b>"}, you will get \texttt{\&lt;b\&gt;}.
+  \item \textbf{Raw HTML must be explicit.} Only \texttt{innerHTML} bypasses escaping.
+\end{enumerate}
+
+You can find these invariants in tests in \texttt{src/\_\_tests\_\_/ssg.test.js}.
+In build tools, tests are not just correctness checks --- they are documentation of your security posture.
+
+\subsubsection{What about components?}
+Relax's renderer can also render component VNodes.
+This is useful if you later want to build small "islands" of reusable layout logic (headers, footers, callouts) as components.
+The renderer instantiates and calls \texttt{render()} without mounting.
+
+This is a powerful idea:
+
+\begin{quote}
+You can reuse your UI component model as a static templating system.
+\end{quote}
+
+It also has a limitation: because nothing is mounted, lifecycle hooks and browser APIs do not run.
+That's exactly what we want in an SSG.
+
+\textbf{Why this design:}
+In an SSG, performance comes from having a boring, predictable renderer.
+This avoids having to create a DOM (jsdom) just to produce HTML.
+
+\section{Integration: the build orchestrator (CLI / API)}
+Now let's connect those parts into a build function.
+The public entry point today is \texttt{buildStaticSite()} in \texttt{src/ssg/cli.ts}.
+
+\subsection{Build orchestrator: read it like a story}
+Open \texttt{src/ssg/cli.ts} and skim \texttt{buildStaticSite()} once without reading every line.
+Try to identify these phases:
+
+\begin{enumerate}
+  \item Resolve paths (input/output)
+  \item Load and merge config
+  \item Enumerate markdown files
+  \item For each markdown file: parse \textrightarrow wrap \textrightarrow render \textrightarrow write
+  \item Write shared outputs (theme, public assets, sitemap)
+\end{enumerate}
+
+Then come back and read it slowly.
+This skill ("read code by finding the phases") is how you get productive with build tools quickly.
+
+The pipeline is:
+
+\begin{enumerate}
+  \item walk input files
+  \item filter \texttt{.md}
+  \item render each Markdown file to an HTML page
+  \item choose its output path (clean URL mapping)
+  \item write the file
+  \item add URL to sitemap list
+  \item copy theme + public assets
+  \item write \texttt{sitemap.xml} if configured
+\end{enumerate}
+
+\subsection{Clean URLs are just path rules}
+Clean URLs are the difference between:
+
+\begin{itemize}
+  \item \texttt{about.html} (file URL)
+  \item \texttt{about/index.html} (directory URL, easier for static hosts)
+\end{itemize}
+
+Relax's mapping is implemented in \texttt{toOutputPath()}:
+
+\begin{lstlisting}[style=relax,language=JavaScript,caption={Clean URL mapping (from \texttt{src/ssg/site.ts}).}]
+// index.md -> index.html always
+// about.md -> about/index.html when cleanUrls === 'always'
+export function toOutputPath(relMdPath, cleanUrls) {
+  if (relMdPath === 'index.md') return 'index.html'
+  return cleanUrls === 'always'
+    ? stripExt(relMdPath) + '/index.html'
+    : relMdPath.replace(/\.md$/i, '.html')
+}
+\end{lstlisting}
+
+\textbf{Why this design:}
+The mapping is pure and unit-testable.
+It doesn't touch the filesystem.
+That keeps mistakes from becoming production bugs.
+
+\subsubsection{Tiny correctness checklist for URL mapping}
+When you work on clean URLs, there are 4 easy-to-miss cases:
+
+\begin{itemize}
+  \item \texttt{index.md} at the root
+  \item nested \texttt{docs/index.md}
+  \item Windows path separators (\texttt{\\})
+  \item links in sitemap must use URL slashes, not OS separators
+\end{itemize}
+
+Relax's \texttt{toOutputPath()} and \texttt{toUrlFromOutPath()} normalize separators to forward slashes.
+This is a classic "cross platform" trap, and it is worth testing.
+
+\subsection{Sitemap generation is just "list of pages" \textrightarrow XML}
+Sitemaps are another example where a small pure function is ideal:
+
+\begin{quote}
+entries \textrightarrow XML string
+\end{quote}
+
+Relax does this in \texttt{renderSitemapXml(baseUrl, entries)}.
+
+\section{Config: making a build tool usable}
+Build tools need configuration.
+Relax supports a project-level config file:
+
+\begin{quote}
+\texttt{relax.ssg.config.js}
+\end{quote}
+
+The loader lives in \texttt{src/ssg/config.ts}:
+
+\begin{lstlisting}[style=relax,language=JavaScript,caption={Loading \texttt{relax.ssg.config.js} via dynamic import (from \texttt{src/ssg/config.ts}).}]
+export async function loadSsgConfig(cwd, configPath) {
+  const abs = resolve(cwd, configPath ?? 'relax.ssg.config.js')
+  try {
+    await readFile(abs, 'utf8')
+  } catch {
+    return { path: null, config: {} }
+  }
+
+  const mod = await import(pathToFileURL(abs).href)
+  const config = mod?.default ?? mod ?? {}
+  return { path: abs, config }
+}
+\end{lstlisting}
+
+\subsection{Deep dive: config merging and override rules}
+Relax merges three sources of truth:
+
+\begin{enumerate}
+  \item built-in defaults (\texttt{DEFAULT\_CONFIG})
+  \item project config file (\texttt{relax.ssg.config.js})
+  \item CLI / environment overrides (the options passed to \texttt{buildStaticSite()})
+\end{enumerate}
+
+The merge rule is simple:
+
+\begin{quote}
+	extbf{overrides win}, but we keep base nav if you don't override it.
+\end{quote}
+
+That last part matters.
+It means a config file can declare a nav once, and callers can still override other fields for CI or preview builds.
+
+This behavior is locked in by \texttt{src/\_\_tests\_\_/ssg-config.test.ts}.
+
+\subsection{Note on build environments (Node vs test runners)}
+Build tools often run in strange environments:
+
+\begin{itemize}
+  \item Node directly (CLI)
+  \item bundled execution (Rollup)
+  \item test runners that transform modules (Vitest/Vite)
+\end{itemize}
+
+The practical lesson: keep configuration loading boring and test it.
+If you ever see a build pass locally but fail in CI, configuration loading and path resolution are top suspects.
+
+\textbf{Why this design:}
+A JavaScript config file keeps the SSG friction low:
+
+\begin{itemize}
+  \item it can compute values
+  \item it can reuse constants
+  \item it doesn't require us to ship a YAML parser
+\end{itemize}
+
+\subsection{Config-driven navigation (\texttt{nav})}
+The default layout wrapper includes a minimal navigation bar.
+Hard-coding links is fine for a demo, but a real SSG needs a declarative nav model.
+
+In Relax's SSG config, \texttt{nav} is an array of:
+
+\begin{quote}
+	exttt{\{ label: string, href: string \}}
+\end{quote}
+
+Example \texttt{relax.ssg.config.js}:
+
+\begin{lstlisting}[style=relax,language=JavaScript,caption={Config nav entries drive the rendered header nav.}]
+export default {
+  siteName: 'My Site',
+  nav: [
+    { label: 'Home', href: '/' },
+    { label: 'Docs', href: '/docs/' },
+  ],
+}
+\end{lstlisting}
+
+The CLI's default wrapper (\texttt{src/ssg/cli.ts}) maps \texttt{nav} to links:
+
+\begin{lstlisting}[style=relax,language=JavaScript,caption={Default layout nav rendering (simplified).}]
+const navItems = ctx.nav && ctx.nav.length
+  ? ctx.nav
+  : [{ label: 'Home', href: '/' }]
+
+h('nav', { class: 'site-nav' }, [
+  ...navItems.map((item) => h('a', { href: item.href }, [item.label]))
+])
+\end{lstlisting}
+
+	extbf{Invariant:} navigation rendering must be pure.
+No filesystem reads.
+No global state.
+It should only depend on the merged config and frontmatter.
+
+	extbf{What breaks if you violate it:}
+the same content build can produce different output HTML, which makes caching and CI diffs miserable.
+
+\subsubsection{Diagram: config \textrightarrow layout context \textrightarrow HTML}
+\begin{verbatim}
+relax.ssg.config.js
+  nav: [{label:'Home',href:'/'},{label:'Docs',href:'/docs/'}]
+          |
+          v
+ mergeConfig()
+          |
+          v
+ wrapWithLayout(ctx={ siteName, nav })
+          |
+          v
+ <nav>
+   <a href="/">Home</a>
+   <a href="/docs/">Docs</a>
+ </nav>
+\end{verbatim}
+
+\section{Tests as specs (SSG correctness)}
+The SSG is small enough that tests are its documentation.
+There are two layers:
+
+\subsection{Unit tests: pure functions + invariants}
+Look at \texttt{src/\_\_tests\_\_/ssg.test.js}.
+It proves key invariants:
+
+\begin{itemize}
+  \item frontmatter parsing handles types (string/number/bool)
+  \item BOM handling (byte-order mark) doesn't break parsing
+  \item escaping behavior is correct (text nodes escaped, \texttt{innerHTML} not escaped)
+  \item clean URL mapping produces the right output paths and URLs
+  \item sitemap XML contains expected URLs
+\end{itemize}
+
+A representative assertion (escaping vs raw HTML):
+
+\begin{lstlisting}[style=relax,language=JavaScript,caption={Escaping is the default; \texttt{innerHTML} is an explicit escape hatch.}]
+const vdom = h('p', {}, ['<script>'])
+expect(renderToString(vdom)).toBe('<p>&lt;script&gt;</p>')
+
+const raw = h('div', { innerHTML: '<span>ok</span>' })
+expect(renderToString(raw)).toBe('<div><span>ok</span></div>')
+\end{lstlisting}
+
+\subsection{Integration test: "build a site" end to end}
+The integration spec is \texttt{src/\_\_tests\_\_/ssg-build.integration.test.ts}.
+It creates a temp directory, writes markdown + a \texttt{public/} asset, runs \texttt{buildStaticSite()}, then asserts:
+
+\begin{itemize}
+  \item HTML files exist at the expected clean URLs
+  \item theme CSS is written
+  \item public assets are copied
+  \item sitemap contains baseUrl + pages
+\end{itemize}
+
+This is the kind of test you want for a build tool.
+It prevents accidental regressions where the build "succeeds" but produces missing files.
+
+\subsubsection{How to design good integration fixtures}
+The integration test is intentionally tiny.
+It creates:
+
+\begin{itemize}
+  \item 2 markdown pages
+  \item 1 public asset
+  \item 1 config file with a nav entry
+\end{itemize}
+
+This is enough to cover multiple subsystems without making the test slow.
+For build tools, a good heuristic is:
+
+\begin{quote}
+	extbf{Use the smallest fixture that exercises multiple outputs.}
+\end{quote}
+
+\subsection{Config merge test: predictable overrides}
+Config is also unit-tested in \texttt{src/\_\_tests\_\_/ssg-config.test.ts}.
+It proves that:
+
+\begin{itemize}
+  \item overrides win when provided
+  \item base \texttt{nav} is preserved if you don't override it
+\end{itemize}
+
+\section{Why this design? (tradeoffs and alternatives)}
+This SSG intentionally avoids becoming a second framework.
+Here are the key tradeoffs I made:
+
+\subsection{Tradeoff 1: Markdown as HTML-in-a-box}
+\textbf{Choice:} Markdown is converted to an HTML string and embedded via \texttt{innerHTML}.
+
+\textbf{Alternative:} Parse markdown into an AST and map it into VNodes directly.
+
+\textbf{Why I didn't:}
+AST-to-VDOM is "purer" but it forces you to maintain a mapping layer and deal with edge cases (tables, code fences, custom HTML).
+The goal here is to show the pipeline, not build a full markdown renderer.
+
+\subsection{Tradeoff 2: Tiny frontmatter parser}
+\textbf{Choice:} support only flat \texttt{key: value} pairs.
+
+\textbf{Alternative:} full YAML frontmatter.
+
+\textbf{Why I didn't:}
+Full YAML parsing adds a dependency and a larger attack surface.
+For a tutorial-first SSG, most sites only need a handful of scalar fields.
+
+\subsection{Tradeoff 3: One default layout}
+\textbf{Choice:} provide a built-in wrapper layout as a teaching example.
+
+\textbf{Alternative:} user-provided templates on disk.
+
+\textbf{Why I didn't (yet):}
+File-based templating is a second system (loader + watch + partials + caching).
+Keeping a single built-in layout lets the book focus on the build pipeline.
+
+\section{Common pitfalls}
+\begin{itemize}
+  \item \textbf{Forgetting escaping:} never treat raw strings as HTML unless you explicitly opt into \texttt{innerHTML}.
+  \item \textbf{Mixing input and output trees:} don't write build output into the input directory.
+  \item \textbf{Path normalization:} always normalize separators when converting filesystem paths into URLs.
+  \item \textbf{Non-deterministic paths:} keep path mapping pure and unit-tested (\texttt{toOutputPath}).
+  \item \textbf{Missing baseUrl:} sitemap generation needs an absolute base URL.
+  \item \textbf{Assuming a browser:} SSG runs in Node, so avoid DOM APIs.
+\end{itemize}
+
+\section{Extension ideas (when you're ready)}
+If you want to turn this minimal SSG into a more practical tool, here are extensions that fit neatly into the existing boxes:
+
+\begin{itemize}
+  \item \textbf{Draft pages:} \texttt{draft: true} in frontmatter skips writing and excludes from sitemap.
+  \item \textbf{Collections:} treat \texttt{posts/*.md} as a list, generate index pages.
+  \item \textbf{Syntax highlighting:} run a highlighter on Markdown code fences before \texttt{innerHTML}.
+  \item \textbf{RSS feed:} similar to sitemap, just a different serializer.
+  \item \textbf{Pretty HTML:} add an option to format the output (tradeoff: less deterministic whitespace).
+  \item \textbf{Watch mode:} incremental rebuild on file changes (be careful with correctness).
+\end{itemize}
+
+\section{Mini-exercise}
+Add a new frontmatter key called \texttt{draft} (boolean).
+Then modify the build pipeline so drafts are not written to disk or included in \texttt{sitemap.xml}.
+
+\textbf{How to approach it (test-first):}
+
+\begin{itemize}
+  \item Add a unit test to \texttt{src/\_\_tests\_\_/ssg-build.integration.test.ts}:
+    create a \texttt{draft.md} with \texttt{draft: true} and assert it doesn't exist in output.
+  \item Update \texttt{buildStaticSite()} to skip pages where \texttt{page.data.draft === true}.
+\end{itemize}
+
+This exercise is small but practical: it forces you to treat metadata as part of the build contract.
+
+\subsection{Bonus exercise: add a page-level layout toggle}
+Today, frontmatter can set \texttt{layout: false} to disable wrapping.
+Add a new option \texttt{layout: "default" | false | "minimal"} and implement an extra minimal wrapper.
+
+	extbf{Hint:}
+keep wrappers as pure VNode functions and unit-test them by asserting for key substrings in the output HTML.

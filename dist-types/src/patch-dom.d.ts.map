@@ -1,1 +1,1 @@
-{"version":3,"file":"patch-dom.d.ts","sourceRoot":"","sources":["../../src/patch-dom.ts"],"names":[],"mappings":"AAYA,wBAAgB,QAAQ,CAAC,OAAO,EAAE,GAAG,EAAE,OAAO,EAAE,GAAG,EAAE,QAAQ,EAAE,GAAG,EAAE,aAAa,GAAE,GAAU,OA+B5F"}
+{"version":3,"file":"patch-dom.d.ts","sourceRoot":"","sources":["../../src/patch-dom.ts"],"names":[],"mappings":"AAYA,wBAAgB,QAAQ,CAAC,OAAO,EAAE,GAAG,EAAE,OAAO,EAAE,GAAG,EAAE,QAAQ,EAAE,GAAG,EAAE,aAAa,GAAE,GAAU,OAoC5F"}

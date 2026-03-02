@@ -2,64 +2,63 @@
 
 # Relax.js
 
-Relax.js is a lightweight and modern frontend library designed to simplify building dynamic web applications using a virtual DOM and a component-based architecture. It incorporates efficient DOM updates, declarative state management, and a powerful API to build scalable UIs.
+Relax.js is a teaching-first UI library and runtime.
 
-Relax.js is ideal for developers who want to build interactive web applications with a simple and intuitive API. It provides a flexible and efficient way to manage state, handle events, and create reusable components and it only weighs 12KB.
+It ships:
 
----
+- a small Virtual DOM (VDOM) + component model
+- an experimental next-gen runtime called **HRBR** (signals, deterministic scheduling, compiled blocks)
+- a minimal **Static Site Generator (SSG)** built on top of Relax VNodes
 
-## Features
+This repo also includes a full PDF book that walks through the implementation.
 
-- **Virtual DOM**: Efficiently calculates and applies minimal changes to the DOM.
-- **Reconciliation Algorithm**: Updates the browser’s DOM to reflect the application state changes efficiently.
-- **Component-Based Architecture**: Build reusable, isolated components with encapsulated state and logic.
-- **State Management**: Built-in reactive state management for declarative UI updates.
-- **Lifecycle Hooks**: Execute code at specific points in a component’s lifecycle.
-- **Event Handling**: Bind and emit events with ease.
-- **Fragments**: Group multiple elements without introducing additional DOM nodes.
-- **TSX / JSX (React-like)**: Write UI with `className`, `onClick`, and fragments (`<>...</>`) using TypeScript’s JSX transform.
+## Download the book
 
----
+- **Relax.js Book (PDF)**: [`Relax.js Book.pdf`](./Relax.js%20Book.pdf)
 
-## CDN Links
+## Package name (important)
 
-- Relax Js - [https://ravikisha.github.io/relaxjs/relax.js](https://ravikisha.github.io/relaxjs/relax.js)
-- Relax Js Minified - [https://ravikisha.github.io/relaxjs/relax.min.js](https://ravikisha.github.io/relaxjs/relax.min.js)
+Published package name (per `package.json`) is **`relaxcore`**.
 
-## Installation
+In code, you typically import from `relaxcore`.
 
-Relax.js is distributed as a standalone JavaScript module. To use it in your project:
-
-```html
-<script type="module" src="https://ravikisha.github.io/relaxjs/relax.js"></script>
-```
-
+## Install
 
 ```bash
-npm install relax.js
+npm install relaxcore
 ```
 
----
+## Quick start (VDOM)
 
-## Quick Start
+```ts
+import { createApp, defineComponent, h } from 'relaxcore'
 
-Here is a simple example of a TODO application built with Relax.js.
+const App = defineComponent({
+  render() {
+    return h('h1', {}, ['Hello from Relax'])
+  },
+})
 
- - **HRBR runtime (experimental)**: A next-gen mode with **signals + compiled blocks + deterministic scheduling** (work-in-progress).
- - **Benchmarks**: Browser harness comparing Relax VDOM vs HRBR vs React vs Solid.
----
-## JSX / TSX (React-like syntax)
+createApp(App).mount(document.getElementById('app')!)
+```
 
-Relax.js supports TSX using TypeScript’s `react-jsx` transform with `jsxImportSource: relax-jsx`.
+## TSX / JSX (React-like syntax)
+
+Relax supports TSX using TypeScript’s `react-jsx` transform with:
+
+- `jsx: "react-jsx"`
+- `jsxImportSource: "relax-jsx"`
 
 Supported React-like bits:
-- `className` maps to Relax’s `class`
-- `onClick` / `onInput` / ... map to Relax’s `on: { click/input/... }`
+
+- `className` maps to `class`
+- `onClick` / `onInput` / … map to `on: { click/input/... }`
 - fragments via `<>...</>`
+
 Example:
 
 ```tsx
-import { defineComponent, createApp } from 'relax.js'
+import { createApp, defineComponent } from 'relaxcore'
 
 const App = defineComponent({
   render() {
@@ -75,158 +74,108 @@ const App = defineComponent({
 createApp(App).mount(document.getElementById('app')!)
 ```
 
-Tests:
+Related tests:
 
 - `src/__tests__/jsx-tsx.test.ts`
 - `src/__tests__/jsx-react-syntax.test.tsx`
 
-### Example Code
+## Static Site Generator (SSG)
 
-```javascript
-import { h, hFragment, defineComponent, createApp } from 'relax.js';
+The SSG is intentionally minimal and deterministic:
 
-// Component: App
-const App = defineComponent({
-  state({ todos = [] }) {
-    return { todos, isLoading: true };
-  },
+- Markdown (`.md`) → HTML pages
+- YAML-ish frontmatter (`--- ... ---`) → page `data` (`title`, `description`, `layout`, ...)
+- Clean URLs (`about.md` → `/about/` via `about/index.html`)
+- Optional `public/` asset copy
+- Optional `sitemap.xml`
 
-  async onMounted() {
-    const todos = await fetchTodos();
-  },
+### CLI
 
-  render() {
-    const { isLoading, todos } = this.state;
+This package exposes a CLI:
 
-    if (isLoading) {
-      return h('p', {}, ['Loading...']);
-    }
-
-    return hFragment([
-      h('h1', {}, ['Todos']),
-      h(AddTodo, { on: { addTodo: this.addTodo } }),
-      h(TodosList, {
-        todos: todos,
-        on: { removeTodo: this.removeTodo },
-      }),
-    ]);
-  },
-
-  addTodo(description) {
-    this.updateState({ todos: [...this.state.todos, description] });
-
-  removeTodo(index) {
-    this.updateState({
-      todos: [
-        ...this.state.todos.slice(0, index),
-        ...this.state.todos.slice(index + 1),
-      ],
-    });
-  },
-});
-
-// Component: AddTodo
-const AddTodo = defineComponent({
-  state() {
-    return { description: '' };
-  },
-
-  render() {
-    return hFragment([
-      h('input', {
-        type: 'text',
-        value: this.state.description,
-        on: { input: this.updateDescription },
-      }),
-    ]);
-  },
-
-  updateDescription({ target }) {
-    this.updateState({ description: target.value });
-  },
-  addTodo() {
-    this.emit('addTodo', this.state.description);
-    this.updateState({ description: '' });
-  },
-});
-
-// Component: TodosList
-const TodosList = defineComponent({
-  render() {
-    const { todos } = this.props;
-
-    return h(
-      'ul',
-      {},
-      todos.map((description, index) =>
-        h(TodoItem, {
-          description,
-          key: description,
-          index,
-          on: { removeTodo: (index) => this.emit('removeTodo', index) },
-      )
-    );
-  },
-});
-
-const TodoItem = defineComponent({
-  render() {
-    const { description } = this.props;
-
-    return h('li', {}, [
-      h('span', {}, [description]),
-      h('button', { on: { click: this.removeTodo } }, ['Done']),
-    ]);
-  },
-
-  removeTodo() {
-    this.emit('removeTodo', this.props.index);
-  },
-});
-
-// Fetch Todos Function
-function fetchTodos() {
-  return new Promise((resolve) => {
-    resolve(['Water the plants', 'Walk the dog']);
-  });
-}
-
-// Mount the application
-const app = createApp(App);
-app.mount(document.getElementById('app'));
+```bash
+relax-ssg <inputDir> <outputDir>
 ```
 
+Configuration options:
+
+- Environment variables:
+  - `RELAX_SSG_BASE_URL` → generate `sitemap.xml`
+  - `RELAX_SSG_CLEAN_URLS` → `always` (default) | `never`
+  - `RELAX_SSG_PUBLIC_DIR` → defaults to `<inputDir>/public` if present
+  - `RELAX_SSG_SITE_NAME` → used by the default layout
+  - `RELAX_SSG_DEFAULT_LAYOUT` → default layout name
+  - `RELAX_SSG_CONFIG` → config path override
+- Config file (default): `relax.ssg.config.js`
+
+Frontmatter example:
+
+```md
+---
+title: About
+description: About this site
+layout: default
 ---
 
-## API Reference
+# Hello
+```
 
-### Core Functions
+### Library API
 
-#### `defineComponent(options)`
-Defines a new component.
-- `options`:
-  - `state(initialState: object)` (optional): Returns the initial state object.
-  - `onMounted()` (optional): Lifecycle hook called after the component is mounted.
-  - `render()`: Function to return the virtual DOM representation of the component.
+```ts
+import { markdownToPage, renderPageToString } from 'relaxcore/ssg'
 
-#### `createApp(component)`
-Creates a new Relax.js application instance.
-- `component`: The root component to be rendered.
+const page = await markdownToPage('---\ntitle: Hi\n---\n\n# Hello', { frontmatter: true })
+const rendered = renderPageToString(page.vdom, page.data)
+console.log(rendered.html)
+```
 
-#### `h(tagOrComponent, props, children)`
-Creates a virtual DOM node.
-- `tagOrComponent`: The tag name (e.g., `div`) or a Relax.js component.
-- `props`: An object containing attributes, event handlers, or props.
-- `children`: An array of child nodes or a single node.
+## Public API surface
 
-#### `hFragment(children)`
-Groups multiple nodes without creating a parent DOM element.
+Top-level exports (see `src/index.ts`):
 
----
+- `createApp`
+- `defineComponent`
+- `h`, `hFragment`, `hSlot`, `hString`, `DOM_TYPES`
+- `nextTick`
 
-## HRBR Runtime (Phase 1): Signals
+SSG exports:
 
-The HRBR runtime work starts with fine-grained reactivity primitives under `runtime/`.
+- `relaxcore/ssg` → `markdownToPage`, `renderPageToString`, `renderSitemapXml`, config helpers, etc.
+
+HRBR exports:
+
+- `relaxcore/hrbr`
+
+Compiler exports:
+
+- `relaxcore/compiler`
+
+## Repo workflows (production-ready)
+
+```bash
+npm install
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+Publishing safety:
+
+- `prepack` runs `build` + `build:types` automatically.
+- `files` only includes `dist/` and `dist-types/`.
+
+## License
+
+MIT. See [`LICENSE`](./LICENSE).
+
+## Contributing
+
+Issues and PRs are welcome.
+
+- Bugs / feature requests: https://github.com/ravikisha/Relax.js/issues
+
 
 ```ts
 import { batch, createEffect, createMemo, createSignal, untrack } from './runtime'

@@ -47,6 +47,18 @@ export type MountCompiledBlockOptions = {
     lane?: Lane;
     scheduler?: ReturnType<typeof createScheduler>;
 };
+export type MountBlockOptions = {
+    /**
+     * When true, include the slot key in path resolution assertions for easier debugging.
+     * Defaults to false.
+     */
+    dev?: boolean;
+    /**
+     * Optional binding target for event slots.
+     * When set, event handlers are invoked with `this === hostComponent`, matching Relax VDOM semantics.
+     */
+    hostComponent?: any;
+};
 export type MountedBlock = {
     host: Element;
     root: Element;
@@ -56,8 +68,27 @@ export type MountedBlock = {
     dispose(): void;
     destroy(): void;
 };
+export type MountedChild = {
+    destroy(): void;
+};
 export declare function defineBlock(def: BlockDef): BlockDef;
-export declare function mountBlock(def: BlockDef, host: Element, initialValues?: Record<string, unknown>): MountedBlock;
+export declare function mountBlock(def: BlockDef, host: Element, initialValues?: Record<string, unknown>, options?: MountBlockOptions): MountedBlock;
+/**
+ * Mount a nested block into an Element slot of a parent block.
+ * The nested block is automatically destroyed when the parent is destroyed.
+ */
+export declare function mountNestedBlock(parent: MountedBlock, slotKey: string, def: BlockDef, initialValues?: Record<string, unknown>): MountedBlock;
+/**
+ * Mount a fallback region into an Element slot of a parent block.
+ * The region is automatically disposed/destroyed when the parent is destroyed.
+ */
+export declare function mountNestedFallback(parent: MountedBlock, slotKey: string, mount: (host: Element) => {
+    destroy(): void;
+    dispose(): void;
+}): {
+    destroy(): void;
+    dispose(): void;
+};
 /**
  * Mount a block and wire reactive slot computations via signals.
  *

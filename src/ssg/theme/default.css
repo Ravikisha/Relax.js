@@ -1,0 +1,107 @@
+/* Relax.js SSG default theme (tiny + readable) */
+
+:root {
+  --bg: #0b0d10;
+  --fg: #e8e8e8;
+  --muted: #b7b7b7;
+  --link: #7cc4ff;
+  --card: #12161d;
+  --border: #222a35;
+  --code-bg: #0f1320;
+  --code-fg: #e8e8e8;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --fg: #111111;
+    --muted: #555555;
+    --link: #005bbb;
+    --card: #f6f7f9;
+    --border: #e6e8ee;
+    --code-bg: #f3f4f6;
+    --code-fg: #111111;
+  }
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
+    "Segoe UI Emoji";
+  line-height: 1.6;
+}
+
+a {
+  color: var(--link);
+}
+
+.container {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 32px 20px;
+}
+
+header.site-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+header.site-header .site-title {
+  margin: 0;
+  font-size: 18px;
+}
+
+nav.site-nav a {
+  margin-right: 12px;
+  text-decoration: none;
+}
+
+main {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+}
+
+pre,
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+pre {
+  padding: 14px;
+  overflow: auto;
+  border-radius: 10px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+}
+
+code {
+  background: color-mix(in srgb, var(--code-bg), transparent 30%);
+  padding: 0 6px;
+  border-radius: 6px;
+}
+
+footer.site-footer {
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}

@@ -10,6 +10,7 @@ export default {
     index: 'src/index.ts',
     hrbr: 'runtime/index.ts',
     compiler: 'compiler/index.ts',
+  'ssg-cli': 'src/ssg/cli.ts',
   },
   plugins: [commonjs(), nodeResolve(), typescript({ tsconfig: './tsconfig.rollup.json' }), cleanup()],
   output: {

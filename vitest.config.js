@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   test: {
-  include: ['**/__tests__/**/*.test.ts', '**/__tests__/**/*.test.tsx'],
+  include: ['**/__tests__/**/*.test.{ts,tsx,js}'],
     reporters: 'verbose',
     environment: 'jsdom',
     coverage: {

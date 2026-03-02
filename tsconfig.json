@@ -11,6 +11,7 @@
       "relax-jsx/*": ["./relax-jsx/*"]
     },
     "lib": ["ES2022", "DOM"],
+  "types": ["node"],
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,

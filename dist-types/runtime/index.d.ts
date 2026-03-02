@@ -2,13 +2,16 @@ export { createSignal, createEffect, createMemo, batch, untrack } from './signal
 export { createScheduler } from './scheduler';
 export { createBrowserScheduler, createRequestFlush } from './scheduler';
 export type { Lane, ScheduledTask, SchedulerOptions, FlushStrategy } from './scheduler';
-export { defineBlock, mountBlock, mountCompiledBlock } from './block';
-export type { BlockDef, BlockSlot, MountedBlock, CompiledSlot, MountCompiledBlockOptions } from './block';
+export { defineBlock, mountBlock, mountCompiledBlock, mountNestedBlock, mountNestedFallback } from './block';
+export type { BlockDef, BlockSlot, MountedBlock, MountedChild, CompiledSlot, MountCompiledBlockOptions, MountBlockOptions, } from './block';
 export { hydrateBlock } from './hydration';
+export { renderBlockToString } from './ssr';
 export { reconcileChildren } from './reconciler';
 export type { ReconcileNode, ReconcileRange, ReconcileItem, ReconcileOptions, Key } from './reconciler';
 export { mountFallback } from './fallback';
 export type { MountedFallback, MountFallbackOptions, FallbackRenderResult } from './fallback';
+export { getDevtoolsCounters, resetDevtoolsCounters, setDevtoolsHook } from './devtools';
+export type { DevtoolsCounters, DevtoolsEvent, DevtoolsHook } from './devtools';
 export type { Memo, MemoOptions } from './signals';
 export type { EffectOptions } from './signals';
 /**
