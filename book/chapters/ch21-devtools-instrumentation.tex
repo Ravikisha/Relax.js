@@ -75,6 +75,7 @@ Devtools events are a tagged union \texttt{DevtoolsEvent}:
 \item \texttt{flushStart} / \texttt{flushEnd(durationMs)}: emitted by the deterministic scheduler
 \item \texttt{domOp(op)}: emitted by the block runtime around DOM mutations (counted only when instrumentation is enabled)
 \item \texttt{alloc(kind, count?)}: emitted by allocation sites (counted only when instrumentation is enabled)
+\item \texttt{patchPhase(phase, durationMs)}: emitted by the VDOM patcher to attribute time to specific patch phases
 \end{itemize}
 
 The idea is that you can build either:
@@ -95,6 +96,8 @@ The internal counters live in a module-local object \texttt{\_counters}:
 \item \texttt{flushTimeMs}
 \item \texttt{domOps} (instrumentation gated)
 \item \texttt{allocs} (instrumentation gated)
+\item \texttt{patchPhases} (instrumentation gated; number of patchPhase events counted)
+\item \texttt{patchTimeMs} (instrumentation gated; sum of patchPhase durations)
 \end{itemize}
 
 \subsection{Defensive reads: \texttt{getDevtoolsCounters()}}
@@ -167,12 +170,41 @@ The convenience wrappers \texttt{emitDomOp()} and \texttt{emitAlloc()} add one m
 
 This prevents needless event objects from being allocated on the hot path.
 
+\subsection{Patch-phase measurement: a benchmark-oriented span}
+
+Classic VDOM performance questions often require answers like:
+
+\begin{itemize}
+\item ``Is time dominated by diff traversal or DOM mutations?''
+\item ``Are we spending most time reordering nodes, or updating attributes/styles/events?''
+\end{itemize}
+
+Relax's HRBR path largely avoids whole-tree diffing, but the classic VDOM path (\texttt{src/patch-dom.ts}) still benefits from targeted profiling.
+
+For that purpose, devtools includes a tiny helper:
+
+\begin{quote}
+	\texttt{measurePatchPhase(phase, fn) -> result}
+\end{quote}
+
+It measures \texttt{fn()} using \texttt{performance.now()} (fallback \texttt{Date.now()}) and emits a \texttt{patchPhase} event with \texttt{phase} and \texttt{durationMs}.
+
+The gating policy matches the rest of devtools:
+
+\begin{itemize}
+\item If instrumentation is disabled \emph{and} no hook is installed, \texttt{measurePatchPhase} is a no-op wrapper.
+\item If a hook is installed (``streaming mode''), events flow so the benchmark harness can aggregate phase time without enabling expensive counters.
+\item If instrumentation is enabled, \texttt{patchPhases} and \texttt{patchTimeMs} counters are updated.
+\end{itemize}
+
+This keeps the default runtime overhead near zero while still making deep dives possible when you ask for them.
+
 \subsection{A subtle performance point: "no hook" short-circuit}
 
 Notice the early return:
 
 \begin{quote}
-	texttt{if (!enabled \&\& !hook) return}
+	\texttt{if (!enabled \&\& !hook) return}
 \end{quote}
 
 This means there are three distinct operating modes:
@@ -203,7 +235,7 @@ This provides a cheap ``what changed'' signal even without full DOM diffing.
 In \texttt{runtime/block.ts}, every slot application includes:
 
 \begin{quote}
-	texttt{emitDevtoolsEvent(\{ type: 'slotWrite', slotKind: slot.kind, slotKey: key \})}
+	\texttt{emitDevtoolsEvent(\{ type: 'slotWrite', slotKind: slot.kind, slotKey: key \})}
 \end{quote}
 
 This is intentionally emitted even when the runtime later decides to skip a DOM write (for example when values are \texttt{Object.is} equal). That makes slotWrites a measure of "reactive updates attempted" rather than "DOM updates performed".

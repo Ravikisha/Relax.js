@@ -143,9 +143,13 @@ export function defineComponent({ render, state, onMounted = emptyFn, onUnmounte
     }
 
     #wireEventHandlers() {
-      this.#subscriptions = Object.entries(this.#eventHandlers ?? {}).map(([eventName, handler]) =>
-        this.#wireEventHandler(eventName, handler)
-      )
+      const subs: Array<() => void> = []
+      const handlers = this.#eventHandlers ?? {}
+      for (const eventName in handlers) {
+        const handler = (handlers as any)[eventName]
+        subs.push(this.#wireEventHandler(eventName, handler))
+      }
+      this.#subscriptions = subs
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -165,7 +169,9 @@ export function defineComponent({ render, state, onMounted = emptyFn, onUnmounte
       }
 
       destroyDOM(this.#vdom as any)
-      this.#subscriptions.forEach((unsubscribe) => unsubscribe())
+      for (let i = 0; i < this.#subscriptions.length; i++) {
+        this.#subscriptions[i]!()
+      }
 
       this.#vdom = null
       this.#isMounted = false

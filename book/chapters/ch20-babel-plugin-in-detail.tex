@@ -162,7 +162,7 @@ The slot objects are turned into AST literals through \texttt{literalizeSlot(slo
 The plugin uses \texttt{unshiftContainer('body', ...)} on the program node to emit:
 
 \begin{quote}
-	texttt{const \_\_hrbr\_block\_N = defineBlock({ templateHTML, slots })}
+	\texttt{const \_\_hrbr\_block\_N = defineBlock({ templateHTML, slots })}
 \end{quote}
 
 Hoisting matters for two reasons:
@@ -232,7 +232,7 @@ This is enough to prove the end-to-end pipeline and to connect the compiler to t
 
 The fallback compiler intentionally avoids capturing complex structures.
 It builds a \texttt{renderFn} with the shape:\\
-	texttt{() => ({ children: [spec] })}
+	\texttt{() => ({ children: [spec] })}
 
 Where \texttt{spec.create()} and \texttt{spec.patch(node)} both close over the user expressions.
 
@@ -298,9 +298,9 @@ Treat \texttt{compiler/jsx/transform.ts} as implementing this contract:
 \begin{itemize}
 \item \textbf{Input:} a JS/TS program containing JSX elements.
 \item \textbf{Output (block success):} the JSX expression is replaced by a mount factory
-  	exttt{(host) => \_\_hrbrBlock(host, def, compiledSlots)}.
+  	\texttt{(host) => \_\_hrbrBlock(host, def, compiledSlots)}.
 \item \textbf{Output (fallback):} the JSX expression is replaced by a mount factory
-  	exttt{(host) => mountFallback(host, renderFn)}.
+  	\texttt{(host) => mountFallback(host, renderFn)}.
 \item \textbf{Errors:} unsupported constructs in the scaffold (fragments, spreads, components, events) throw with a friendly code-frame.
 \end{itemize}
 
@@ -337,7 +337,7 @@ But the raw-node style is an excellent teaching tool.
 \section{Program-level synthesis: \texttt{ensureRuntimeImport} and \texttt{ensureWrapper}}
 
 The transform maintains file-scoped flags:\\
-  	exttt{needsRuntimeImport}, \texttt{needsFallbackImport}, \texttt{needsWrapper}.
+  	\texttt{needsRuntimeImport}, \texttt{needsFallbackImport}, \texttt{needsWrapper}.
 
 These flags solve a real ``compiler ergonomics'' problem: we don\'t want to inject imports or helpers unless the file actually used JSX in a supported way.
 
@@ -394,7 +394,7 @@ Every time we emit a child node into the HTML string, we increment a counter.
 When we encounter a dynamic expression that\'s allowed as a text slot, we record:
 
 \begin{quote}
-  	exttt{path: [...pathToHere, childIndex]}
+  	\texttt{path: [...pathToHere, childIndex]}
 \end{quote}
 
 This is exactly the scheme you reverse-engineered in Chapter~\ref{ch:compiler-architecture} via the snapshot.
@@ -405,7 +405,7 @@ Remember: \textbf{block mode cannot represent structural variability}.
 So if a child expression might yield an element/fragment/conditional structure, we must route to fallback.
 
 In this scaffold the rule is encoded as:\\
-  	exttt{if (!isTextLikeExpr(expr)) return null}.
+  	\texttt{if (!isTextLikeExpr(expr)) return null}.
 
 The important thing here is not the exact heuristic.
 It\'s the \emph{architectural pattern}:
@@ -451,11 +451,11 @@ It builds a tiny \emph{reconciliation spec} object with two operations:
 Then it wraps those specs in a \texttt{renderFn}:
 
 \begin{quote}
-  	exttt{() => (\{ children: [spec] \})}
+  	\texttt{() => (\{ children: [spec] \})}
 \end{quote}
 
 And finally emits:\\
-  	exttt{host => mountFallback(host, renderFn)}.
+  	\texttt{host => mountFallback(host, renderFn)}.
 
 Why this matters: by giving fallback the same outer mounting shape, the rest of Relax stays composable.
 Block mode and fallback mode become interchangeable implementations behind one vnode contract.
@@ -640,7 +640,7 @@ const App = () => (
 \end{lstlisting}
 
 This is the same structure used by the inline snapshot in
-  exttt{compiler/\_\_tests\_\_/babel-transform.test.ts}.
+  \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts}.
 That\'s intentional: we want a trace that is already pinned by tests.
 
 \subsection{Step A: \texttt{Program.enter} resets per-file state}
@@ -662,7 +662,7 @@ If you ever see ``block ids jump'' across compiles, this is the first place to l
 When Babel visits the \texttt{<section ...>} node, the visitor calls:
 
 \begin{quote}
-  exttt{const built = buildTemplateFromJsxElement(path)}
+  \texttt{const built = buildTemplateFromJsxElement(path)}
 \end{quote}
 
 Think of \texttt{built} as three outputs:

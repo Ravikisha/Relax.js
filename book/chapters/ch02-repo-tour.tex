@@ -199,7 +199,7 @@ export function createApp(RootComponent, props = {}) {
 }
 \end{lstlisting}
 
-	extbf{Why this design:}
+	\textbf{Why this design:}
 I want exactly one owner for the root VNode.
 If you don't have a clear ownership boundary, "unmount" becomes best-effort cleanup and bugs get subtle.
 
@@ -219,7 +219,7 @@ export function addEventListener(eventName, handler, el, hostComponent = null) {
 }
 \end{lstlisting}
 
-	extbf{Why this matters:}
+	\textbf{Why this matters:}
 the listener wrapper is a tiny but crucial semantic guarantee.
 It means component methods can rely on \texttt{this} being the component instance.
 (We’ll return to this in the events chapter.)
@@ -238,7 +238,7 @@ dispatch(commandName, payload) {
 }
 \end{lstlisting}
 
-	extbf{Why this matters:}
+	\textbf{Why this matters:}
 this gives me a clean abstraction boundary: event handlers emit events, components react, and then we run after-hooks (often ``schedule a patch'').
 
 \subsection{Step 4: where does the DOM update happen?}
@@ -252,7 +252,7 @@ In the VDOM runtime, that answer is \texttt{src/patch-dom.ts} (covered in depth 
 In this chapter, the important idea is simply: \emph{there is exactly one patching engine}, and everything funnels into it.
 
 \section{A concrete example: createApp() is tiny on purpose}
-	texttt{createApp()} exists so the user has a simple lifecycle API.
+\texttt{createApp()} exists so the user has a simple lifecycle API.
 The full file is short: \texttt{src/app.ts}.
 
 Key behavior:

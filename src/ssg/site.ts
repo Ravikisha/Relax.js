@@ -81,14 +81,13 @@ export function renderSitemapXml(baseUrl: string, entries: SitemapEntry[]): stri
   const base = baseUrl.replace(/\/$/, '')
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
 
-  const urls = entries
-    .map((e) => {
-      const loc = esc(base + e.loc)
-      const lastmod = e.lastmod ? `<lastmod>${esc(e.lastmod)}</lastmod>` : ''
-      return `<url><loc>${loc}</loc>${lastmod}</url>`
-    })
-    .join('')
+  let urls = ''
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!
+    const loc = esc(base + e.loc)
+    const lastmod = e.lastmod ? `<lastmod>${esc(e.lastmod)}</lastmod>` : ''
+    urls += `<url><loc>${loc}</loc>${lastmod}</url>`
+  }
 
-  return `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}</urlset>`
+  return `<?xml version="1.0" encoding="UTF-8"?>` + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}</urlset>`
 }

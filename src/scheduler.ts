@@ -1,3 +1,5 @@
+import { DEV } from './dev'
+
 let isScheduled = false
 const jobs: Array<() => unknown> = []
 
@@ -29,7 +31,9 @@ function processJobs() {
         // Job completed successfully
       },
       (error) => {
-        console.error(`[scheduler]: ${error}`)
+        if (DEV && typeof console?.error === 'function') {
+          console.error(`[scheduler]: ${error}`)
+        }
       }
     )
   }

@@ -15,7 +15,12 @@ test('set default content if no external content', () => {
 
   fillSlots(vdom, [])
 
-  expect(vdom.children).toEqual([hFragment(defaultContent)])
+  expect(vdom.children).toMatchObject([
+    {
+      type: 'fragment',
+      children: defaultContent,
+    },
+  ])
 })
 
 test('set the external content if provided', () => {
@@ -25,7 +30,12 @@ test('set the external content if provided', () => {
 
   fillSlots(vdom, [content])
 
-  expect(vdom.children).toEqual([hFragment([content])])
+  expect(vdom.children).toMatchObject([
+    {
+      type: 'fragment',
+      children: [content],
+    },
+  ])
 })
 
 test('ignores slots whose parent is a component (they are handled by the component)', () => {

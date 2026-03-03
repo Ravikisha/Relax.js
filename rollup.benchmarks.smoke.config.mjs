@@ -18,6 +18,8 @@ export default defineConfig({
 			values: {
 				// eslint-disable-next-line no-process-env
 				'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
+				// eslint-disable-next-line no-process-env
+				RELAX_DEV: JSON.stringify((process.env.NODE_ENV ?? 'production') !== 'production'),
 			},
 		}),
 		resolve({ browser: true }),

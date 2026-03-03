@@ -123,3 +123,31 @@ Optional runtime instrumentation exists behind a flag in `runtime/devtools.ts`.
 - `allocs` increments via `emitAlloc(kind, count?)` (manual hooks).
 
 Instrumentation is **off by default** so it doesn’t affect production behavior or benchmark results.
+
+### Patch-phase breakdown (VDOM)
+
+For Relax VDOM cases, the benchmark runner can optionally collect a phase breakdown for `src/patch-dom.ts`.
+
+Enable it by adding this query param:
+
+- `patchPhases=1`
+
+Example:
+
+- `benchmarks/index.html?profile=quick&seed=1&patchPhases=1`
+
+This installs a devtools hook and aggregates `patchPhase` events emitted by `patch-dom`.
+
+Phases currently emitted:
+
+- `vdom:diff`: time spent building the diff sequence (`arraysDiffSequence`) and related VDOM traversal overhead
+- `vdom:moves`: time spent on DOM reorders (`insertBefore`) in MOVE/reorder paths
+- `vdom:attrs`: time spent patching attributes
+- `vdom:class`: time spent patching classes
+- `vdom:style`: time spent patching styles
+- `vdom:events`: time spent patching event handlers
+
+Notes:
+
+- This is intended for perf investigations, not production.
+- By default it's hook-only (it does not enable expensive built-in counters like `domOps`).

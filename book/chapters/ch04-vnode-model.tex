@@ -192,7 +192,7 @@ This is one of those design choices that pays rent everywhere:
 Fragments represent ``multiple siblings'' and are heavily used by TSX fragment syntax (\texttt{<>...</>}).
 
 \subsection*{Constructing fragments}
-	exttt{hFragment(vNodes)} asserts the input is an array, filters nullish children, and maps primitives to text nodes (exactly like \texttt{h()}).
+	\texttt{hFragment(vNodes)} asserts the input is an array, filters nullish children, and maps primitives to text nodes (exactly like \texttt{h()}).
 
 \subsection*{Code: fragment constructor}
 This is the whole function (again: boring on purpose):
@@ -210,7 +210,7 @@ export function hFragment(vNodes: unknown[]): FragmentVNode {
 
 \subsection*{Flattening fragments}
 Later, other parts of the runtime sometimes need to treat ``a tree that may contain fragments'' as a flat list (for example, when calculating insertion positions).
-	exttt{extractChildren(vdom)} provides that flattening:
+	\texttt{extractChildren(vdom)} provides that flattening:
 
 \begin{itemize}
   \item If it finds a fragment child, it recursively collects that fragment's children.
@@ -292,7 +292,7 @@ HRBR (the compiled ``block'' runtime) needs to integrate into the same mounting/
 There's an important identity rule here, and the repo encodes it explicitly in \texttt{areNodesEqual()} (\texttt{src/nodes-equal.ts}):
 
 \begin{quote}
-  	extbf{HRBR vnode identity} is defined by mount factory identity: \texttt{old.mount === new.mount}.
+  	\textbf{HRBR vnode identity} is defined by mount factory identity: \texttt{old.mount === new.mount}.
 \end{quote}
 
 That single line is the difference between:

@@ -42,7 +42,7 @@ A \textbf{block} is the "fast DOM" path: it describes a stable DOM template and 
 If you remember only one thing about blocks, make it this:
 
 \begin{quote}
-	extbf{Blocks replace diffing with addressing.} The template fixes structure. Slots give exact addresses. Updates become a handful of targeted DOM writes.
+	\textbf{Blocks replace diffing with addressing.} The template fixes structure. Slots give exact addresses. Updates become a handful of targeted DOM writes.
 \end{quote}
 
 This chapter is grounded in:
@@ -211,7 +211,7 @@ One subtle point the tests implicitly enforce: \texttt{childNodes} includes text
 
 This is worth slowing down for, because it's the most surprising part of the block model.
 
-	extbf{Paths are an ABI between the compiler and runtime.}
+	\textbf{Paths are an ABI between the compiler and runtime.}
 If the compiler emits \texttt{path: [3, 0]}, it is assuming a specific \texttt{childNodes} layout.
 
 That means these two templates are \emph{not equivalent} from the runtime's perspective:
@@ -264,12 +264,12 @@ Reading guide:
 
 \section{defineBlock(): the type boundary}
 
-	texttt{defineBlock(def)} doesn’t transform input. It exists so "compiled" code can be explicit and type-safe.
+	\texttt{defineBlock(def)} doesn’t transform input. It exists so "compiled" code can be explicit and type-safe.
 
 In \texttt{runtime/block.ts}, it is literally an identity function:
 
 \begin{quote}
-	texttt{export function defineBlock(def: BlockDef): BlockDef \{ return def \}}
+	\texttt{export function defineBlock(def: BlockDef): BlockDef \{ return def \}}
 \end{quote}
 
 That sounds trivial, but it creates a clean “compiler boundary” and a stable type surface.
@@ -647,7 +647,7 @@ The coalescing logic (\texttt{pending} + \texttt{scheduled} flag) is the perform
 Scheduling goes through the deterministic lane scheduler from Chapter 13:
 
 \begin{quote}
-	texttt{scheduler.schedule(lane, flushPending)}
+	\texttt{scheduler.schedule(lane, flushPending)}
 \end{quote}
 
 Spec: \texttt{changing a signal updates only the intended DOM node (mountCompiledBlock)}.
@@ -880,7 +880,7 @@ Compiled stable subtrees use blocks; dynamic subtrees route to fallback reconcil
 \end{quote}
 
 Implementation detail: composition is tracked with a small internal child registry.
-	texttt{mountBlock} exposes an internal \texttt{\_\_hrbrTrackChild} function, and the composition helpers use it to register child destroyers so teardown order is correct.
+	\texttt{mountBlock} exposes an internal \texttt{\_\_hrbrTrackChild} function, and the composition helpers use it to register child destroyers so teardown order is correct.
 
 \begin{center}
 \begin{tikzpicture}[

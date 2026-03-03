@@ -12,6 +12,8 @@ export type SsgCliOptions = {
     defaultLayout?: string;
     /** Site title used in nav/header/footer by default layouts. */
     siteName?: string;
+    /** Path to relax.ssg.config.js (default: cwd/relax.ssg.config.js) */
+    configPath?: string;
 };
 export declare function buildStaticSite({ inputDir, outputDir }: SsgCliOptions): Promise<void>;
 //# sourceMappingURL=cli.d.ts.map

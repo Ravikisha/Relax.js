@@ -24,12 +24,12 @@ When people say ``set an attribute'', they often mean three different things:
 \end{enumerate}
 
 The key renderer lesson is that \textbf{attributes and properties are not interchangeable}. The classic foot-gun is forms:
-	exttt{<input value="x">} and \texttt{input.value = "x"} look similar, but behave differently across updates.
+	\texttt{<input value="x">} and \texttt{input.value = "x"} look similar, but behave differently across updates.
 
 Relax's rule of thumb is extremely pragmatic:
 
 \begin{quote}
-	extbf{Relax rule:} only \texttt{data-*} is forced through the attribute channel. Everything else is treated as a property.
+	\textbf{Relax rule:} only \texttt{data-*} is forced through the attribute channel. Everything else is treated as a property.
 \end{quote}
 
 This rule is small enough to memorize, and it keeps the ``boring'' cases correct by default.
@@ -62,7 +62,7 @@ This rule is small enough to memorize, and it keeps the ``boring'' cases correct
 In Relax, element props are written by one function:
 
 \begin{quote}
-	exttt{setAttributes(el: HTMLElement, attrs: ElementVNodeProps)}
+	\texttt{setAttributes(el: HTMLElement, attrs: ElementVNodeProps)}
 \end{quote}
 
 You saw calls to this during element mounting in Chapter~\ref{ch:mounting}. You'll see it again during patching in Chapter~\ref{ch:patching-diffing}.
@@ -208,7 +208,7 @@ There are pragmatic reasons to split out \texttt{class} and \texttt{style}:
 The tests at the top of \texttt{src/\_\_tests\_\_/attributes.test.ts} act as the contract for both.
 
 \subsection*{A subtle style invariant}
-	exttt{setAttributes()} doesn't know the previous style object.
+	\texttt{setAttributes()} doesn't know the previous style object.
 So a later call like \texttt{\{ style: \{ backgroundColor: 'blue' \} \}} will \emph{not} remove an earlier \texttt{color} field.
 That's not a bug; that's a design constraint.
 In Chapter~\ref{ch:patching-diffing}, you'll see how patching handles this by diffing old vs new props.
@@ -219,7 +219,7 @@ Relax stores event handlers under \texttt{props.on}.
 Before mounting an element or instantiating a component, we split the object into two:
 
 \begin{quote}
-	exttt{extractPropsAndEvents(vdom) -> \{ props, events \}}
+	\texttt{extractPropsAndEvents(vdom) -> \{ props, events \}}
 \end{quote}
 
 This is the real implementation from \texttt{src/utils/props.ts}:

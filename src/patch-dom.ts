@@ -1,6 +1,6 @@
 import { removeAttribute, removeStyle, setAttribute, setStyle } from './attributes'
 import { destroyDOM } from './destroy-dom'
-import { addEventListener } from './events'
+import { addEventListener, updateEventListener } from './events'
 import { DOM_TYPES, extractChildren, isComponent, type HrbrVNode } from './h'
 import { mountDOM } from './mount-dom'
 import { areNodesEqual } from './nodes-equal'
@@ -9,10 +9,13 @@ import { objectsDiff } from './utils/objects'
 import { extractPropsAndEvents } from './utils/props'
 import { isNotBlankOrEmptyString } from './utils/strings'
 import { reconcileChildren, type ReconcileNode } from '../runtime/reconciler'
+import { measurePatchPhase } from '../runtime/devtools'
 
 export function patchDOM(oldVdom: any, newVdom: any, parentEl: any, hostComponent: any = null) {
     if (!areNodesEqual(oldVdom, newVdom)) {
-        const index = findIndexInParent(parentEl, oldVdom.el)
+    // Fast path: DOM provides a constant-time index when available.
+    // This avoids `Array.from(parentEl.childNodes).indexOf(...)` allocations.
+    const index = getChildNodeIndex(parentEl, oldVdom.el)
         destroyDOM(oldVdom)
         mountDOM(newVdom, parentEl, index, hostComponent)
 
@@ -242,39 +245,50 @@ function patchKeyedChildrenReorder(
     }
 
     // Move/mount from the end so anchors to the right are already in correct relative position.
+    // Optimization: keep track of the next stable anchor to the right so we don't scan O(n^2).
+    let nextAnchor: Element | null = null
     for (let i = newChildren.length - 1; i >= 0; i--) {
         const oldIndex = seq[i]
         const newChild = newChildren[i]
 
-        // Find the next anchor to the right.
-        let anchor: Element | null = null
-        for (let j = i + 1; j < anchors.length; j++) {
-            const a = anchors[j] ?? null
-            if (a) {
-                anchor = a
-                break
-            }
-        }
+        const anchor = nextAnchor
 
         if (oldIndex === -1) {
             // mount, then move before anchor
             mountDOM(newChild, parentEl, null as any, hostComponent)
             const els = elementsForChild(newChild)
-            els.forEach((el) => parentEl.insertBefore(el, anchor))
+            // If the newly mounted first node is already at `anchor`, don't churn it.
+            if (els.length > 0 && els[0] === anchor) {
+                // noop
+            } else {
+                for (let k = 0; k < els.length; k++) {
+                    parentEl.insertBefore(els[k]!, anchor)
+                }
+            }
             anchors[i] = firstElForChild(newChild)
-            continue
-        }
-
-        if (keep.has(i)) {
+        } else if (keep.has(i)) {
             // Still need to ensure anchor points at the current first element.
             anchors[i] = firstElForChild(oldChildren[oldIndex as number])
-            continue
+        } else {
+            const oldChild = oldChildren[oldIndex as number]
+            const els = elementsForChild(oldChild)
+            // If this range already starts at the desired anchor, the whole range is already in place.
+            if (els.length > 0 && els[0] === anchor) {
+                // noop
+            } else {
+                for (let k = 0; k < els.length; k++) {
+                    parentEl.insertBefore(els[k]!, anchor)
+                }
+            }
+            anchors[i] = firstElForChild(oldChild)
         }
 
-        const oldChild = oldChildren[oldIndex as number]
-        const els = elementsForChild(oldChild)
-        els.forEach((el) => parentEl.insertBefore(el, anchor))
-        anchors[i] = firstElForChild(oldChild)
+        // Update nextAnchor for the next iteration (to the left).
+        // Prefer the element in the desired NEW order (after any mounts/moves).
+        const ai = anchors[i] ?? null
+        if (ai) {
+            nextAnchor = ai
+        }
     }
 
     return true
@@ -305,12 +319,18 @@ function isStableKeyedSameOrder(oldChildren: any[], newChildren: any[]) {
     return true
 }
 
-function findIndexInParent(parentEl: Element, el: Element) {
-    const index = Array.from(parentEl.childNodes).indexOf(el)
-    if (index < 0) {
-        return null
+function getChildNodeIndex(parentEl: Element, el: any) {
+    if (!parentEl || !el) return null
+
+    // Walk siblings (no allocations).
+    let i = 0
+    let cur: ChildNode | null = parentEl.firstChild
+    while (cur) {
+        if (cur === el) return i
+        cur = cur.nextSibling
+        i++
     }
-    return index
+    return null
 }
 
 function patchText(oldVdom: any, newVdom: any) {
@@ -331,16 +351,18 @@ function patchElement(oldVdom: any, newVdom: any, hostComponent: any) {
 
     // Fast paths: in big lists many nodes keep the same props object (or stable sub-objects).
     if (oldAttrs !== newAttrs) {
-        patchAttrs(el, oldAttrs, newAttrs)
+        measurePatchPhase('vdom:attrs', () => patchAttrs(el, oldAttrs, newAttrs))
     }
     if (oldClass !== newClass) {
-        patchClasses(el, oldClass, newClass)
+        measurePatchPhase('vdom:class', () => patchClasses(el, oldClass, newClass))
     }
     if (oldStyle !== newStyle) {
-        patchStyles(el, oldStyle, newStyle)
+        measurePatchPhase('vdom:style', () => patchStyles(el, oldStyle, newStyle))
     }
     if (oldEvents !== newEvents || oldListeners == null) {
-        newVdom.listeners = patchEvents(el, oldListeners, oldEvents, newEvents, hostComponent)
+        newVdom.listeners = measurePatchPhase('vdom:events', () =>
+            patchEvents(el, oldListeners, oldEvents, newEvents, hostComponent)
+        )
     } else {
         newVdom.listeners = oldListeners
     }
@@ -353,28 +375,50 @@ function patchAttrs(el: Element, oldAttrs: Record<string, any>, newAttrs: Record
         removeAttribute(el, attr)
     }
 
-    for (const attr of added.concat(updated)) {
+    for (let i = 0; i < added.length; i++) {
+        const attr = added[i]!
+        setAttribute(el, attr, newAttrs[attr])
+    }
+    for (let i = 0; i < updated.length; i++) {
+        const attr = updated[i]!
         setAttribute(el, attr, newAttrs[attr])
     }
 }
 
 function patchClasses(el: Element, oldClass?: string[] | string, newClass?: string[] | string) {
+    // Common case for benchmarks: class is unchanged or absent.
+    if (oldClass === newClass) return
+
     const oldClasses = toClassList(oldClass)
     const newClasses = toClassList(newClass)
 
-    const { added, removed } = arraysDiff(oldClasses, newClasses)
+    // Avoid arraysDiff() here: it uses findIndex/splice and becomes O(n^2) for many classes.
+    // A Set-based diff is O(n) and allocates predictably.
+    const oldSet = new Set<string>(oldClasses)
+    const newSet = new Set<string>(newClasses)
+
+    const removed: string[] = []
+    for (const c of oldSet) {
+        if (!newSet.has(c)) removed.push(c)
+    }
+
+    const added: string[] = []
+    for (const c of newSet) {
+        if (!oldSet.has(c)) added.push(c)
+    }
+
     if (removed.length > 0) {
-        ; (el as HTMLElement).classList.remove(...removed)
+        ;(el as HTMLElement).classList.remove(...removed)
     }
     if (added.length > 0) {
-        ; (el as HTMLElement).classList.add(...added)
+        ;(el as HTMLElement).classList.add(...added)
     }
 }
 
 function toClassList(classes: string[] | string = '') {
     return Array.isArray(classes)
         ? classes.filter(isNotBlankOrEmptyString)
-        : classes.split(/(\s+)/).filter(isNotBlankOrEmptyString)
+        : classes.split(' ').filter(isNotBlankOrEmptyString)
 }
 
 function patchStyles(el: HTMLElement, oldStyle: Record<string, any> = {}, newStyle: Record<string, any> = {}) {
@@ -384,7 +428,12 @@ function patchStyles(el: HTMLElement, oldStyle: Record<string, any> = {}, newSty
         removeStyle(el, style)
     }
 
-    for (const style of added.concat(updated)) {
+    for (let i = 0; i < added.length; i++) {
+        const style = added[i]!
+        setStyle(el, style, newStyle[style])
+    }
+    for (let i = 0; i < updated.length; i++) {
+        const style = updated[i]!
         setStyle(el, style, newStyle[style])
     }
 }
@@ -398,17 +447,38 @@ function patchEvents(
 ) {
     const { removed, added, updated } = objectsDiff(oldEvents, newEvents)
 
-    for (const eventName of removed.concat(updated)) {
+    for (let i = 0; i < removed.length; i++) {
+        const eventName = removed[i]!
+        const listener = oldListeners[eventName]
+        if (listener) el.removeEventListener(eventName, listener)
+    }
+    for (let i = 0; i < updated.length; i++) {
+        const eventName = updated[i]!
         const listener = oldListeners[eventName]
         if (listener) {
-            el.removeEventListener(eventName, listener)
+            // No DOM churn: update stable wrapper in place.
+            updateEventListener(listener, newEvents[eventName], hostComponent)
         }
     }
 
+    // Preserve existing listeners map whenever possible.
+    // Note: for updated events we keep the old listener reference.
     const addedListeners: Record<string, EventListener> = {}
-    for (const eventName of added.concat(updated)) {
+    for (let i = 0; i < added.length; i++) {
+        const eventName = added[i]!
         const listener = addEventListener(eventName, newEvents[eventName], el, hostComponent)
         addedListeners[eventName] = listener
+    }
+
+    for (let i = 0; i < updated.length; i++) {
+        const eventName = updated[i]!
+        const listener = oldListeners[eventName]
+        if (listener) {
+            addedListeners[eventName] = listener
+        } else {
+            // Safety fallback: if missing, mount a new listener.
+            addedListeners[eventName] = addEventListener(eventName, newEvents[eventName], el, hostComponent)
+        }
     }
 
     return addedListeners
@@ -431,6 +501,8 @@ function patchChildren(oldVdom: any, newVdom: any, hostComponent: any) {
     const newChildren = extractChildren(newVdom)
     const parentEl = oldVdom.el
 
+    // Count this as part of diff time: extracting children is part of the VDOM traversal overhead.
+
     // Optional fast path: delegate large keyed child lists to the HRBR reconciler.
     // This is opt-in via `_reconcile: 'hrbr'` and only applies when all direct children are keyed.
     // Motivation: large keyed lists where rows update in-place (10k/1%) can be dominated by VDOM diff traversal.
@@ -442,11 +514,13 @@ function patchChildren(oldVdom: any, newVdom: any, hostComponent: any) {
                 oldByKey.set(getVdomKey((oldChildren as any[])[i]), (oldChildren as any[])[i])
             }
 
-            const nextSpecs: ReconcileNode[] = newChildren.map((child: any, i: number) => {
+            const nextSpecs: ReconcileNode[] = new Array(newChildren.length)
+            for (let i = 0; i < newChildren.length; i++) {
+                const child: any = newChildren[i]
                 const key = getVdomKey(child)
                 const oldChild = oldByKey.get(key) ?? null
 
-                return {
+                nextSpecs[i] = {
                     key: key as any,
                     create() {
                         mountDOM(child as any, parentEl, null as any, hostComponent)
@@ -468,9 +542,29 @@ function patchChildren(oldVdom: any, newVdom: any, hostComponent: any) {
                         else if (node.parentNode) node.parentNode.removeChild(node)
                     },
                 } satisfies ReconcileNode
-            })
+            }
 
             reconcileChildren(parentEl as any, nextSpecs, { keyed: true })
+            return
+        }
+    }
+
+    // Heuristic: for large fully-keyed lists, prefer keyed reorder early.
+    // Motivation: the general arraysDiffSequence() path does a lot of scanning/splicing work.
+    // This heuristic is behavior-preserving because patchKeyedChildrenReorder() already encodes
+    // insert/remove/move semantics for fully-keyed siblings.
+    const LARGE_KEYED_LIST = 64
+    if (
+        oldChildren.length >= LARGE_KEYED_LIST &&
+        newChildren.length >= LARGE_KEYED_LIST &&
+        areAllChildrenKeyed(oldChildren as any[]) &&
+        areAllChildrenKeyed(newChildren as any[])
+    ) {
+        if (
+            measurePatchPhase('vdom:moves', () =>
+                patchKeyedChildrenReorder(oldChildren as any[], newChildren as any[], parentEl, hostComponent)
+            )
+        ) {
             return
         }
     }
@@ -487,7 +581,11 @@ function patchChildren(oldVdom: any, newVdom: any, hostComponent: any) {
     }
 
     // Keyed reorder fast path: key→index + LIS (fewest DOM moves)
-    if (patchKeyedChildrenReorder(oldChildren as any[], newChildren as any[], parentEl, hostComponent)) {
+    if (
+        measurePatchPhase('vdom:moves', () =>
+            patchKeyedChildrenReorder(oldChildren as any[], newChildren as any[], parentEl, hostComponent)
+        )
+    ) {
         return
     }
 
@@ -501,10 +599,10 @@ function patchChildren(oldVdom: any, newVdom: any, hostComponent: any) {
         return
     }
 
-    const diffSeq = arraysDiffSequence(oldChildren, newChildren, areNodesEqual)
+    const diffSeq = measurePatchPhase('vdom:diff', () => arraysDiffSequence(oldChildren, newChildren, areNodesEqual))
+    const offset = hostComponent?.offset ?? 0
     for (const operation of diffSeq) {
     const { originalIndex, index, item } = operation as any
-        const offset = hostComponent?.offset ?? 0
 
         switch ((operation as any).op) {
             case ARRAY_DIFF_OP.ADD: {
@@ -523,11 +621,16 @@ function patchChildren(oldVdom: any, newVdom: any, hostComponent: any) {
         const newChild = newChildren[index]
                 const elAtTargetIndex = parentEl.childNodes[index + offset]
 
-                const elementsToMove = isComponent(oldChild as any) ? (oldChild as any).component.elements : [(oldChild as any).el]
-                elementsToMove.forEach((el: Element) => {
-                    parentEl.insertBefore(el, elAtTargetIndex)
-                    patchDOM(oldChild as any, newChild as any, parentEl, hostComponent)
+                measurePatchPhase('vdom:moves', () => {
+                    const elementsToMove = isComponent(oldChild as any)
+                        ? (oldChild as any).component.elements
+                        : [(oldChild as any).el]
+                    for (let i = 0; i < elementsToMove.length; i++) {
+                        parentEl.insertBefore(elementsToMove[i]!, elAtTargetIndex)
+                    }
                 })
+                // Patch once per moved vnode, not once per moved element.
+                patchDOM(oldChild as any, newChild as any, parentEl, hostComponent)
                 break
             }
 

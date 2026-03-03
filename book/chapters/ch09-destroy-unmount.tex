@@ -3,7 +3,7 @@
 So far we've treated the renderer as a one-way pipeline:
 
 \begin{center}
-	texttt{VNode \textrightarrow mountDOM() \textrightarrow DOM \textrightarrow patchDOM()}
+	\texttt{VNode \textrightarrow mountDOM() \textrightarrow DOM \textrightarrow patchDOM()}
 \end{center}
 
 But a real UI runtime lives and dies by teardown. If teardown is incomplete or inconsistent, it manifests as:
@@ -175,7 +175,8 @@ delete vdom.listeners
     \end{verbatim}
 \end{enumerate}
 
-The listener removal uses \texttt{removeEventListeners} from \texttt{src/events.ts}, which removes by the wrapper listener identity that was created during mount/patch.
+The listener removal uses \texttt{removeEventListeners} from \texttt{src/events.ts}, which removes by the wrapper listener identity that was created during mount.
+That wrapper identity is stable even when a handler is updated during patching, so teardown remains reliable.
 
 Tests:
 
@@ -187,7 +188,7 @@ Tests:
 
 \paragraph{Ordering note: remove first, then cleanup}
 
-	texttt{removeElementNode()} removes the element from the DOM \emph{before} walking children.
+	\texttt{removeElementNode()} removes the element from the DOM \emph{before} walking children.
 This ordering is deliberate and safe:
 
 \begin{itemize}
@@ -342,12 +343,12 @@ unmount() {
 \end{lstlisting}
 
 The separation between (1) and (2) is the same architectural split as earlier chapters:
-  	exttt{destroyDOM()} is VNode-centric, while \texttt{unmount()} is component-centric.
+  	\texttt{destroyDOM()} is VNode-centric, while \texttt{unmount()} is component-centric.
 
 \paragraph{Why unsubscribe in \texttt{unmount()} and not in \texttt{destroyDOM()}?}
 
 Because subscriptions are a property of the component instance, not a property of the rendered VDOM nodes.
-	exttt{destroyDOM()} is intentionally ``VNode-centric''; \texttt{unmount()} is ``component-centric''.
+	\texttt{destroyDOM()} is intentionally ``VNode-centric''; \texttt{unmount()} is ``component-centric''.
 
 \section{HRBR nodes: dispose, destroy, and remove host}
 
@@ -486,7 +487,7 @@ You can use this list as a debugging worksheet:
 \end{enumerate}
 
 The browser-side references are the subtle part. Even after DOM removal, a reference chain like:
-    exttt{appState -> handler -> closure -> element}
+    \texttt{appState -> handler -> closure -> element}
 can keep things alive. This is why tests focus on listener removal and reference deletion.
 
 \section{Takeaways}
@@ -540,7 +541,7 @@ This works because during mount, Relax installs a wrapper listener and stores it
 
 \subsection{Recursive destruction and fragments}
 
-	texttt{destroy an html element and its children recursively}, \texttt{destroy a fragment}, and \texttt{destroy a fragment recursively} collectively prove that:
+	\texttt{destroy an html element and its children recursively}, \texttt{destroy a fragment}, and \texttt{destroy a fragment recursively} collectively prove that:
 
 \begin{itemize}
   \item recursion always visits nested VNodes
@@ -592,30 +593,30 @@ Use this mapping as a debugging guide.
 
 \subsection{Zombie event handlers (detached element still fires)}
 
-	extbf{Symptom:} you remove a view, but an old click handler still runs (or memory grows after repeated mount/unmount cycles).
+	\textbf{Symptom:} you remove a view, but an old click handler still runs (or memory grows after repeated mount/unmount cycles).
 
-	extbf{Why it happens:} a DOM node can be detached from the document yet still exist as a JavaScript object.
+	\textbf{Why it happens:} a DOM node can be detached from the document yet still exist as a JavaScript object.
 If some code keeps a reference to the node (like the test does with \texttt{buttonEl}), it can still dispatch events and hold listener closures.
 
-	extbf{Root cause:} listener identity mismatch. The function you pass to \texttt{removeEventListener} must be the same function object you passed to \texttt{addEventListener}.
+	\textbf{Root cause:} listener identity mismatch. The function you pass to \texttt{removeEventListener} must be the same function object you passed to \texttt{addEventListener}.
 Relax solves this by storing listener wrappers on the VNode (\texttt{vdom.listeners}) during mount/patch, then reusing them during destroy.
 
 Reference: \href{https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/removeEventListener}{\texttt{removeEventListener()}}.
 
 \subsection{Use-after-destroy (stale VNodes still referenced)}
 
-	extbf{Symptom:} something tries to patch using an old tree, throws because \texttt{el} is missing, or silently corrupts the UI.
+	\textbf{Symptom:} something tries to patch using an old tree, throws because \texttt{el} is missing, or silently corrupts the UI.
 
-	extbf{Root cause:} application code treated VNodes as durable objects instead of ephemeral render outputs.
+	\textbf{Root cause:} application code treated VNodes as durable objects instead of ephemeral render outputs.
 VNodes are only valid while they are mounted; after \texttt{destroyDOM}, that VNode graph should be considered dead.
 
-	extbf{Relax\'s guard rail:} the shared post-step \texttt{delete vdom.el} is a fail-fast mechanism.
+	\textbf{Relax\'s guard rail:} the shared post-step \texttt{delete vdom.el} is a fail-fast mechanism.
 
 \subsection{Unmount hook re-entrancy}
 
-	extbf{Symptom:} an \texttt{onUnmounted} hook triggers an update which tries to patch while destroy is mid-flight.
+	\textbf{Symptom:} an \texttt{onUnmounted} hook triggers an update which tries to patch while destroy is mid-flight.
 
-	extbf{Design fix in Relax:} hooks are scheduled via \texttt{enqueueJob}.
+	\textbf{Design fix in Relax:} hooks are scheduled via \texttt{enqueueJob}.
 Teardown becomes ``do all structural cleanup first, then run user code''.
 
 Conceptual parallel: React\'s effect cleanup happens after commit, not in the middle of DOM mutations:\
@@ -623,16 +624,16 @@ Conceptual parallel: React\'s effect cleanup happens after commit, not in the mi
 
 \subsection{HRBR interop leaks}
 
-	extbf{Symptom:} embedded widgets keep timers/observers alive after unmount.
+	\textbf{Symptom:} embedded widgets keep timers/observers alive after unmount.
 
-	extbf{Root causes:}
+	\textbf{Root causes:}
 
 \begin{itemize}
   \item the mounted instance didn\'t implement \texttt{dispose}/\texttt{destroy}
   \item the factory identity changes on every render, forcing remount and skipping the ``reuse'' mental model
 \end{itemize}
 
-	extbf{Fix:} implement at least one cleanup hook and keep the mount factory identity stable when you intend reuse.
+	\textbf{Fix:} implement at least one cleanup hook and keep the mount factory identity stable when you intend reuse.
 
 \section{Edge cases worth understanding}
 

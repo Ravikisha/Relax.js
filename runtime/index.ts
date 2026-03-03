@@ -25,7 +25,7 @@ export type { ReconcileNode, ReconcileRange, ReconcileItem, ReconcileOptions, Ke
 export { mountFallback } from './fallback'
 export type { MountedFallback, MountFallbackOptions, FallbackRenderResult } from './fallback'
 
-export { getDevtoolsCounters, resetDevtoolsCounters, setDevtoolsHook } from './devtools'
+export { getDevtoolsCounters, resetDevtoolsCounters, setDevtoolsHook, measurePatchPhase } from './devtools'
 export type { DevtoolsCounters, DevtoolsEvent, DevtoolsHook } from './devtools'
 
 export type { Memo, MemoOptions } from './signals'

@@ -24,19 +24,22 @@ export type ElementVNodeProps = {
 export type TextVNode = {
   type: typeof DOM_TYPES.TEXT
   value: string
-  el?: Text
+  // Initialized upfront for stable shapes.
+  el: Text | null
 }
 
 export type FragmentVNode = {
   type: typeof DOM_TYPES.FRAGMENT
   children: VNode[]
-  el?: Element
-  parentFragment?: FragmentVNode
+  // Initialized upfront for stable shapes.
+  el: Element | null
+  parentFragment: FragmentVNode | null
 }
 
 export type SlotVNode = {
   type: typeof DOM_TYPES.SLOT
-  children?: VNode[]
+  // Initialized upfront for stable shapes.
+  children: VNode[] | null
 }
 
 export type ElementVNode = {
@@ -44,8 +47,9 @@ export type ElementVNode = {
   tag: string
   props: ElementVNodeProps
   children: VNode[]
-  el?: HTMLElement
-  listeners?: Record<string, EventListener>
+  // Initialized upfront for stable shapes.
+  el: HTMLElement | null
+  listeners: Record<string, EventListener> | null
 }
 
 export type ComponentVNode = {
@@ -55,8 +59,9 @@ export type ComponentVNode = {
   props: ElementVNodeProps
   children: VNode[]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  component?: any
-  el?: Element
+  // Initialized upfront for stable shapes.
+  component: any | null
+  el: Element | null
 }
 
 export type HrbrVNode = {
@@ -66,11 +71,11 @@ export type HrbrVNode = {
   mount: (host: Element) => { update?: (values: any) => void; dispose?: () => void; destroy: () => void }
   /** Internal: mounted instance returned from `mount(host)` */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  instance?: any
+  instance: any | null
   /** Internal: the host element that contains the block/fallback region */
-  host?: HTMLElement
+  host: HTMLElement | null
   /** Internal: first element produced by the block/fallback region (for component vnode .el tracking) */
-  el?: Element
+  el: Element | null
 }
 
 export type VNode = TextVNode | ElementVNode | FragmentVNode | ComponentVNode | SlotVNode | HrbrVNode
@@ -87,12 +92,28 @@ export function h(tag: string | unknown, props: Record<string, unknown> = {}, ch
     `[vdom] h() expects an array of children (3rd argument), but got '${typeof children}'`
   )
 
+  const normalizedChildren = mapTextNodes(withoutNulls(children as any[])) as VNode[]
+
+  // Stable-shape VNodes: initialize common optional runtime fields up-front.
+  if (type === DOM_TYPES.ELEMENT) {
+    return {
+      tag: tag as any,
+      props: props as ElementVNodeProps,
+      type,
+      children: normalizedChildren,
+      el: null,
+      listeners: null,
+    }
+  }
+
   return {
     tag: tag as any,
     props: props as ElementVNodeProps,
     type,
-    children: mapTextNodes(withoutNulls(children as any[])) as VNode[],
-  } as any
+    children: normalizedChildren,
+    component: null,
+    el: null,
+  }
 }
 
 export function isComponent({ tag }: { tag: unknown }) {
@@ -100,7 +121,7 @@ export function isComponent({ tag }: { tag: unknown }) {
 }
 
 export function hString(str: unknown): TextVNode {
-  return { type: DOM_TYPES.TEXT, value: String(str) }
+  return { type: DOM_TYPES.TEXT, value: String(str), el: null }
 }
 
 export function hFragment(vNodes: unknown[]): FragmentVNode {
@@ -109,6 +130,8 @@ export function hFragment(vNodes: unknown[]): FragmentVNode {
   return {
     type: DOM_TYPES.FRAGMENT,
     children: mapTextNodes(withoutNulls(vNodes as any[])) as VNode[],
+  el: null,
+  parentFragment: null,
   }
 }
 
@@ -122,7 +145,7 @@ export function hBlock(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   mount: (host: Element) => { update?: (values: any) => void; dispose?: () => void; destroy: () => void }
 ): HrbrVNode {
-  return { type: DOM_TYPES.HRBR, mount }
+  return { type: DOM_TYPES.HRBR, mount, instance: null, host: null, el: null }
 }
 
 let hSlotCalled = false
@@ -153,19 +176,27 @@ function mapTextNodes(children: unknown[]): Array<VNode | unknown> {
 }
 
 export function extractChildren(vdom: { children?: VNode[] }): VNode[] {
-  if (vdom.children == null) {
-    return []
-  }
+  const root = vdom.children
+  if (root == null || root.length === 0) return []
 
-  const children: VNode[] = []
+  // Flatten fragments into a single output array.
+  // Avoids creating intermediate arrays from `children.push(...extractChildren(fragment))`.
+  const out: VNode[] = []
+  const stack: VNode[] = root.slice().reverse()
 
-  for (const child of vdom.children) {
-    if ((child as any).type === DOM_TYPES.FRAGMENT) {
-      children.push(...extractChildren(child as any))
+  while (stack.length > 0) {
+    const node = stack.pop()!
+    if ((node as any).type === DOM_TYPES.FRAGMENT) {
+      const fragChildren = (node as any).children as VNode[] | undefined
+      if (fragChildren && fragChildren.length) {
+        for (let i = fragChildren.length - 1; i >= 0; i--) {
+          stack.push(fragChildren[i]!)
+        }
+      }
     } else {
-      children.push(child)
+      out.push(node)
     }
   }
 
-  return children
+  return out
 }

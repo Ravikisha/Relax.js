@@ -5,6 +5,7 @@ export type DevtoolsEvent =
   | { type: 'flushEnd'; durationMs: number }
   | { type: 'domOp'; op: string }
   | { type: 'alloc'; kind: string; count?: number }
+  | { type: 'patchPhase'; phase: string; durationMs: number }
 
 export type DevtoolsCounters = {
   slotWrites: number
@@ -15,6 +16,10 @@ export type DevtoolsCounters = {
   // Optional perf instrumentation (disabled by default).
   domOps: number
   allocs: number
+
+  // Optional perf instrumentation for VDOM patching (disabled by default).
+  patchPhases: number
+  patchTimeMs: number
 }
 
 export type DevtoolsHook = (event: DevtoolsEvent) => void
@@ -27,6 +32,8 @@ const _counters: DevtoolsCounters = {
   flushTimeMs: 0,
   domOps: 0,
   allocs: 0,
+  patchPhases: 0,
+  patchTimeMs: 0,
 }
 
 let _instrumentationEnabled = false
@@ -55,6 +62,8 @@ export function resetDevtoolsCounters() {
   _counters.flushTimeMs = 0
   _counters.domOps = 0
   _counters.allocs = 0
+  _counters.patchPhases = 0
+  _counters.patchTimeMs = 0
 }
 
 export function emitDevtoolsEvent(event: DevtoolsEvent) {
@@ -77,6 +86,12 @@ export function emitDevtoolsEvent(event: DevtoolsEvent) {
     case 'alloc':
       if (_instrumentationEnabled) _counters.allocs += event.count ?? 1
       break
+    case 'patchPhase':
+      if (_instrumentationEnabled) {
+        _counters.patchPhases++
+        _counters.patchTimeMs += event.durationMs
+      }
+      break
   }
 
   // Always forward events to the hook (even when instrumentation is disabled)
@@ -97,3 +112,24 @@ export function emitAlloc(kind: string, count?: number) {
     emitDevtoolsEvent({ type: 'alloc', kind, count })
   }
 }
+
+function now(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+/**
+ * Measure a named patch phase. This is intended for benchmark-only analysis.
+ *
+ * Overhead policy:
+ * - If instrumentation is disabled AND no hook is installed, this is a no-op wrapper.
+ * - If a hook is installed (streaming mode), we still measure and emit events for userland aggregation.
+ */
+export function measurePatchPhase<T>(phase: string, fn: () => T): T {
+  if (!_instrumentationEnabled && !_hook) return fn()
+  const t0 = now()
+  const r = fn()
+  const dt = now() - t0
+  emitDevtoolsEvent({ type: 'patchPhase', phase, durationMs: dt })
+  return r
+}
+

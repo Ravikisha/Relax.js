@@ -59,7 +59,7 @@ When mounting is correct, these invariants hold and the rest of the runtime can 
 Those two fields are what make later patching and destroying possible without extra DOM queries.
 
 \section{The central pattern: dispatch by \texttt{vdom.type}}
-	exttt{mountDOM()} is a type-dispatcher. In code it's a \texttt{switch (vdom.type)} that delegates to one helper per vnode kind.
+	\texttt{mountDOM()} is a type-dispatcher. In code it's a \texttt{switch (vdom.type)} that delegates to one helper per vnode kind.
 
 \subsection*{Code: the actual dispatch loop}
 This is the heart of \texttt{src/mount-dom.ts}:
@@ -150,7 +150,7 @@ For \texttt{TextVNode}, mounting is:
 \end{enumerate}
 
 \subsection*{What the tests prove}
-  	texttt{src/\_\_tests\_\_/mount-dom.test.ts} contains two small tests that act like a contract:
+  	\texttt{src/\_\_tests\_\_/mount-dom.test.ts} contains two small tests that act like a contract:
 
 \begin{itemize}
   \item \texttt{mount a text element in a host element}: asserts the DOM contains \texttt{hello}.
@@ -173,7 +173,7 @@ For \texttt{ElementVNode}, Relax mounts in a deliberate order:
 The most important concept here is that Relax treats events specially.
 
 \subsection{\texttt{addProps}: extracting attrs vs. events}
-  	texttt{addProps()} calls \texttt{extractPropsAndEvents(vdom)} (from \texttt{src/utils/props.ts}). The return value is split into:
+  	\texttt{addProps()} calls \texttt{extractPropsAndEvents(vdom)} (from \texttt{src/utils/props.ts}). The return value is split into:
 
 \begin{itemize}
   \item \textbf{attrs}: everything that becomes DOM attributes/properties (\texttt{id}, \texttt{class}, \texttt{style}, \texttt{data-*}, etc).
@@ -222,7 +222,7 @@ The tests in \texttt{src/\_\_tests\_\_/mount-dom.test.ts} cover a small but mean
 These are not ``just tests'', they are a spec for how Relax converts the VNode \texttt{props} object into real DOM behavior.
 
 \section{Event handler binding: the meaning of \texttt{hostComponent}}
-  	texttt{mountDOM()} accepts an optional \texttt{hostComponent} argument, which gets threaded into \texttt{createElementNode(...)} and ultimately into \texttt{addEventListeners(...)}.
+  	\texttt{mountDOM()} accepts an optional \texttt{hostComponent} argument, which gets threaded into \texttt{createElementNode(...)} and ultimately into \texttt{addEventListeners(...)}.
 
 \subsection*{Diagram: how \texttt{hostComponent} flows into events}
 
@@ -335,7 +335,7 @@ This design implies a subtle contract with the component implementation: compone
 You'll revisit that in the component lifecycle chapters.
 
 \subsection*{What the tests prove}
-  	texttt{src/\_\_tests\_\_/mount-dom.test.ts} contains several important fragment tests:
+  	\texttt{src/\_\_tests\_\_/mount-dom.test.ts} contains several important fragment tests:
 
 \begin{itemize}
   \item \texttt{mount a fragment in a host element} and \texttt{mount a fragment inside a fragment...}: show that fragments flatten naturally at mount time.
@@ -362,7 +362,7 @@ The last step is important: a component vnode cannot point to ``the component'' 
 Immediately after creating a component node, \texttt{mountDOM()} enqueues a lifecycle callback:
 
 \begin{quote}
-  	texttt{enqueueJob(() => vdom.component.onMounted())}
+  	\texttt{enqueueJob(() => vdom.component.onMounted())}
 \end{quote}
 
 So \texttt{onMounted()} is intentionally asynchronous relative to ``the DOM nodes now exist''.
@@ -388,7 +388,7 @@ The job queue turns that into a two-phase commit:
 This theme will show up again in scheduling (Chapter~\ref{ch:scheduling}).
 
 \subsection*{What the tests prove}
-  	texttt{src/\_\_tests\_\_/mount-dom.test.ts} exercises component creation and parent-child links:
+  	\texttt{src/\_\_tests\_\_/mount-dom.test.ts} exercises component creation and parent-child links:
 
 \begin{itemize}
   \item \texttt{mount a component with props}: shows that props are passed in and the instance is stored.

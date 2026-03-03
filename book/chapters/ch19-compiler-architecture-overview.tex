@@ -263,14 +263,14 @@ The block runtime later parses \texttt{templateHTML} into a DOM tree and walks \
 If you take nothing else from this chapter, take this:
 
 \begin{quote}
-	extbf{Slot paths are based on DOM \texttt{childNodes}, not \texttt{children}.}
+	\textbf{Slot paths are based on DOM \texttt{childNodes}, not \texttt{children}.}
 \end{quote}
 
 That means whitespace and literal text in your template count as nodes.
 So when you look at markup like:
 
 \begin{quote}
-	exttt{<p>Hello \{name()\}</p>}
+	\texttt{<p>Hello \{name()\}</p>}
 \end{quote}
 
 the compiled \texttt{templateHTML} might contain literal spaces or newlines, and those become \texttt{Text} nodes when parsed.
@@ -345,7 +345,7 @@ const mounted = mountCompiledBlock(block, host, [
 The key behavioral contract in that test is worth repeating:
 
 \begin{quote}
-	extbf{Updating signals must never recreate the root element.}
+	\textbf{Updating signals must never recreate the root element.}
 \end{quote}
 
 In other words, compilation is only useful if it reduces work to \emph{writes}, not \emph{mount/unmount}.
@@ -421,7 +421,7 @@ Why it matters: when you start integrating compilation into an app/runtime sched
 \section{Debugging: when a slot path is wrong}
 
 The most common failure mode when you build a compiler like this is:\
-	extbf{the slot writes go to the wrong node.}
+	\textbf{the slot writes go to the wrong node.}
 
 When that happens, you should immediately suspect one of these:
 
@@ -522,7 +522,7 @@ This wrapper is the ``policy layer'' on top of template extraction.
 It answers one question: \emph{is it safe to run in block mode?}
 
 At the top level, the TS prototype exposes a convenience API:
-	exttt{compileTSXOrFallback(source)}.
+	\texttt{compileTSXOrFallback(source)}.
 
 Its semantics are intentionally boring:
 
@@ -552,7 +552,7 @@ They differ because Babel has access to more information (and can safely reject 
 \begin{center}
 \begin{tabular}{|p{0.34\textwidth}|p{0.29\textwidth}|p{0.29\textwidth}|}
 \hline
-	extbf{Input pattern} & \textbf{TS prototype (\texttt{compiler/index.ts})} & \textbf{Babel transform (\texttt{compiler/jsx/transform.ts})}\\
+	\textbf{Input pattern} & \textbf{TS prototype (\texttt{compiler/index.ts})} & \textbf{Babel transform (\texttt{compiler/jsx/transform.ts})}\\
 \hline
 Child expression: \texttt{<p>Hello \{expr\}</p>} & Marks \texttt{meta.hasDynamicStructure = true} (always) & Allows only \emph{text-like} expressions; otherwise returns \texttt{null} to route to fallback \\
 \hline
@@ -673,7 +673,7 @@ But Babel is transforming your actual file, so it can emit closures that referen
 The key idea is:
 
 \begin{quote}
-	extbf{All dynamic values are read through closures passed to \texttt{mountCompiledBlock()}.}
+	\textbf{All dynamic values are read through closures passed to \texttt{mountCompiledBlock()}.}
 \end{quote}
 
 This means compilation doesn't change your state model.
@@ -729,7 +729,7 @@ They differ because Babel has access to more information (and can safely reject 
 \begin{center}
 \begin{tabular}{|p{0.34\textwidth}|p{0.29\textwidth}|p{0.29\textwidth}|}
 \hline
-	extbf{Input pattern} & \textbf{TS prototype (\texttt{compiler/index.ts})} & \textbf{Babel transform (\texttt{compiler/jsx/transform.ts})}\\
+	\textbf{Input pattern} & \textbf{TS prototype (\texttt{compiler/index.ts})} & \textbf{Babel transform (\texttt{compiler/jsx/transform.ts})}\\
 \hline
 Child expression: \texttt{<p>Hello \{expr\}</p>} & Marks \texttt{meta.hasDynamicStructure = true} (always) & Allows only \emph{text-like} expressions; otherwise returns \texttt{null} to route to fallback \\
 \hline
@@ -875,7 +875,7 @@ It extracts the lane and stores it on the slot metadata.
 Later chapters will connect this to the deterministic scheduler.
 
 Concretely, \texttt{extractLanePragmaFromExpressionContainer()} scans leading comments for a pattern like:\\
-	texttt{@lane transition}.
+	\texttt{@lane transition}.
 When found, the compiler attaches \texttt{lane: "transition"} to the slot metadata object.
 
 \section{Tests-as-spec}
@@ -898,7 +898,7 @@ We won't run them here, but reading them tells you what changes are allowed with
 \subsection{Unit tests (TS): compile + mount sanity}
 
 
-	extbf{File:} \texttt{compiler/\_\_tests\_\_/compiler.test.ts}
+	\textbf{File:} \texttt{compiler/\_\_tests\_\_/compiler.test.ts}
 
 This test anchors the smallest happy path:
 
@@ -929,7 +929,7 @@ This test also documents a scheduling assumption: it comments that HRBR scheduli
 \subsection{Babel transform unit tests: shape of emitted program}
 
 
-	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts}
+	\textbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.test.ts}
 
 These tests assert that the plugin is producing the intended \emph{program shape}:
 
@@ -952,7 +952,7 @@ The suite also asserts two ``developer experience'' guarantees:
 \subsection{Babel transform errors: the intentional block-mode subset}
 
 
-	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.errors.test.ts}
+	\textbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.errors.test.ts}
 
 This suite documents what is currently \emph{rejected} in block mode:
 
@@ -968,7 +968,7 @@ Even if future versions route these to fallback instead of throwing, the existen
 \subsection{Babel transform E2E (jsdom): evaluate emitted literals + mount}
 
 
-	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.e2e-jsdom.test.ts}
+	\textbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.e2e-jsdom.test.ts}
 
 This test checks something subtle but crucial: the compiler output is not just syntactically valid---its emitted \emph{data} can actually be evaluated and mounted.
 
@@ -986,7 +986,7 @@ This approximates how ``real code'' will behave: the compile-time output must wo
 \section{Worked example: derive \texttt{templateHTML} and slot paths from the snapshot}
 
 Now we\'ll do the most valuable \emph{derive-it-by-hand} exercise: take the golden snapshot in
-	exttt{compiler/\_\_tests\_\_/babel-transform.test.ts} and derive the template and slot paths by hand.
+	\texttt{compiler/\_\_tests\_\_/babel-transform.test.ts} and derive the template and slot paths by hand.
 If you can do this once, debugging a compiler becomes much less mysterious.
 
 \subsection{The input JSX (what the author writes)}
@@ -1094,7 +1094,7 @@ Use the tests to narrow it down:
   If your change modified whitespace in \texttt{templateHTML}, you probably shifted paths.
 \item Recompute the \texttt{childNodes} list by hand and see if the asserted \texttt{path} still lands on the intended node.
 \item Run the E2E that actually mounts the evaluated literals:
-  	exttt{compiler/\_\_tests\_\_/babel-transform.e2e-jsdom.test.ts}.
+  	\texttt{compiler/\_\_tests\_\_/babel-transform.e2e-jsdom.test.ts}.
 \end{enumerate}
 
 If you get into the habit of adding a snapshot test first, you\'ll catch most path regressions before they reach runtime.
@@ -1102,7 +1102,7 @@ If you get into the habit of adding a snapshot test first, you\'ll catch most pa
 \subsection{Babel fallback E2E (jsdom): structural expression routes to \texttt{mountFallback}}
 
 
-	extbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.fallback.e2e-jsdom.test.ts}
+	\textbf{File:} \texttt{compiler/\_\_tests\_\_/babel-transform.fallback.e2e-jsdom.test.ts}
 
 This suite pins down the fallback routing policy:
 

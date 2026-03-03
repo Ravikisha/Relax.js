@@ -25,10 +25,10 @@ export function renderToString(vdom: VNode, _options: RenderToStringOptions = {}
       return escapeHtmlText((vdom as TextVNode).value)
 
     case DOM_TYPES.FRAGMENT:
-  return (vdom as FragmentVNode).children.map((c) => renderToString(c, _options)).join('')
+  return renderChildrenToString((vdom as FragmentVNode).children, _options)
 
     case DOM_TYPES.SLOT:
-  return ((vdom as SlotVNode).children ?? []).map((c) => renderToString(c, _options)).join('')
+  return renderChildrenToString((vdom as SlotVNode).children ?? [], _options)
 
     case DOM_TYPES.ELEMENT:
       return renderElementToString(vdom as ElementVNode)
@@ -45,6 +45,15 @@ export function renderToString(vdom: VNode, _options: RenderToStringOptions = {}
       // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
       throw new Error(`Unsupported VNode type in renderToString(): ${(vdom as any).type}`)
   }
+}
+
+function renderChildrenToString(children: VNode[] | undefined, options: RenderToStringOptions): string {
+  if (!children || children.length === 0) return ''
+  let out = ''
+  for (let i = 0; i < children.length; i++) {
+    out += renderToString(children[i]!, options)
+  }
+  return out
 }
 
 function renderComponentToString(vdom: ComponentVNode): string {
@@ -75,16 +84,16 @@ function renderElementToString(vdom: ElementVNode): string {
   }
 
   const innerHTML = (vdom.props ?? {}).innerHTML
-  const children =
-    typeof innerHTML === 'string' ? innerHTML : (vdom.children ?? []).map((c) => renderToString(c)).join('')
+  const children = typeof innerHTML === 'string' ? innerHTML : renderChildrenToString(vdom.children ?? [], {})
   return `<${tag}${attrs}>${children}</${tag}>`
 }
 
 function renderAttrs(props: Record<string, unknown>): string {
   let out = ''
 
-  for (const [k, v] of Object.entries(props)) {
-  if (k === 'on' || k === 'key' || k === 'innerHTML') continue
+  for (const k in props) {
+    if (k === 'on' || k === 'key' || k === 'innerHTML') continue
+    const v = props[k]
 
     if (k === 'class') {
       const cls = renderClass(v)
@@ -116,17 +125,31 @@ function renderAttrs(props: Record<string, unknown>): string {
 
 function renderClass(v: unknown): string {
   if (typeof v === 'string') return v
-  if (Array.isArray(v)) return v.filter((x) => typeof x === 'string').join(' ')
+  if (Array.isArray(v)) {
+    let out = ''
+    for (let i = 0; i < v.length; i++) {
+      const x = v[i]
+      if (typeof x === 'string') {
+        if (out) out += ' '
+        out += x
+      }
+    }
+    return out
+  }
   return ''
 }
 
 function renderStyle(v: unknown): string {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return ''
-  const entries = Object.entries(v as Record<string, unknown>)
-  return entries
-    .filter(([, val]) => val != null)
-    .map(([name, val]) => `${name}:${String(val)}`)
-    .join(';')
+  let out = ''
+  const obj = v as Record<string, unknown>
+  for (const name in obj) {
+    const val = obj[name]
+    if (val == null) continue
+    if (out) out += ';'
+    out += `${name}:${String(val)}`
+  }
+  return out
 }
 
 export function renderPageToString(
@@ -156,8 +179,8 @@ export function renderPageToString(
 function renderPlainAttrs(attrs: Record<string, string> | undefined): string {
   if (!attrs) return ''
   let out = ''
-  for (const [k, v] of Object.entries(attrs)) {
-    out += ` ${k}="${escapeHtmlAttr(String(v))}"`
+  for (const k in attrs) {
+    out += ` ${k}="${escapeHtmlAttr(String(attrs[k]))}"`
   }
   return out
 }

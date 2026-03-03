@@ -86,7 +86,10 @@ function createElementNode(
   addProps(element, vdom, hostComponent)
   vdom.el = element
 
-  children.forEach((child) => mountDOM(child as any, element as any, null as any, hostComponent))
+  // Hot path: avoid per-child closure allocations from `.forEach()`.
+  for (let i = 0; i < children.length; i++) {
+    mountDOM(children[i] as any, element as any, null as any, hostComponent)
+  }
   insert(element, parentEl, index)
 }
 

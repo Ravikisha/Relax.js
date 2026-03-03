@@ -35,8 +35,6 @@ Most of this chapter explains how Relax's harness tries to stay on the right sid
 
 \section{Benchmarks run in a real browser}
 
-\section{Benchmarks run in a real browser}
-
 The harness is designed to run in a browser environment:
 
 \begin{itemize}
@@ -46,6 +44,26 @@ The harness is designed to run in a browser environment:
 \end{itemize}
 
 See \texttt{benchmarks/index.html} and the entry script \texttt{benchmarks/main.ts}.
+
+\subsection{A headless CLI runner (for repeatable copy/paste output)}
+
+While the canonical runner is a browser page (\texttt{benchmarks/index.html}), the repo also includes a small headless runner for automation and faster iteration:
+
+\begin{itemize}
+\item CLI entry: \texttt{benchmarks/cli.mjs}
+\item NPM script: \texttt{npm run bench -- --profile=quick --seed=1 --patchPhases=1}
+\end{itemize}
+
+The CLI runner:
+
+\begin{itemize}
+\item builds or serves the same benchmark page,
+\item launches Chromium headless,
+\item clicks the \texttt{Run} button,
+\item then prints the same output that the UI writes into \texttt{<pre id="out">}.
+\end{itemize}
+
+This is useful when you want to paste a full run into an issue report, or compare outputs across branches with a stable command.
 
 \subsection{Why ``real browser'' matters}
 
@@ -268,7 +286,7 @@ Percentiles are computed on sorted samples with a simple index selection.
 This is good enough for stable comparisons at the harness scale.
 
 The harness computes p95 with:\\
-	texttt{idx = floor(p * (n - 1))} (clamped).
+	\texttt{idx = floor(p * (n - 1))} (clamped).
 This is a simple deterministic estimator, which is a feature here: the same sample list always produces the same percentile.
 
 \subsection{The core measurement loop (the code that matters)}
@@ -467,18 +485,18 @@ The runner prints the profile and seed at the top of the output.
 Example:
 
 \begin{quote}
-	texttt{Running...\newline profile: default\newline seed: 12345}
+	\texttt{Running...\newline profile: default\newline seed: 12345}
 \end{quote}
 
 Typical URLs:
 
 \begin{itemize}
 \item Quick sanity pass:\\
-	texttt{benchmarks/index.html?profile=quick\&seed=1}
+	\texttt{benchmarks/index.html?profile=quick\&seed=1}
 \item Longer run that makes tail latency clearer:\\
-	texttt{benchmarks/index.html?profile=stress\&seed=42\&budget=16.7}
+	\texttt{benchmarks/index.html?profile=stress\&seed=42\&budget=16.7}
 \item Debugging a suspicious regression by increasing sample size:\\
-	texttt{benchmarks/index.html?profile=default\&frames=600\&seed=12345}
+	\texttt{benchmarks/index.html?profile=default\&frames=600\&seed=12345}
 \end{itemize}
 
 Defaults are intentionally ``reasonable and stable'' for local runs.
@@ -608,7 +626,7 @@ This isn't a ``real app'' workload, but it is an excellent microbenchmark for me
 
 \subsection{What should you expect from \texttt{text-1m}?}
 
-	texttt{text-1m} is a microbenchmark.
+	\texttt{text-1m} is a microbenchmark.
 It largely measures:
 
 \begin{itemize}
@@ -646,7 +664,7 @@ This is where HRBR often wins: it can apply targeted DOM mutations without re-di
 
 \subsection{Case study: \texttt{widgets-200}}
 
-	texttt{widgets-200} is a component-shape workload:
+	\texttt{widgets-200} is a component-shape workload:
 
 \begin{itemize}
 \item many small independent widgets
@@ -706,7 +724,7 @@ The benchmark bundles are built through two rollup configs:
 \end{itemize}
 
 Both use \texttt{@rollup/plugin-replace} to inject:\\
-	texttt{process.env.NODE\_ENV = 'production'} by default.
+	\texttt{process.env.NODE\_ENV = 'production'} by default.
 
 This matters for fairness because some libraries (notably React) perform extra checks and different scheduling policies in development builds.
 
@@ -770,7 +788,7 @@ Tail latency matters because user experience is dominated by occasional slow fra
 
 \subsection{Reading the perf-smoke source as a spec}
 
-	exttt{benchmarks/perf-smoke.ts} is worth reading because it shows how the repo uses \textbf{the same harness} in a CI-friendly way.
+	\texttt{benchmarks/perf-smoke.ts} is worth reading because it shows how the repo uses \textbf{the same harness} in a CI-friendly way.
 Here are the key pieces, again in JavaScript form:
 
 \begin{lstlisting}[language=JavaScript, caption={CI perf smoke: run a small fixed suite and enforce wide thresholds (from \texttt{benchmarks/perf-smoke.ts}).}]
@@ -830,6 +848,47 @@ Optional runtime instrumentation exists in \texttt{runtime/devtools.ts} (Chapter
 Methodology rule: keep instrumentation disabled during benchmarks unless you are explicitly measuring it.
 Otherwise, the measurement includes the measurement.
 
+There is one deliberate exception for investigation work: the benchmark runner can optionally collect a \emph{patch-phase breakdown} for Relax's classic VDOM path.
+This is not a ``runtime optimization'' by itself; it is a way to identify \emph{which phase is the real hotspot} so you can optimize the right thing.
+
+\subsection{Patch-phase breakdown for VDOM (diff vs moves vs props)}
+
+The classic VDOM patcher lives in \texttt{src/patch-dom.ts}.
+It now emits devtools \texttt{patchPhase} events via \texttt{measurePatchPhase(phase, fn)} (Chapter~\ref{ch:devtools}).
+
+To enable aggregation in the benchmark UI, add this query parameter:
+
+\begin{quote}
+		\texttt{patchPhases=1}
+\end{quote}
+
+Example:
+
+\begin{quote}
+		\texttt{benchmarks/index.html?profile=quick\&seed=1\&patchPhases=1}
+\end{quote}
+
+When enabled:
+
+\begin{itemize}
+\item \texttt{benchmarks/harness.ts} installs a devtools hook and aggregates \texttt{patchPhase} durations across the measurement window.
+\item \texttt{benchmarks/main.ts} prints a tiny ``summary table'' per case, sorted by biggest \texttt{avg ms/frame}.
+\item This uses hook-based aggregation (``streaming mode'') and does \emph{not} enable expensive counter updates like \texttt{domOps}.
+\end{itemize}
+
+Current phase labels emitted by \texttt{src/patch-dom.ts}:
+
+\begin{itemize}
+\item \texttt{vdom:diff}: diff work (e.g. \texttt{arraysDiffSequence})
+\item \texttt{vdom:moves}: DOM reorders (e.g. \texttt{insertBefore} loops)
+\item \texttt{vdom:attrs}: attribute patching
+\item \texttt{vdom:class}: class patching
+\item \texttt{vdom:style}: style patching
+\item \texttt{vdom:events}: event patching
+\end{itemize}
+
+Interpretation rule of thumb: if \texttt{vdom:diff} dominates, you optimize traversal/diffing; if \texttt{vdom:moves} dominates, you optimize reorder strategy and DOM-anchor behavior; if props phases dominate, you optimize attribute/style/event patching.
+
 \section{Online resources}
 
 These links are useful if you want to validate (or improve) the methodology beyond this repo:
@@ -874,7 +933,7 @@ It includes enough context to be reproducible (profile + seed + case names).
 Here is a condensed example pattern (taken from a typical run):
 
 \begin{quote}
-	texttt{\# list-10k-1pct:relax-hrbr\newline frames: 120\newline avg: 1.333 ms\newline p95: 4.000 ms\newline drops: 0}
+	\texttt{\# list-10k-1pct:relax-hrbr\newline frames: 120\newline avg: 1.333 ms\newline p95: 4.000 ms\newline drops: 0}
 \end{quote}
 
 How to read it:
@@ -888,7 +947,7 @@ How to read it:
 And compare to the same case in VDOM mode:
 
 \begin{quote}
-	texttt{\# list-10k-1pct:relax-vdom\newline frames: 120\newline avg: 62.558 ms\newline p95: 94.000 ms\newline drops: 120}
+	\texttt{\# list-10k-1pct:relax-vdom\newline frames: 120\newline avg: 62.558 ms\newline p95: 94.000 ms\newline drops: 120}
 \end{quote}
 
 This is a very different story:
@@ -899,6 +958,117 @@ This is a very different story:
 \end{itemize}
 
 This sort of comparison is where HRBR tends to win: it avoids large VDOM diff/patch overhead by pre-compiling stable DOM addressing.
+
+\section{A real run: results table + reading guide}
+
+This section records one concrete run of the benchmark suite.
+It is not a universal leaderboard; it is a \emph{reproducible artifact} (profile + seed + environment-dependent timings) that shows how to interpret the harness output.
+
+\subsection{Run metadata}
+
+\begin{itemize}
+\item \textbf{Profile:} \texttt{quick}
+\item \textbf{Seed:} \texttt{1}
+\item \textbf{Measured frames per case:} \texttt{30}
+\item \textbf{Patch phases:} enabled (hook-based; \texttt{patchPhases=1})
+\end{itemize}
+
+\subsection{Results table (avg, p95, drops)}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lrrr}
+\hline
+	\textbf{Case} & \textbf{avg (ms)} & \textbf{p95 (ms)} & \textbf{drops} \\
+\hline
+			\texttt{text-1m:hrbr} & 3.447 & 4.200 & 0 \\
+
+			\textbf{\texttt{list-10k-1pct:relax-hrbr}} & \textbf{0.547} & \textbf{1.100} & \textbf{0} \\
+			\textbf{\texttt{list-10k-1pct:relax-fine}} & \textbf{0.407} & \textbf{0.500} & \textbf{0} \\
+			\texttt{list-10k-1pct:relax-vdom} & 20.840 & 25.500 & 30 \\
+			\texttt{list-10k-1pct:relax-vdom-direct} & 19.623 & 19.900 & 30 \\
+			\texttt{list-10k-1pct:relax-vdom-memo-row} & 30.217 & 31.400 & 30 \\
+			\texttt{list-10k-1pct:react} & 8.657 & 9.300 & 0 \\
+			\texttt{list-10k-1pct:solid} & 0.357 & 0.500 & 0 \\
+
+			\textbf{\texttt{widgets-200:relax-hrbr}} & \textbf{0.487} & \textbf{0.600} & \textbf{0} \\
+			\texttt{widgets-200:relax-vdom} & 2.633 & 3.900 & 0 \\
+			\texttt{widgets-200:react} & 3.323 & 3.900 & 0 \\
+			\texttt{widgets-200:solid} & 0.097 & 0.200 & 0 \\
+
+			\texttt{props-toggle-5k:relax-vdom} & 82.227 & 127.000 & 30 \\
+			\texttt{props-toggle-5k:relax-hrbr} & 10.960 & 17.700 & 3 \\
+			\texttt{props-toggle-5k:react} & 53.630 & 57.500 & 30 \\
+			\textbf{\texttt{props-toggle-5k:solid}} & \textbf{5.870} & \textbf{6.300} & \textbf{0} \\
+
+			\texttt{style-grid-1k:relax-vdom} & 8.257 & 9.300 & 0 \\
+			\texttt{style-grid-1k:react} & 9.023 & 12.400 & 0 \\
+			\textbf{\texttt{style-grid-1k:solid}} & \textbf{3.107} & \textbf{3.300} & \textbf{0} \\
+
+			\texttt{table-2k-shuffle:relax-vdom} & 10.820 & 18.100 & 3 \\
+			\texttt{table-2k-shuffle:react} & 13.190 & 20.400 & 7 \\
+			\textbf{\texttt{table-2k-shuffle:solid}} & \textbf{3.780} & \textbf{7.000} & \textbf{0} \\
+
+			\texttt{svg-1k:relax-vdom} & 7.097 & 8.200 & 0 \\
+			\texttt{input-typing-1k:relax-vdom} & 6.847 & 10.500 & 0 \\
+\hline
+\end{tabular}
+\end{center}
+
+\subsection{Callouts: where we are winning (and where we are not)}
+
+This quick run makes two things very clear:
+
+\begin{itemize}
+\item \textbf{Relax wins most clearly in the structured/compiled path for large lists:}
+		\texttt{list-10k-1pct:relax-hrbr} is \textasciitilde{}\textbf{16--17x faster} than \texttt{relax-vdom} (0.547ms vs 20.840ms avg) and stays smooth (0 drops).
+\item \textbf{Relax VDOM is still move-dominated and misses budget on large keyed list updates:}
+		\texttt{list-10k-1pct:relax-vdom} shows \texttt{drops=30/30}, and patch-phase breakdown attributes \textasciitilde{}\textbf{78\%} of patch time to \texttt{vdom:moves}.
+\end{itemize}
+
+On the other hand, these runs also show where other architectures win:
+
+\begin{itemize}
+\item \textbf{Solid dominates the fine-grained/reactive update shapes:}
+	it is fastest in \texttt{props-toggle-5k}, \texttt{style-grid-1k}, and \texttt{table-2k-shuffle} while keeping \texttt{drops=0}.
+\item \textbf{React is very competitive on list-10k-1pct in this particular quick run:}
+		\texttt{list-10k-1pct:react} at 8.657ms avg with 0 drops sits between Solid and Relax HRBR.
+	(As always: quick \(N=30\) runs can be noisy; re-run \texttt{default} before publishing.)
+\end{itemize}
+
+The practical reason HRBR/fine-grained approaches win is simple: they do \emph{less per tick}.
+Instead of rebuilding and diffing a large virtual tree to discover what changed, those paths already know \emph{where} the stable nodes are and apply targeted writes:
+
+\begin{itemize}
+\item \textbf{HRBR:} precompiled DOM addressing (``slots'') turns updates into direct node writes.
+\item \textbf{Fine-grained:} dependencies are tracked so only affected nodes re-run.
+\item \textbf{Patching hygiene:} steady-state updates avoid avoidable overhead such as listener churn and accidental \(\mathcal{O}(n^2)\) keyed reordering.
+\end{itemize}
+
+\subsection{How to read this table (with patch-phase data)}
+
+Interpret each row using three lenses:
+
+\begin{itemize}
+\item \textbf{Budget compliance (drops).} At 60Hz a typical budget is \textasciitilde{}16.7ms. \texttt{drops=120} means every measured frame missed that budget.
+\item \textbf{Tail stability (p95).} If p95 is much larger than avg, you have spikes that are likely user-visible.
+\item \textbf{Subsystem focus.} Lists and shuffles stress reconciliation and DOM moves; props/styles stress attribute/property paths; typing stresses controlled input semantics.
+\end{itemize}
+
+In this run, the most important qualitative signal is that several VDOM-and-reconcile-heavy cases miss the frame budget consistently, while slot-write / fine-grained reactive cases remain under budget.
+
+Patch-phase breakdown adds one more targeted lens for Relax VDOM rows:
+
+\begin{itemize}
+\item \texttt{list-10k-1pct:relax-vdom}: \texttt{vdom:moves} \textasciitilde{}78\% of patch time; \texttt{vdom:attrs} \textasciitilde{}22\%.
+\item \texttt{props-toggle-5k:relax-vdom}: \texttt{vdom:moves} \textasciitilde{}62\%, \texttt{vdom:attrs} \textasciitilde{}34\%.
+\item \texttt{table-2k-shuffle:relax-vdom}: \texttt{vdom:moves} \textasciitilde{}90\%.
+\end{itemize}
+
+This makes the next optimization target unambiguous: for these workloads, improving diff computation won't matter until \texttt{vdom:moves} is made cheaper (or avoided).
+
+When publishing results, include metadata (browser version, OS, CPU/governor) and always report \texttt{profile} and \texttt{seed}; the methodology and reproducibility are the point.
 
 \section{Why this benchmark approach is better than ``single number'' benchmarks}
 

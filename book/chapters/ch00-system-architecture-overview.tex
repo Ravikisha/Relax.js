@@ -8,7 +8,7 @@ Before we zoom into code, this chapter gives you the whole machine:
 what subsystems exist, what contracts bind them, and how \emph{time} and \emph{state} move through the system.
 
 You should walk away with one mental model:
-	extbf{state marks things dirty, the scheduler orders work, and the renderer commits DOM writes.}
+	\textbf{state marks things dirty, the scheduler orders work, and the renderer commits DOM writes.}
 
 \section{The subsystems}
 
@@ -23,7 +23,7 @@ Relax.js is best understood as a set of cooperating subsystems with explicit con
 \end{itemize}
 
 The important design choice is separation of concerns:
-	extbf{reactivity} decides \emph{what} changed, \textbf{scheduling} decides \emph{when} to apply changes, and \textbf{rendering} decides \emph{how} to write to the DOM.
+	\textbf{reactivity} decides \emph{what} changed, \textbf{scheduling} decides \emph{when} to apply changes, and \textbf{rendering} decides \emph{how} to write to the DOM.
 
 \section{Diagram: end-to-end data flow (authoring \textrightarrow DOM)}
 

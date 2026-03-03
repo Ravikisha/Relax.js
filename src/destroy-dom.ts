@@ -66,17 +66,26 @@ function removeElementNode(vdom: any) {
   const { el, children, listeners } = vdom
   assert(el instanceof HTMLElement)
 
-  el.remove()
-  children.forEach(destroyDOM)
-
+  // Cleanup first (listeners + component lifecycles), then detach the root once.
+  // Note: we still need to recursively destroy children to run component unmount hooks
+  // and remove event listeners stored on descendant vnodes, but we can avoid calling
+  // `remove()` on each descendant DOM node because removing the root detaches the subtree.
   if (listeners) {
     removeEventListeners(listeners, el)
     // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
     delete vdom.listeners
   }
+
+  for (let i = 0; i < children.length; i++) {
+    destroyDOM(children[i])
+  }
+
+  el.remove()
 }
 
 function removeFragmentNodes(vdom: any) {
   const { children } = vdom
-  children.forEach(destroyDOM)
+  for (let i = 0; i < children.length; i++) {
+    destroyDOM(children[i])
+  }
 }

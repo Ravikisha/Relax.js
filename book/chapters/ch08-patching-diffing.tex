@@ -27,13 +27,13 @@ Before reading any helper functions, keep this diagram in mind. It summarizes th
   \node[box, below=of start] (eq) {\textbf{Decision:} \texttt{areNodesEqual(oldVdom, newVdom)}?};
 
   \node[box, below left=of eq, xshift=14mm] (replace) {\textbf{Replace path}\\
-  	exttt{index = findIndexInParent(parentEl, old.el)}\\
-  	exttt{destroyDOM(old)}\\
-  	exttt{mountDOM(new, parentEl, index, hostComponent)}};
+  	\texttt{index = findIndexInParent(parentEl, old.el)}\\
+  	\texttt{destroyDOM(old)}\\
+  	\texttt{mountDOM(new, parentEl, index, hostComponent)}};
 
   \node[box, below right=of eq, xshift=-14mm] (patch) {\textbf{Patch path}\\
-  	exttt{new.el = old.el}\\
-  	exttt{switch (new.type) \{ ... \}}};
+  	\texttt{new.el = old.el}\\
+  	\texttt{switch (new.type) \{ ... \}}};
 
   \node[box, below=of patch] (dispatch) {\textbf{Per-type patchers}\\
   TEXT \textrightarrow{} patchText\\
@@ -55,7 +55,7 @@ This picture also explains why Chapter~\ref{ch:vnode-model}'s invariant (childre
 The public entry point is:
 
 \begin{quote}
-    exttt{patchDOM(oldVdom, newVdom, parentEl, hostComponent?)}
+    \texttt{patchDOM(oldVdom, newVdom, parentEl, hostComponent?)}
 \end{quote}
 
 It lives in \texttt{src/patch-dom.ts}.
@@ -246,15 +246,30 @@ Test group: \texttt{patch style}.
 
 \subsection{Events: patchEvents}
 
-\texttt{patchEvents} compares old and new \texttt{on} objects using \texttt{objectsDiff} and performs two phases:
+	\texttt{patchEvents} compares old and new \texttt{on} objects using \texttt{objectsDiff} and then applies three cases:
 
-\begin{enumerate}
-  \item \textbf{Detach} removed and updated handlers by removing their old wrapper listeners.
-  \item \textbf{Attach} added and updated handlers using \texttt{addEventListener} from \texttt{src/events.ts}.
-\end{enumerate}
+\begin{itemize}
+  \item \textbf{removed:} remove the existing wrapper listener
+  \item \textbf{added:} add a wrapper listener via \texttt{addEventListener} (from \texttt{src/events.ts})
+  \item \textbf{updated:} keep the wrapper listener identity, but update its handler/host pointers via \texttt{updateEventListener}
+\end{itemize}
 
-Why detach+attach for \emph{updated}?
-Because the wrapper listener function identity changes when the handler changes.
+\subsection{Benchmark patch-phase breakdown: how to read it}
+
+When you enable the benchmarks' patch-phase collection (\texttt{patchPhases=1}), Relax reports a small table with per-frame averages grouped by phase labels emitted from \texttt{src/patch-dom.js} via \texttt{measurePatchPhase}.
+This doesn't change the patcher's semantics; it's a measurement aid to tell you \emph{where} patch time is going.
+
+The phases map to the sections in this chapter:
+
+\begin{itemize}
+  \item \texttt{vdom:diff}: time spent computing the child update plan (the sequence diff / keyed reconciliation input).
+  \item \texttt{vdom:moves}: time spent performing DOM reorders (inserts/moves) implied by that plan.
+  \item \texttt{vdom:attrs}, \texttt{vdom:class}, \texttt{vdom:style}, \texttt{vdom:events}: time spent in the targeted props patchers.
+\end{itemize}
+
+As a rule of thumb for optimization work: if \texttt{vdom:diff} dominates, look for ways to reduce child list churn (keys, stable shapes, fewer inserts/removes); if \texttt{vdom:moves} dominates, the DOM work is the bottleneck (reduce reorders, batch updates, avoid layout thrash); and if a props phase dominates, focus on that specific representation (e.g. avoid rebuilding style objects, keep event maps stable, reuse attrs objects so identity fast paths trigger).
+
+This design keeps the DOM listener registry stable during frequent patches, while preserving the key invariant: removal must use the exact same wrapper function object.
 
 \paragraph{Why this detail matters so much}
 When people build their first patcher, they often try to "update" an event handler by doing nothing:
@@ -265,11 +280,12 @@ In the DOM, \texttt{addEventListener} doesn't register "an event called click".
 It registers a \emph{pair}: \texttt{(eventName, functionObject)}.
 Removal uses the same pair.
 
-Relax solves this with the wrapper identity trick from Chapter~\ref{ch:events-dispatcher}, and the patcher follows the same rule:
+Relax solves this with the wrapper identity trick from Chapter~\ref{ch:events-dispatcher}. The patcher follows the same rule:
 
 \begin{itemize}
-  \item if a handler is removed or updated, remove the old wrapper function
-  \item if a handler is added or updated, add a fresh wrapper function
+  \item if a handler is removed, remove the old wrapper function
+  \item if a handler is added, add a wrapper function
+  \item if a handler is updated, mutate the \emph{existing} wrapper to point at the new handler (no detach+attach)
   \item store the wrapper map on the vnode (\texttt{vdom.listeners}) so destroy can remove correctly
 \end{itemize}
 
@@ -286,12 +302,12 @@ This is the subtle part: the browser removes listeners by the \emph{exact functi
   arrow/.style={-Latex,thick}
 ]
   \node[box] (old) {old props:\\\texttt{on: \{ click: oldHandler \}}};
-  \node[box, right=16mm of old] (wrap1) {mount/patch created\\wrapper \texttt{w1}};
+  \node[box, right=16mm of old] (wrap1) {mount created\\stable wrapper \texttt{w1}};
   \node[box, below=of old] (new) {new props:\\\texttt{on: \{ click: newHandler \}}};
-  \node[box, right=16mm of new] (wrap2) {needs new\\wrapper \texttt{w2}};
+  \node[box, right=16mm of new] (wrap2) {reuse wrapper \texttt{w1},\\update handler pointer};
 
-  \node[box, below=14mm of wrap1] (detach) {detach:\\\texttt{el.removeEventListener('click', w1)}};
-  \node[box, below=of wrap2] (attach) {attach:\\\texttt{el.addEventListener('click', w2)}};
+  \node[box, below=14mm of wrap1] (detach) {detach (removed only):\\\texttt{el.removeEventListener('click', w1)}};
+  \node[box, below=of wrap2] (attach) {update (updated only):\\\texttt{updateEventListener(w1, newHandler)}};
 
   \draw[arrow] (old) -- (wrap1);
   \draw[arrow] (new) -- (wrap2);
@@ -300,7 +316,7 @@ This is the subtle part: the browser removes listeners by the \emph{exact functi
 \end{tikzpicture}
 \end{center}
 
-Tests like \texttt{patch event handlers} effectively specify this: "updating" a handler is implemented as remove+add because the wrapper identity changes.
+Tests like \texttt{patch event handlers} effectively specify this invariant: the wrapper identity is stable, and an updated handler changes behavior without requiring re-registration.
 
 Tests to read:
 
@@ -334,7 +350,7 @@ This is how Relax achieves the "component instance is preserved" semantics teste
 You will notice a second patch entry point inside \texttt{src/patch-dom.ts}:
 
 \begin{quote}
-    exttt{patchDOMSameElement(oldVdom, newVdom, hostComponent?)}
+    \texttt{patchDOMSameElement(oldVdom, newVdom, hostComponent?)}
 \end{quote}
 
 It is identical to \texttt{patchDOM} except it \emph{skips the replacement path} and therefore does not need \texttt{parentEl}.
@@ -447,6 +463,14 @@ This is the bird's-eye view of what \texttt{patchKeyedChildrenReorder} is doing:
 \end{tikzpicture}
 \end{center}
 
+\subsubsection*{Performance notes (why keyed reordering stays fast)}
+Two small details keep the keyed path performant in real workloads:
+
+\begin{itemize}
+  \item \textbf{Linear-time anchor tracking:} when applying moves, Relax walks from right to left and tracks the next insertion anchor once, instead of repeatedly scanning to the right (which can create accidental \(O(n^2)\) behavior).
+  \item \textbf{Large fully-keyed list heuristic:} when both old and new lists are large and fully keyed, Relax prefers the keyed reorder path early to avoid paying for expensive generic diff script generation. This is a conservative fast path that preserves the same observable DOM result.
+\end{itemize}
+
 The reason for the backward walk is practical DOM surgery: when you insert/move nodes from the end, you don't invalidate the insertion positions you haven't processed yet.
 
 Test names to read:
@@ -479,7 +503,7 @@ const diffSeq = arraysDiffSequence(oldChildren, newChildren, areNodesEqual)
 
 
 
-	exttt{arraysDiffSequence} is a general-purpose utility in \texttt{src/utils/arrays.ts}. It's worth reading because it is one of the algorithmic cores of Relax.
+	\texttt{arraysDiffSequence} is a general-purpose utility in \texttt{src/utils/arrays.ts}. It's worth reading because it is one of the algorithmic cores of Relax.
 
 It has extensive unit tests in:
 
@@ -493,7 +517,7 @@ It produces operations of types \texttt{ADD}, \texttt{REMOVE}, \texttt{MOVE}, \t
 \subsubsection*{How to read the diff algorithm (mental model)}
 
 
-	exttt{arraysDiffSequence(oldArr, newArr, equals)} returns an \emph{edit script}.
+	\texttt{arraysDiffSequence(oldArr, newArr, equals)} returns an \emph{edit script}.
 An edit script is just a list of operations that, when applied left-to-right, transforms \texttt{oldArr} into \texttt{newArr}.
 
 Relax's implementation in \texttt{src/utils/arrays.ts} is practical, not academic:
@@ -671,7 +695,7 @@ The patcher relies on \texttt{arraysDiffSequence} to produce a valid edit script
 The workhorse assertion is essentially:
 
 \begin{quote}
-    exttt{applyArraysDiffSequence(oldArray, arraysDiffSequence(oldArray, newArray)) === newArray}
+    \texttt{applyArraysDiffSequence(oldArray, arraysDiffSequence(oldArray, newArray)) === newArray}
 \end{quote}
 
 This is a great example of how Relax uses tests: not just to assert a single result, but to lock down the correctness of an algorithm under many variations.

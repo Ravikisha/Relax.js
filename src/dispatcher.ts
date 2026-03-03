@@ -1,3 +1,5 @@
+import { DEV } from './dev'
+
 /**
  * Dispatcher that registers handler functions to respond to specific
  * commands, identified by a unique name.
@@ -38,13 +40,19 @@ export class Dispatcher {
 
   dispatch(commandName: string, payload: unknown) {
     if (this.#subs.has(commandName)) {
-      this.#subs.get(commandName)!.forEach((handler) => handler(payload))
+      const handlers = this.#subs.get(commandName)!
+      for (let i = 0; i < handlers.length; i++) {
+        handlers[i]!(payload)
+      }
     } else {
-      if (typeof console?.warn === 'function') {
+  if (DEV && typeof console?.warn === 'function') {
         console.warn(`No handlers for command: ${commandName}`)
       }
     }
 
-    this.#afterHandlers.forEach((handler) => handler())
+    const after = this.#afterHandlers
+    for (let i = 0; i < after.length; i++) {
+      after[i]!()
+    }
   }
 }

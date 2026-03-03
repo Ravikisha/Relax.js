@@ -113,11 +113,17 @@ function wrapWithLayout(
   // Minimal page chrome.
   // We keep it as VDOM so custom components can be used later.
   const navItems = ctx.nav && ctx.nav.length ? ctx.nav : [{ label: 'Home', href: '/' }]
+
+  const navChildren: any[] = new Array(navItems.length)
+  for (let i = 0; i < navItems.length; i++) {
+    const item = navItems[i]!
+    navChildren[i] = h('a', { href: item.href }, [item.label])
+  }
   return h('div', { class: 'container' }, [
     h('header', { class: 'site-header' }, [
       h('h1', { class: 'site-title' }, [ctx.siteName]),
       h('nav', { class: 'site-nav' }, [
-        ...navItems.map((item) => h('a', { href: item.href }, [item.label])),
+        ...navChildren,
       ]),
     ]),
     title ? h('h2', {}, [title]) : null,

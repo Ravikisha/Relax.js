@@ -354,7 +354,7 @@ Scheduling does not necessarily mean ``run immediately'' (see batching and lanes
 \subsection{A precise code-walk: \texttt{scheduleComputation} and the \texttt{pending} set}
 
 All the tricky correctness properties (re-entrancy, batching, lane scheduling) flow through one choke point:
-	exttt{scheduleComputation(computation)}.
+	\texttt{scheduleComputation(computation)}.
 
 In the real implementation (\texttt{runtime/signals.ts}), there are four gates.
 Reading them as a ruleset helps:
@@ -530,7 +530,7 @@ Conceptual reference: Solid's explanation of fine-grained dependency tracking is
 
 \paragraph{Leak-safety note}
 
-	exttt{unlinkAllSources()} also deliberately nulls out fields on the link objects (with \texttt{@ts-expect-error} comments).
+	\texttt{unlinkAllSources()} also deliberately nulls out fields on the link objects (with \texttt{@ts-expect-error} comments).
 That’s not required for correctness, but it makes accidental retention less likely in this prototype implementation.
 
 \section{Non-negotiable guarantees (what must remain true)}

@@ -485,7 +485,7 @@ Relax merges three sources of truth:
 The merge rule is simple:
 
 \begin{quote}
-	extbf{overrides win}, but we keep base nav if you don't override it.
+	\textbf{overrides win}, but we keep base nav if you don't override it.
 \end{quote}
 
 That last part matters.
@@ -521,7 +521,7 @@ Hard-coding links is fine for a demo, but a real SSG needs a declarative nav mod
 In Relax's SSG config, \texttt{nav} is an array of:
 
 \begin{quote}
-	exttt{\{ label: string, href: string \}}
+	\texttt{\{ label: string, href: string \}}
 \end{quote}
 
 Example \texttt{relax.ssg.config.js}:
@@ -548,12 +548,12 @@ h('nav', { class: 'site-nav' }, [
 ])
 \end{lstlisting}
 
-	extbf{Invariant:} navigation rendering must be pure.
+	\textbf{Invariant:} navigation rendering must be pure.
 No filesystem reads.
 No global state.
 It should only depend on the merged config and frontmatter.
 
-	extbf{What breaks if you violate it:}
+	\textbf{What breaks if you violate it:}
 the same content build can produce different output HTML, which makes caching and CI diffs miserable.
 
 \subsubsection{Diagram: config \textrightarrow layout context \textrightarrow HTML}
@@ -628,7 +628,7 @@ This is enough to cover multiple subsystems without making the test slow.
 For build tools, a good heuristic is:
 
 \begin{quote}
-	extbf{Use the smallest fixture that exercises multiple outputs.}
+	\textbf{Use the smallest fixture that exercises multiple outputs.}
 \end{quote}
 
 \subsection{Config merge test: predictable overrides}
@@ -711,5 +711,5 @@ This exercise is small but practical: it forces you to treat metadata as part of
 Today, frontmatter can set \texttt{layout: false} to disable wrapping.
 Add a new option \texttt{layout: "default" | false | "minimal"} and implement an extra minimal wrapper.
 
-	extbf{Hint:}
+	\textbf{Hint:}
 keep wrappers as pure VNode functions and unit-test them by asserting for key substrings in the output HTML.

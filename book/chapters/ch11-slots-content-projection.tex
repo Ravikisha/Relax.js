@@ -267,7 +267,7 @@ Test: \texttt{remove the slot if no content or default content}.
 
 \paragraph{A subtle implementation detail}
 
-	exttt{fillSlots()} itself doesn't have access to a parent pointer.
+	\texttt{fillSlots()} itself doesn't have access to a parent pointer.
 So it can’t ``remove the slot node'' directly.
 Instead it uses a two-step approach:
 
@@ -358,7 +358,7 @@ not \texttt{[content]}. This matters for patching.
 If you accidentally wrap external content in another array, you'd introduce an extra nesting level, which would make the fragment children shape wrong.
 
 Interpretation:
-	extbf{default content has a special container shape; external content is already a list.}
+	\textbf{default content has a special container shape; external content is already a list.}
 
 \subsection{Shape detail: why \texttt{hSlot([defaultContent])} is special}
 
@@ -376,7 +376,7 @@ hSlot([ h('span', {}, ['Hello']) ])
 
 In this case the algorithm sees: ``content is an array with a single element, and that element is also an array''.
 It preserves that container shape so that:\\
-	extbf{a slot expands to exactly one fragment child in the parent}, matching how the tests assert the resulting tree:
+	\textbf{a slot expands to exactly one fragment child in the parent}, matching how the tests assert the resulting tree:
 
 \begin{verbatim}
 expect(vdom.children).toEqual([hFragment(defaultContent)])

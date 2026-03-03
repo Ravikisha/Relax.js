@@ -72,7 +72,7 @@ The DOM can only remove listeners by the exact function object identity that was
 The central helper is:
 
 \begin{quote}
-	exttt{addEventListener(eventName, handler, el, hostComponent?)}
+	\texttt{addEventListener(eventName, handler, el, hostComponent?)}
 \end{quote}
 
 \subsection{Contract}
@@ -93,37 +93,62 @@ The central helper is:
 Returning the registered listener is not a convenience; it's required for correctness.
 
 \subsection{Implementation: the wrapper listener (real code)}
-This is the actual implementation from \texttt{src/events.ts}. Notice the wrapper chooses between \texttt{handler.call(hostComponent, event)} and \texttt{handler(event)}:
+This is the actual implementation from \texttt{src/events.ts}. The key idea is still the same:
+
+\begin{itemize}
+  \item \textbf{The DOM only ever sees the wrapper listener identity.}
+  \item The wrapper performs the \texttt{this} binding decision.
+\end{itemize}
+
+However, Relax now uses a \textbf{stable wrapper} design: the wrapper function identity stays the same across patches, and patching updates a pointer to the latest user handler.
+This avoids remove+add churn in hot update loops.
+
+Notice how the wrapper reads from \texttt{listener.\_\_relaxHandler} and \texttt{listener.\_\_relaxHost} (stored on the wrapper itself):
 
 \begin{lstlisting}[language=JavaScript]
-export function addEventListener(
-  eventName: string,
-  handler: (payload: unknown) => void,
-  el: Element,
-  hostComponent: any = null
-) {
-  const listener = (event: Event) => {
-    if (hostComponent) {
-      handler.call(hostComponent, event)
+export function addEventListener(eventName, handler, el, hostComponent = null) {
+  const listener = (event) => {
+    const fn = listener.__relaxHandler
+    if (!fn) return
+
+    const host = listener.__relaxHost
+    if (host) {
+      fn.call(host, event)
     } else {
-      handler(event)
+      fn(event)
     }
   }
 
+  listener.__relaxStable = true
+  listener.__relaxHandler = handler
+  listener.__relaxHost = hostComponent
+
   el.addEventListener(eventName, listener)
   return listener
+}
+
+export function updateEventListener(listener, handler, hostComponent = null) {
+  if (listener && listener.__relaxStable) {
+    listener.__relaxHandler = handler
+    listener.__relaxHost = hostComponent
+  }
 }
 \end{lstlisting}
 
 This is one of those renderer tricks that's simple but non-negotiable.
 If you ever ``refactor'' this into returning \texttt{handler} directly, unmount will leak listeners.
 
+\paragraph{Why the stable wrapper matters}
+In list-heavy UI updates, repeatedly removing+adding listeners is expensive and can dominate frame time.
+With a stable wrapper, patches can update handler behavior without touching the DOM listener registry.
+
 This immediately gives Relax three desirable properties:
 
 \begin{itemize}
-  \item \textbf{Stable binding semantics:} the wrapper decides whether to call with \texttt{handler.call(hostComponent, event)}.
+  \item \textbf{Stable binding semantics:} the wrapper decides whether to call with \texttt{fn.call(hostComponent, event)}.
   \item \textbf{No mutation of user handlers:} the original function object is untouched.
   \item \textbf{Reliable cleanup:} the wrapper function object can be stored and later removed.
+  \item \textbf{Efficient updates:} patching can update \texttt{listener.\_\_relaxHandler} in place rather than detach+attach.
 \end{itemize}
 
 \subsection*{Diagram: event wiring lifecycle across mount, patch, destroy}
@@ -152,7 +177,7 @@ Even if patch-time logic changes, notice the invariant: destroy always removes \
 Mounting and patching usually deal with an event map (a record of event name to handler). Relax provides a convenience:
 
 \begin{quote}
-    exttt{addEventListeners(events, el, hostComponent)}
+    \texttt{addEventListeners(events, el, hostComponent)}
 \end{quote}
 
 Implementation is straightforward:
@@ -180,7 +205,7 @@ Note what's \emph{not} present: the original user handlers. Only wrappers can be
 The tests are small, but they lock down the two things that tend to regress when you wrap handlers.
 
 \subsection{Invariant 1: wrappers don't break sync or async handlers}
-	exttt{events.test.ts} contains:
+	\texttt{events.test.ts} contains:
 
 \begin{itemize}
   \item \texttt{synchronous event without host component, called with argument}
@@ -238,7 +263,7 @@ I use it for things like devtools hooks, app-level commands, and decoupled commu
 \end{center}
 
 \subsection{A minimal contract}
-	exttt{Dispatcher} has three public methods:
+	\texttt{Dispatcher} has three public methods:
 
 \begin{itemize}
   \item \texttt{subscribe(commandName, handler)} \textrightarrow{} returns \texttt{unsubscribe()}
@@ -267,7 +292,7 @@ In code, that's \texttt{handlers.includes(handler)}.
 This makes the dispatcher deterministic and prevents accidental handler explosions if a component subscribes in a loop.
 
 \subsection{Dispatch semantics: warn on unhandled commands, always run after-hooks}
-	exttt{dispatch(commandName, payload)} does:
+	\texttt{dispatch(commandName, payload)} does:
 
 \begin{enumerate}
   \item if there are handlers for \texttt{commandName}, call them with \texttt{payload}

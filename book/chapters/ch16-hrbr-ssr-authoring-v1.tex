@@ -311,7 +311,7 @@ One implementation-level nuance in the test is worth calling out.
 After updating the signal with \texttt{setCount('B')}, it also calls:
 
 \begin{quote}
-	texttt{mounted.update(\{ value: 'B' \})}
+	\texttt{mounted.update(\{ value: 'B' \})}
 \end{quote}
 
 That makes the assertion deterministic and keeps the test independent of scheduler timing.

@@ -1,4 +1,5 @@
 import type { ElementVNodeProps } from './h'
+import { DEV } from './dev'
 
 export function setAttributes(el: HTMLElement, attrs: ElementVNodeProps) {
   const { class: className, style, ...otherAttrs } = attrs
@@ -12,13 +13,15 @@ export function setAttributes(el: HTMLElement, attrs: ElementVNodeProps) {
   }
 
   if (style) {
-    Object.entries(style).forEach(([prop, value]) => {
-      setStyle(el, prop, value)
-    })
+    // Hot path: avoid Object.entries() allocation + closure.
+    for (const prop in style as any) {
+      setStyle(el, prop, (style as any)[prop])
+    }
   }
 
-  for (const [name, value] of Object.entries(otherAttrs)) {
-    setAttribute(el, name, value as any)
+  // Hot path: avoid Object.entries() allocation.
+  for (const name in otherAttrs as any) {
+    setAttribute(el, name, (otherAttrs as any)[name] as any)
   }
 }
 
@@ -36,7 +39,7 @@ export function removeAttribute(el: Element, name: string) {
   try {
     ;(el as any)[name] = null
   } catch {
-    if (typeof console?.warn === 'function') {
+  if (DEV && typeof console?.warn === 'function') {
       console.warn(`Failed to set "${name}" to null on ${(el as any).tagName}`)
     }
   }
